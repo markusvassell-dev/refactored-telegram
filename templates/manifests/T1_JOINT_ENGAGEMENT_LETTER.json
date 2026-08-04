@@ -1,0 +1,277 @@
+{
+  "manifestVersion": 1,
+  "documentType": "T1_JOINT_ENGAGEMENT_LETTER",
+  "templateVersion": 1,
+  "sourceFileName": "T1 Joint Taxpayer Engagement Letter.docx",
+  "sourceFileHash": "d4c93ea2c582526d5465d2cadac4d0fe7c7873d0057a0f5810c9cf8566e37010",
+  "normalizedFileHash": "0e43c5edb524750cd9a7cdab6510d32d54e72cc4729820199335c1dc1156d656",
+  "fields": [
+    {
+      "token": "taxpayer1.full_legal_name",
+      "label": "Taxpayer 1 full legal name",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "CLIENT",
+      "displayOrder": 1
+    },
+    {
+      "token": "taxpayer1.first_name",
+      "label": "Taxpayer 1 first name",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "CLIENT",
+      "displayOrder": 2
+    },
+    {
+      "token": "taxpayer1.email",
+      "label": "Taxpayer 1 email address",
+      "dataType": "EMAIL",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "SIGNERS",
+      "displayOrder": 1
+    },
+    {
+      "token": "taxpayer1.telephone",
+      "label": "Taxpayer 1 telephone number",
+      "dataType": "PHONE",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "SIGNERS",
+      "displayOrder": 2
+    },
+    {
+      "token": "taxpayer2.full_legal_name",
+      "label": "Taxpayer 2 full legal name",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "CLIENT",
+      "displayOrder": 3
+    },
+    {
+      "token": "taxpayer2.first_name",
+      "label": "Taxpayer 2 first name",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "CLIENT",
+      "displayOrder": 4
+    },
+    {
+      "token": "taxpayer2.email",
+      "label": "Taxpayer 2 email address",
+      "dataType": "EMAIL",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "SIGNERS",
+      "displayOrder": 3
+    },
+    {
+      "token": "taxpayer2.telephone",
+      "label": "Taxpayer 2 telephone number",
+      "dataType": "PHONE",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "SIGNERS",
+      "displayOrder": 4
+    },
+    {
+      "token": "client.address",
+      "label": "Address",
+      "dataType": "MULTILINE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "CLIENT",
+      "displayOrder": 5
+    },
+    {
+      "token": "engagement.tax_year",
+      "label": "Taxation year",
+      "dataType": "YEAR",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 1
+    },
+    {
+      "token": "dates.sent",
+      "label": "Date sent",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 2
+    },
+    {
+      "token": "dates.client_information_due",
+      "label": "Client information deadline",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 3
+    },
+    {
+      "token": "services.other_description",
+      "label": "Other selected service",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "SERVICES",
+      "displayOrder": 10
+    },
+    {
+      "token": "pricing.t1_fee",
+      "label": "Fee amount",
+      "dataType": "MONEY",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "PRICING",
+      "displayOrder": 1
+    },
+    {
+      "token": "pricing.payment_terms",
+      "label": "Payment terms",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "PRICING",
+      "displayOrder": 2
+    },
+    {
+      "token": "pricing.proposal_date",
+      "label": "Separate proposal or pricing schedule date",
+      "dataType": "DATE",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "PRICING",
+      "displayOrder": 3
+    }
+  ],
+  "conditionalSections": [],
+  "checkboxes": [
+    {
+      "code": "t1.federal_return",
+      "label": "Federal T1 return",
+      "anchorText": "Federal T1 Income Tax and Benefit Return",
+      "defaultChecked": true,
+      "alwaysChecked": true
+    },
+    {
+      "code": "t1.provincial_return",
+      "label": "Provincial or territorial return",
+      "anchorText": "Applicable provincial or territorial personal income tax return",
+      "defaultChecked": true,
+      "alwaysChecked": true
+    },
+    {
+      "code": "t1.schedules",
+      "label": "Related schedules, elections and forms",
+      "anchorText": "Related schedules, elections and forms ordinarily required",
+      "defaultChecked": true,
+      "alwaysChecked": true
+    },
+    {
+      "code": "t1.t2125",
+      "label": "T2125 Statement of Business or Professional Activities",
+      "anchorText": "T2125 Statement of Business or Professional Activities",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t1.t776",
+      "label": "T776 Statement of Real Estate Rentals",
+      "anchorText": "T776 Statement of Real Estate Rentals",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t1.t1135",
+      "label": "T1135 Foreign Income Verification Statement",
+      "anchorText": "T1135 Foreign Income Verification Statement",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t1.other",
+      "label": "Other selected service",
+      "anchorText": "Other: [[services.other_description]]",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t1.fee_fixed",
+      "label": "Fixed fee",
+      "anchorText": "Fixed fee of $",
+      "defaultChecked": true,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t1.fee_time",
+      "label": "Time and complexity at standard rates",
+      "anchorText": "Based on time and complexity at our standard rates",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t1.fee_proposal",
+      "label": "Separate proposal or pricing schedule",
+      "anchorText": "As set out in a separate proposal or pricing schedule",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    }
+  ],
+  "signatureAnchors": [
+    {
+      "role": "TAXPAYER_1",
+      "token": "signature.taxpayer1",
+      "adobeTag": "{{Sig_es_:signer1:signature}}",
+      "draftPlaceholder": "________________________________",
+      "signingOrder": 1,
+      "required": true
+    },
+    {
+      "role": "TAXPAYER_2",
+      "token": "signature.taxpayer2",
+      "adobeTag": "{{Sig_es_:signer2:signature}}",
+      "draftPlaceholder": "________________________________",
+      "signingOrder": 1,
+      "required": true
+    },
+    {
+      "role": "FIRM_SIGNER",
+      "token": "signature.firm",
+      "adobeTag": "{{Sig_es_:signer3:signature}}",
+      "draftPlaceholder": "________________________________",
+      "signingOrder": 2,
+      "required": false
+    }
+  ],
+  "internalOnlySections": [],
+  "editableSections": [],
+  "sanitation": {
+    "removeAllHighlights": true,
+    "forbiddenText": [],
+    "placeholderPatterns": [
+      "\\[[A-Z][^\\]]{2,}\\]",
+      "\\[\\[[a-z0-9_.]+\\]\\]"
+    ],
+    "expectedPageRange": [
+      3,
+      12
+    ],
+    "requiredText": [
+      "T1 PERSONAL INCOME TAX ENGAGEMENT LETTER",
+      "ELECTRONIC ACCEPTANCE AND SIGNATURES",
+      "Both taxpayers must sign separately"
+    ],
+    "requiredMediaParts": [
+      "word/media/image1.png"
+    ]
+  },
+  "lockedWordingByDefault": true,
+  "notes": "Both taxpayers receive their own signature field and sign in parallel by default. The header table anchor is \"Prepared by\" and the signature table anchor is \"Electronic signature\"."
+}

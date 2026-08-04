@@ -1,0 +1,483 @@
+{
+  "manifestVersion": 1,
+  "documentType": "T2_ENGAGEMENT_LETTER",
+  "templateVersion": 1,
+  "sourceFileName": "T2 Engagement Letter.docx",
+  "sourceFileHash": "01917c9e61eab58dfb8cb67c0376e42203fe99424da10187cddae8c1b8433870",
+  "normalizedFileHash": "e17f3bde0a14d774dcbb2d97a7aedd48a077a0ecfc9f0b72c76151e6c3eaeaf9",
+  "fields": [
+    {
+      "token": "corporation.legal_name",
+      "label": "Corporation legal name",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "CLIENT",
+      "displayOrder": 1
+    },
+    {
+      "token": "corporation.business_number",
+      "label": "Business Number / RC account number",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "CLIENT",
+      "displayOrder": 2
+    },
+    {
+      "token": "corporation.year_end",
+      "label": "Taxation year-end",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "CLIENT",
+      "displayOrder": 3
+    },
+    {
+      "token": "signer.officer_name",
+      "label": "Authorized signing officer",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "SIGNERS",
+      "displayOrder": 1
+    },
+    {
+      "token": "signer.officer_title",
+      "label": "Signing officer title",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "SIGNERS",
+      "displayOrder": 2
+    },
+    {
+      "token": "signer.officer_email",
+      "label": "Signing officer email address",
+      "dataType": "EMAIL",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "SIGNERS",
+      "displayOrder": 3
+    },
+    {
+      "token": "firm.signer_name",
+      "label": "Engagement partner / authorized representative",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "FIRM",
+      "displayOrder": 1
+    },
+    {
+      "token": "firm.engagement_lead",
+      "label": "Engagement lead and contact information",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "FIRM",
+      "displayOrder": 2
+    },
+    {
+      "token": "dates.sent",
+      "label": "Date sent",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 1
+    },
+    {
+      "token": "dates.client_information_due",
+      "label": "Client information due date",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 2
+    },
+    {
+      "token": "dates.target_completion",
+      "label": "Target completion date",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 3
+    },
+    {
+      "token": "dates.filing_due",
+      "label": "Filing due date",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 4
+    },
+    {
+      "token": "dates.balance_due",
+      "label": "Estimated balance-due day",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 5
+    },
+    {
+      "token": "pricing.t2_fee",
+      "label": "T2 preparation fee",
+      "dataType": "MONEY",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "PRICING",
+      "displayOrder": 1
+    },
+    {
+      "token": "pricing.compilation_fee",
+      "label": "CSRS 4200 compilation fee",
+      "dataType": "MONEY",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "PRICING",
+      "displayOrder": 2,
+      "requiredWhenSection": "csrs_4200"
+    },
+    {
+      "token": "pricing.billing_basis",
+      "label": "Billing basis",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "PRICING",
+      "displayOrder": 3
+    },
+    {
+      "token": "pricing.retainer",
+      "label": "Retainer",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "PRICING",
+      "displayOrder": 4
+    },
+    {
+      "token": "pricing.payment_terms",
+      "label": "Payment terms (letter body)",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "PRICING",
+      "displayOrder": 5
+    },
+    {
+      "token": "pricing.payment_terms_short",
+      "label": "Payment terms (Schedule A)",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "PRICING",
+      "displayOrder": 6
+    },
+    {
+      "token": "pricing.additional_work",
+      "label": "Additional-work rates or separate quote",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "PRICING",
+      "displayOrder": 7
+    },
+    {
+      "token": "compilation.intended_use",
+      "label": "Intended use",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "SERVICES",
+      "displayOrder": 10,
+      "requiredWhenSection": "csrs_4200"
+    },
+    {
+      "token": "compilation.intended_users",
+      "label": "Intended users",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "SERVICES",
+      "displayOrder": 11,
+      "requiredWhenSection": "csrs_4200"
+    },
+    {
+      "token": "compilation.basis_of_accounting",
+      "label": "Basis of accounting",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "SERVICES",
+      "displayOrder": 12,
+      "requiredWhenSection": "csrs_4200"
+    },
+    {
+      "token": "compilation.financial_information_other",
+      "label": "Other financial information included",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "SERVICES",
+      "displayOrder": 13
+    },
+    {
+      "token": "compilation.report_delivery",
+      "label": "Report delivery method",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "SERVICES",
+      "displayOrder": 14,
+      "requiredWhenSection": "csrs_4200"
+    },
+    {
+      "token": "compilation.report_date",
+      "label": "Expected compilation report date",
+      "dataType": "DATE",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 6,
+      "requiredWhenSection": "csrs_4200"
+    },
+    {
+      "token": "services.other_included",
+      "label": "Other included service",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "SERVICES",
+      "displayOrder": 5
+    },
+    {
+      "token": "services.other_optional",
+      "label": "Other optional service",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "SERVICES",
+      "displayOrder": 20
+    },
+    {
+      "token": "special_terms.line_1",
+      "label": "Special terms or assumptions",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "OTHER",
+      "displayOrder": 1
+    },
+    {
+      "token": "special_terms.line_2",
+      "label": "Special terms — second line",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "OTHER",
+      "displayOrder": 2
+    },
+    {
+      "token": "signature.officer_date",
+      "label": "Signature date (never prefilled)",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": false,
+      "displayGroup": "SIGNERS",
+      "displayOrder": 10
+    }
+  ],
+  "conditionalSections": [
+    {
+      "key": "csrs_4200",
+      "label": "Section 3A — optional CSRS 4200 compilation engagement",
+      "controlledBy": "t2.csrs4200",
+      "ranges": [
+        {
+          "startsWith": "3A. Optional compilation engagement under CSRS 4200",
+          "endsBefore": "4. Corporation’s responsibilities",
+          "inclusiveEnd": false
+        },
+        {
+          "startsWith": "Compilation engagement particulars",
+          "endsBefore": "Optional or additional services expressly included",
+          "inclusiveEnd": false
+        }
+      ],
+      "removeWhenFalse": true,
+      "requiredFields": [
+        "compilation.intended_use",
+        "compilation.intended_users",
+        "compilation.basis_of_accounting",
+        "compilation.report_delivery",
+        "pricing.compilation_fee"
+      ]
+    }
+  ],
+  "checkboxes": [
+    {
+      "code": "t2.federal_return",
+      "label": "Federal T2 return and ordinary schedules",
+      "anchorText": "Federal T2 return and ordinary schedules",
+      "defaultChecked": true,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t2.provincial_schedules",
+      "label": "Applicable provincial or territorial corporate tax schedules",
+      "anchorText": "Applicable provincial or territorial corporate tax schedules",
+      "defaultChecked": true,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t2.gifi",
+      "label": "GIFI preparation",
+      "anchorText": "GIFI preparation from supplied or separately prepared financial information",
+      "defaultChecked": true,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t2.efile",
+      "label": "Electronic filing and confirmation",
+      "anchorText": "Electronic filing and confirmation",
+      "defaultChecked": true,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t2.csrs4200",
+      "label": "Compilation engagement under CSRS 4200",
+      "anchorText": "Compilation engagement under CSRS 4200",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t2.other_included",
+      "label": "Other included service",
+      "anchorText": "[[services.other_included]]",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t2.tax_planning_meeting",
+      "label": "Tax planning meeting",
+      "anchorText": "Tax planning meeting",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t2.noa_review",
+      "label": "Review of CRA Notice of Assessment",
+      "anchorText": "Review of CRA Notice of Assessment",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t2.t1134",
+      "label": "T1134 foreign affiliate reporting",
+      "anchorText": "T1134 foreign affiliate reporting",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t2.t106",
+      "label": "T106 non-arm’s-length transactions with non-residents",
+      "anchorText": "T106 non-arm",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t2.t1135",
+      "label": "T1135 foreign income verification reporting",
+      "anchorText": "T1135 foreign income verification reporting",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t2.capital_dividend_election",
+      "label": "Capital dividend election / other election",
+      "anchorText": "Capital dividend election",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t2.provincial_outside_t2",
+      "label": "Provincial filing outside the T2 system",
+      "anchorText": "Provincial filing outside the T2 system",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "t2.other_optional",
+      "label": "Other optional service",
+      "anchorText": "[[services.other_optional]]",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    }
+  ],
+  "signatureAnchors": [
+    {
+      "role": "AUTHORIZED_SIGNING_OFFICER",
+      "token": "signature.officer_date",
+      "adobeTag": "{{Dte_es_:signer1:date}}",
+      "draftPlaceholder": "",
+      "signingOrder": 1,
+      "required": true
+    }
+  ],
+  "internalOnlySections": [
+    {
+      "key": "t2_internal_checklist",
+      "label": "Internal customization checklist",
+      "range": {
+        "startsWith": "Internal customization checklist",
+        "inclusiveEnd": false
+      },
+      "alwaysRemove": true
+    }
+  ],
+  "editableSections": [
+    {
+      "key": "special_terms",
+      "label": "Special terms or assumptions",
+      "range": {
+        "startsWith": "Special terms or assumptions",
+        "endsBefore": "Internal customization checklist",
+        "inclusiveEnd": false
+      },
+      "editLevel": "EXCEPTIONAL"
+    }
+  ],
+  "sanitation": {
+    "removeAllHighlights": true,
+    "forbiddenText": [
+      "Internal customization checklist",
+      "Delete this internal checklist before issuing the letter",
+      "remove before sending",
+      "Replace every yellow-highlighted placeholder",
+      "Have firm counsel or the professional liability insurer review"
+    ],
+    "placeholderPatterns": [
+      "\\[[A-Z][^\\]]{2,}\\]",
+      "\\[\\[[a-z0-9_.]+\\]\\]"
+    ],
+    "expectedPageRange": [
+      4,
+      14
+    ],
+    "requiredText": [
+      "CORPORATE INCOME TAX (T2) ENGAGEMENT LETTER",
+      "ACCEPTANCE BY THE CORPORATION",
+      "SCHEDULE A"
+    ],
+    "requiredMediaParts": [
+      "word/media/image1.png"
+    ]
+  },
+  "lockedWordingByDefault": true,
+  "notes": "Section 3A and the Schedule A compilation particulars are removed entirely when CSRS 4200 is not selected. The internal customization checklist is always removed. Yellow highlighting is always stripped."
+}

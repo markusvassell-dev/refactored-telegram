@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "allowJs": false,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": false,
+    "useUnknownInCatchVariables": true,
+
+    "noEmit": true,
+    "jsx": "preserve",
+    "incremental": true,
+
+    "baseUrl": ".",
+    "paths": {
+      "@element/shared": ["packages/shared/src/index.ts"],
+      "@element/shared/*": ["packages/shared/src/*"],
+      "@element/database": ["packages/database/src/index.ts"],
+      "@element/database/*": ["packages/database/src/*"],
+      "@element/pricing": ["packages/pricing/src/index.ts"],
+      "@element/pricing/*": ["packages/pricing/src/*"],
+      "@element/dates": ["packages/dates/src/index.ts"],
+      "@element/dates/*": ["packages/dates/src/*"],
+      "@element/workflows": ["packages/workflows/src/index.ts"],
+      "@element/workflows/*": ["packages/workflows/src/*"],
+      "@element/audit": ["packages/audit/src/index.ts"],
+      "@element/audit/*": ["packages/audit/src/*"],
+      "@element/documents": ["packages/documents/src/index.ts"],
+      "@element/documents/*": ["packages/documents/src/*"],
+      "@element/integrations": ["packages/integrations/src/index.ts"],
+      "@element/integrations/*": ["packages/integrations/src/*"],
+      "@element/services": ["packages/services/src/index.ts"],
+      "@element/services/*": ["packages/services/src/*"],
+      "@element/ui": ["packages/ui/src/index.ts"],
+      "@element/ui/*": ["packages/ui/src/*"]
+    }
+  }
+}

@@ -1,0 +1,271 @@
+{
+  "manifestVersion": 1,
+  "documentType": "COMPILATION_COVER_LETTER",
+  "templateVersion": 1,
+  "sourceFileName": "Compilation Engagement Cover Letter.docx",
+  "sourceFileHash": "c42fc450956acd2a13a68892789cb23bacdc99c01fd990b340b529febbcdb26c",
+  "normalizedFileHash": "3f9951e1354cb5726c5eee23c87acda14806377d67f1abff7adf96bb32a1d49e",
+  "fields": [
+    {
+      "token": "client.legal_name",
+      "label": "Client full legal name",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "CLIENT",
+      "displayOrder": 1
+    },
+    {
+      "token": "client.address",
+      "label": "Client address",
+      "dataType": "MULTILINE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "CLIENT",
+      "displayOrder": 2
+    },
+    {
+      "token": "client.contact_name",
+      "label": "Client contact",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "CLIENT",
+      "displayOrder": 3
+    },
+    {
+      "token": "client.year_end",
+      "label": "Year-end date",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 1
+    },
+    {
+      "token": "dates.sent",
+      "label": "Date sent",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 2
+    },
+    {
+      "token": "dates.filing_deadline",
+      "label": "Filing deadline",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 3
+    },
+    {
+      "token": "dates.payment_deadline",
+      "label": "Payment deadline",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 4
+    },
+    {
+      "token": "dates.authorization_due",
+      "label": "Authorization due date",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 5
+    },
+    {
+      "token": "dates.federal_payment_due",
+      "label": "Federal payment due date",
+      "dataType": "DATE",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 6
+    },
+    {
+      "token": "dates.provincial_payment_due",
+      "label": "Provincial payment due date",
+      "dataType": "DATE",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 7
+    },
+    {
+      "token": "amounts.federal_balance",
+      "label": "Federal tax balance or refund",
+      "dataType": "MONEY",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 1
+    },
+    {
+      "token": "amounts.provincial_balance",
+      "label": "Provincial tax balance or refund",
+      "dataType": "MONEY",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 2
+    },
+    {
+      "token": "amounts.total_balance",
+      "label": "Total estimated balance",
+      "dataType": "MONEY",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 3
+    },
+    {
+      "token": "instalments.federal_amount",
+      "label": "Federal instalment amount",
+      "dataType": "MONEY",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 10
+    },
+    {
+      "token": "instalments.federal_frequency",
+      "label": "Federal instalment frequency",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 11
+    },
+    {
+      "token": "instalments.federal_first_due",
+      "label": "Federal first instalment date",
+      "dataType": "DATE",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 12
+    },
+    {
+      "token": "instalments.provincial_amount",
+      "label": "Provincial instalment amount",
+      "dataType": "MONEY",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 13
+    },
+    {
+      "token": "instalments.provincial_frequency",
+      "label": "Provincial instalment frequency",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 14
+    },
+    {
+      "token": "instalments.provincial_first_due",
+      "label": "Provincial first instalment date",
+      "dataType": "DATE",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 15
+    },
+    {
+      "token": "foreign.details",
+      "label": "Foreign information returns prepared or required",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 20
+    }
+  ],
+  "conditionalSections": [
+    {
+      "key": "adjusting_journal_entries",
+      "label": "Adjusting journal entries instruction",
+      "controlledBy": "enc.adjusting_journal_entries",
+      "ranges": [
+        {
+          "startsWith": "Adjusting journal entries",
+          "endsBefore": "Business expenses and supporting documentation",
+          "inclusiveEnd": false
+        }
+      ],
+      "removeWhenFalse": true,
+      "requiredFields": []
+    }
+  ],
+  "checkboxes": [
+    {
+      "code": "instalments.not_required",
+      "label": "Corporation not required to make instalments",
+      "anchorText": "The corporation is not currently required to make corporate income tax instalments",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "instalments.required",
+      "label": "Corporation required to make instalments",
+      "anchorText": "The corporation is required to make corporate income tax instalments",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "foreign.none",
+      "label": "No additional foreign information returns required",
+      "anchorText": "The corporation was not required to file any additional foreign information returns",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "foreign.required",
+      "label": "Foreign information returns prepared or required",
+      "anchorText": "The following foreign information returns were prepared",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    }
+  ],
+  "signatureAnchors": [],
+  "internalOnlySections": [],
+  "editableSections": [
+    {
+      "key": "cover_letter_intro",
+      "label": "Introductory paragraphs",
+      "range": {
+        "startsWith": "We are pleased to enclose the year-end compilation engagement documents",
+        "endsBefore": "Documents enclosed",
+        "inclusiveEnd": false
+      },
+      "editLevel": "ORDINARY"
+    }
+  ],
+  "sanitation": {
+    "removeAllHighlights": true,
+    "forbiddenText": [],
+    "placeholderPatterns": [
+      "\\[[A-Z][^\\]]{2,}\\]",
+      "\\[\\[[a-z0-9_.]+\\]\\]"
+    ],
+    "expectedPageRange": [
+      3,
+      10
+    ],
+    "requiredText": [
+      "COMPILATION ENGAGEMENT COVER LETTER",
+      "Final review checklist"
+    ],
+    "requiredMediaParts": [
+      "word/media/image1.png"
+    ]
+  },
+  "lockedWordingByDefault": true,
+  "notes": "The enclosure list is dynamic: each bullet under \"Documents enclosed\" is emitted only when the corresponding final document is present and selected for delivery. See ENCLOSURE_RULES."
+}

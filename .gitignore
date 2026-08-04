@@ -1,0 +1,32 @@
+node_modules/
+.pnpm-store/
+.next/
+dist/
+build/
+out/
+coverage/
+*.tsbuildinfo
+.turbo/
+
+# Environment / secrets — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Runtime document scratch space (may contain client data)
+/tmp-documents/
+/var/documents/
+storage/
+
+# Test output
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
+# Generated template artifacts are committed deliberately; local scratch is not
+templates/**/*.local.*
+
+.DS_Store
+*.log
+tmp-smoke/

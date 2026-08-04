@@ -1,0 +1,1279 @@
+// Element Engagements — data model.
+//
+// Karbon remains the primary document system of record. This database stores
+// metadata, workflow state, extraction results, evidence, approvals and audit
+// history. It is deliberately NOT the permanent primary store for complete
+// client tax files.
+//
+// See docs/data-model.md for entity descriptions and constraints.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enumerations
+// ---------------------------------------------------------------------------
+
+enum Role {
+  ADMINISTRATOR
+  PARTNER_OR_FINAL_APPROVER
+  REVIEWER
+  PREPARER
+  READ_ONLY
+}
+
+enum EngagementType {
+  T1_JOINT
+  T1_SINGLE
+  T2
+  T3
+}
+
+enum DocumentType {
+  T1_JOINT_ENGAGEMENT_LETTER
+  T1_SINGLE_ENGAGEMENT_LETTER
+  T2_ENGAGEMENT_LETTER
+  T3_ENGAGEMENT_LETTER
+  T1_COVER_LETTER
+  T2_COVER_LETTER
+  T3_COVER_LETTER
+  COMPILATION_COVER_LETTER
+}
+
+/// The controlled engagement workflow. Transitions are enforced in the
+/// application (packages/workflows) and again by a database trigger driven by
+/// the workflow_transition table.
+enum EngagementStatus {
+  NOT_STARTED
+  LOCATING_SOURCE_DOCUMENTS
+  SOURCE_DOCUMENT_REVIEW_REQUIRED
+  EXTRACTING_DATA
+  GENERATING
+  GENERATION_FAILED
+  DRAFT_READY
+  REVIEW_REQUIRED
+  IN_REVIEW
+  CHANGES_REQUESTED
+  REGENERATING
+  APPROVED
+  READY_TO_SEND
+  SENDING_FOR_SIGNATURE
+  SENT_FOR_SIGNATURE
+  PARTIALLY_SIGNED
+  SIGNED
+  DECLINED
+  EXPIRED
+  NEEDS_ATTENTION
+  COMPLETE
+  READY_FOR_COVER_LETTER
+  COVER_LETTER_GENERATING
+  COVER_LETTER_REVIEW_REQUIRED
+  COVER_LETTER_IN_REVIEW
+  COVER_LETTER_CHANGES_REQUESTED
+  COVER_LETTER_APPROVED
+  READY_FOR_DELIVERY
+}
+
+enum DocumentVersionStatus {
+  DRAFT
+  IN_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  SENT_FOR_SIGNATURE
+  SIGNED
+  SUPERSEDED
+  REJECTED
+  STALE
+}
+
+enum FeeMethod {
+  NO_INCREASE
+  PERCENTAGE
+  FIXED_AMOUNT
+  EXACT_TARGET
+}
+
+enum FeeKind {
+  T1_PREPARATION
+  T2_PREPARATION
+  T3_PREPARATION
+  CSRS_4200_COMPILATION
+}
+
+enum FeeRuleLevel {
+  GLOBAL
+  ENGAGEMENT_TYPE
+  PARTNER_OR_GROUP
+  CLIENT
+  ONE_TIME_OVERRIDE
+}
+
+enum ValueSource {
+  KARBON_CLIENT
+  KARBON_WORK_ITEM
+  PRIOR_YEAR_DOCUMENT
+  TEMPLATE_DEFAULT
+  MANUAL_ENTRY
+  CALCULATED
+}
+
+enum ExtractionMethod {
+  STRUCTURED_EXPORT
+  PDF_TEXT
+  DETERMINISTIC_PATTERN
+  AI_ASSISTED
+  OCR_VISION
+  MANUAL_ENTRY
+}
+
+enum ApprovalType {
+  ORDINARY_REVIEW
+  FINAL_DOCUMENT
+  WORDING_EXCEPTION
+  FEE_DECREASE
+  FEE_HIGH_INCREASE
+  COVER_LETTER
+  SEND_AUTHORIZATION
+  DATE_CONFIRMATION
+}
+
+enum ApprovalDecision {
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+}
+
+enum SourceDocumentKind {
+  PRIOR_YEAR_ENGAGEMENT_LETTER
+  PRIOR_YEAR_SIGNED_LETTER
+  FINAL_T2_RETURN
+  COMPILED_FINANCIAL_STATEMENTS
+  COMPILATION_ENGAGEMENT_REPORT
+  FEDERAL_FILING_AUTHORIZATION
+  PROVINCIAL_FILING_AUTHORIZATION
+  ADJUSTING_JOURNAL_ENTRIES
+  TRIAL_BALANCE
+  INSTALMENT_SCHEDULE
+  PAYMENT_SUMMARY
+  T1_RETURN
+  T183
+  OTHER_SUPPORTING_SCHEDULE
+  UNKNOWN
+}
+
+enum TemplateVersionStatus {
+  DRAFT
+  PENDING_APPROVAL
+  ACTIVE
+  RETIRED
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  DEAD_LETTER
+  CANCELLED
+}
+
+enum AdobeAgreementStatus {
+  CREATED
+  OUT_FOR_SIGNATURE
+  PARTIALLY_SIGNED
+  SIGNED
+  COMPLETED
+  DECLINED
+  CANCELLED
+  EXPIRED
+  FAILED
+}
+
+enum AdobeSignerStatus {
+  NOT_YET_NOTIFIED
+  WAITING_FOR_OTHERS
+  OUT_FOR_SIGNATURE
+  VIEWED
+  SIGNED
+  DECLINED
+  DELEGATED
+  EXPIRED
+}
+
+enum RepresentativeCapacity {
+  TRUSTEE
+  EXECUTOR
+  ADMINISTRATOR
+  LIQUIDATOR
+  OTHER_AUTHORIZED_REPRESENTATIVE
+}
+
+enum ParticipantRole {
+  TAXPAYER_1
+  TAXPAYER_2
+  AUTHORIZED_SIGNING_OFFICER
+  AUTHORIZED_REPRESENTATIVE
+  FIRM_SIGNER
+  ENGAGEMENT_PARTNER
+  ENGAGEMENT_LEAD
+  CC_RECIPIENT
+}
+
+enum IntegrationProvider {
+  KARBON
+  ADOBE_SIGN
+  ENTRA_ID
+  AI_EXTRACTION
+}
+
+enum ConflictStatus {
+  UNRESOLVED
+  RESOLVED
+  ACCEPTED_AS_IS
+}
+
+enum CoverLetterStatus {
+  BLOCKED
+  GENERATING
+  DRAFT
+  REVIEW_REQUIRED
+  IN_REVIEW
+  CHANGES_REQUESTED
+  APPROVED
+  READY_FOR_DELIVERY
+  STALE
+}
+
+enum KarbonActivityType {
+  DOCUMENT_UPLOAD
+  COMMENT
+  TASK_CREATE
+  TASK_UPDATE
+  TASK_COMPLETE
+  WORK_ITEM_STATUS_UPDATE
+  DOCUMENT_DOWNLOAD
+  SEARCH
+}
+
+enum ActivityOutcome {
+  SUCCEEDED
+  FAILED
+  SKIPPED_TEST_MODE
+  SKIPPED_UNSUPPORTED
+}
+
+// ---------------------------------------------------------------------------
+// Identity and access
+// ---------------------------------------------------------------------------
+
+model User {
+  id             String    @id @default(uuid())
+  /// Microsoft Entra ID object id. Null only for seeded development accounts.
+  entraObjectId  String?   @unique
+  email          String    @unique
+  displayName    String
+  isActive       Boolean   @default(true)
+  lastLoginAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  userRoles              UserRole[]
+  preparerEngagements    Engagement[]      @relation("EngagementPreparer")
+  reviewerEngagements    Engagement[]      @relation("EngagementReviewer")
+  approverEngagements    Engagement[]      @relation("EngagementFinalApprover")
+  reviewAssignments      ReviewAssignment[]
+  reviewComments         ReviewComment[]
+  approvals              Approval[]
+  auditEvents            AuditEvent[]
+  documentVersions       DocumentVersion[] @relation("DocumentVersionCreatedBy")
+  approvedVersions       DocumentVersion[] @relation("DocumentVersionApprovedBy")
+  wordingExceptions      WordingException[] @relation("WordingExceptionAuthor")
+  wordingApprovals       WordingException[] @relation("WordingExceptionApprover")
+  confirmedDates         CalculatedDate[]
+  confirmedFields        ExtractedField[]
+  resolvedConflicts      FieldConflict[]
+  feeCalculations        FeeCalculation[]
+
+  @@index([isActive])
+  @@map("user")
+}
+
+model UserRole {
+  id        String   @id @default(uuid())
+  userId    String
+  role      Role
+  grantedAt DateTime @default(now())
+  grantedBy String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+  @@index([role])
+  @@map("user_role")
+}
+
+// ---------------------------------------------------------------------------
+// Clients and Karbon linkage
+// ---------------------------------------------------------------------------
+
+model Client {
+  id                String   @id @default(uuid())
+  /// Karbon contact/organisation key. Unique when present.
+  karbonEntityKey   String?  @unique
+  karbonEntityType  String?
+  legalName         String
+  displayName       String?
+  /// Corporations only.
+  businessNumber    String?
+  /// Trusts and estates only. "Pending" is represented as null plus a flag.
+  trustAccountNumber String?
+  addressLine1      String?
+  addressLine2      String?
+  city              String?
+  province          String?
+  postalCode        String?
+  country           String?  @default("Canada")
+  clientGroup       String?
+  partnerUserId     String?
+  isTestFixture     Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  contacts    ClientContact[]
+  engagements Engagement[]
+  workItems   KarbonWorkItem[]
+  feeRules    FeeRule[]
+
+  @@index([legalName])
+  @@index([clientGroup])
+  @@index([isTestFixture])
+  @@map("client")
+}
+
+model ClientContact {
+  id             String   @id @default(uuid())
+  clientId       String
+  karbonContactKey String?
+  fullLegalName  String
+  firstName      String?
+  email          String?
+  telephone      String?
+  title          String?
+  isPrimary      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  client       Client                  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  participants EngagementParticipant[]
+
+  @@index([clientId])
+  @@index([karbonContactKey])
+  @@map("client_contact")
+}
+
+model KarbonWorkItem {
+  id             String    @id @default(uuid())
+  /// Karbon's own WorkItemKey.
+  karbonKey      String    @unique
+  clientId       String?
+  title          String
+  workType       String?
+  status         String?
+  assigneeEmail  String?
+  dueDate        DateTime?
+  taxYear        Int?
+  yearEnd        DateTime?
+  lastSyncedAt   DateTime?
+  rawSnapshot    Json?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  client      Client?      @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  engagements Engagement[]
+
+  @@index([clientId])
+  @@index([status])
+  @@index([taxYear])
+  @@map("karbon_work_item")
+}
+
+// ---------------------------------------------------------------------------
+// Engagements
+// ---------------------------------------------------------------------------
+
+model Engagement {
+  id                  String           @id @default(uuid())
+  clientId            String
+  engagementType      EngagementType
+  taxYear             Int
+  /// Fiscal / trust year-end. Null for calendar-year T1.
+  yearEnd             DateTime?
+  karbonWorkItemId    String?
+  status              EngagementStatus @default(NOT_STARTED)
+  templateVersionId   String?
+  priorYearEngagementId String?
+  assignedPreparerId  String?
+  assignedReviewerId  String?
+  finalApproverId     String?
+  /// Tri-state: null = not yet confirmed by a reviewer. Only meaningful for T2.
+  compilationSelected Boolean?
+  /// Set when generation must not proceed (for example, no prior-year fee).
+  blockedReason       String?
+  isTestMode          Boolean          @default(false)
+  /// Deterministic key preventing duplicate active generations.
+  idempotencyKey      String?          @unique
+  initiatedBy         String?
+  initiationSource    String?
+  correlationId       String?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+
+  client            Client                  @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  karbonWorkItem    KarbonWorkItem?         @relation(fields: [karbonWorkItemId], references: [id], onDelete: SetNull)
+  templateVersion   TemplateVersion?        @relation(fields: [templateVersionId], references: [id], onDelete: SetNull)
+  priorYearEngagement Engagement?           @relation("PriorYear", fields: [priorYearEngagementId], references: [id], onDelete: SetNull)
+  followOnEngagements Engagement[]          @relation("PriorYear")
+  preparer          User?                   @relation("EngagementPreparer", fields: [assignedPreparerId], references: [id], onDelete: SetNull)
+  reviewer          User?                   @relation("EngagementReviewer", fields: [assignedReviewerId], references: [id], onDelete: SetNull)
+  finalApprover     User?                   @relation("EngagementFinalApprover", fields: [finalApproverId], references: [id], onDelete: SetNull)
+
+  participants      EngagementParticipant[]
+  sourceDocuments   SourceDocument[]
+  documentVersions  DocumentVersion[]
+  extractedFields   ExtractedField[]
+  fieldConflicts    FieldConflict[]
+  serviceSelections ServiceSelection[]
+  feeCalculations   FeeCalculation[]
+  calculatedDates   CalculatedDate[]
+  reviewAssignments ReviewAssignment[]
+  reviewComments    ReviewComment[]
+  approvals         Approval[]
+  wordingExceptions WordingException[]
+  adobeAgreements   AdobeAgreement[]
+  coverLetters      CoverLetterPackage[]
+  karbonActivities  KarbonActivity[]
+  workflowEvents    WorkflowEvent[]
+  jobs              BackgroundJob[]
+  auditEvents       AuditEvent[]
+
+  /// One engagement per client + type + year.
+  @@unique([clientId, engagementType, taxYear])
+  @@index([status])
+  @@index([taxYear, engagementType])
+  @@index([assignedReviewerId])
+  @@index([isTestMode])
+  @@map("engagement")
+}
+
+model EngagementParticipant {
+  id                     String                  @id @default(uuid())
+  engagementId           String
+  clientContactId        String?
+  role                   ParticipantRole
+  fullLegalName          String
+  firstName              String?
+  email                  String?
+  telephone              String?
+  title                  String?
+  representativeCapacity RepresentativeCapacity?
+  /// Capacity must be explicitly confirmed by a human for T3 engagements.
+  capacityConfirmed      Boolean                 @default(false)
+  /// Order within the Adobe Sign routing. Equal values sign in parallel.
+  signingOrder           Int                     @default(1)
+  isSigner               Boolean                 @default(false)
+  contactConfirmed       Boolean                 @default(false)
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+
+  engagement    Engagement     @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  clientContact ClientContact? @relation(fields: [clientContactId], references: [id], onDelete: SetNull)
+  adobeSigners  AdobeSigner[]
+  coverLetters  CoverLetterPackage[]
+
+  @@unique([engagementId, role])
+  @@index([engagementId])
+  @@map("engagement_participant")
+}
+
+// ---------------------------------------------------------------------------
+// Templates
+// ---------------------------------------------------------------------------
+
+model DocumentTemplate {
+  id           String       @id @default(uuid())
+  documentType DocumentType @unique
+  name         String
+  description  String?
+  /// False until an administrator uploads and activates an approved template.
+  isProductionSupported Boolean @default(false)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  versions TemplateVersion[]
+
+  @@map("document_template")
+}
+
+model TemplateVersion {
+  id                 String                @id @default(uuid())
+  templateId         String
+  versionNumber      Int
+  status             TemplateVersionStatus @default(DRAFT)
+  /// SHA-256 of the immutable, unmodified source .docx.
+  sourceFileHash     String
+  sourceFileName     String
+  /// SHA-256 of the normalised (tokenised) .docx actually used for rendering.
+  normalizedFileHash String?
+  normalizedPath     String?
+  /// Field definitions, conditional sections, sanitation and anchor rules.
+  manifest           Json
+  notes              String?
+  createdBy          String?
+  createdAt          DateTime              @default(now())
+  approvedBy         String?
+  approvedAt         DateTime?
+  activatedAt        DateTime?
+  retiredAt          DateTime?
+
+  template         DocumentTemplate          @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  fieldDefinitions TemplateFieldDefinition[]
+  documentVersions DocumentVersion[]
+  engagements      Engagement[]
+
+  @@unique([templateId, versionNumber])
+  @@index([status])
+  @@map("template_version")
+}
+
+model TemplateFieldDefinition {
+  id                String   @id @default(uuid())
+  templateVersionId String
+  /// Stable internal token, e.g. `corporation.legal_name`.
+  token             String
+  label             String
+  dataType          String
+  isRequired        Boolean  @default(false)
+  /// True when the field may be auto-populated or auto-proposed by the system.
+  isAutoPopulatable Boolean  @default(true)
+  /// True for locked standard legal paragraphs.
+  isLockedWording   Boolean  @default(false)
+  validationRule    Json?
+  defaultValue      String?
+  helpText          String?
+  displayGroup      String?
+  displayOrder      Int      @default(0)
+
+  templateVersion TemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([templateVersionId, token])
+  @@index([templateVersionId, displayGroup])
+  @@map("template_field_definition")
+}
+
+// ---------------------------------------------------------------------------
+// Documents
+// ---------------------------------------------------------------------------
+
+model SourceDocument {
+  id                  String             @id @default(uuid())
+  engagementId        String
+  kind                SourceDocumentKind @default(UNKNOWN)
+  fileName            String
+  karbonDocumentId    String?
+  karbonWorkItemKey   String?
+  /// SHA-256 of the retrieved file. Drives stale-source detection.
+  fileHash            String
+  byteSize            Int?
+  mimeType            String?
+  /// Where the file currently lives in temporary processing storage.
+  storagePath         String?
+  pageCount           Int?
+  /// Confidence that this really is the document we believe it is.
+  verificationScore   Float?
+  verificationDetail  Json?
+  /// A human confirmed this is the correct document.
+  confirmedByUserId   String?
+  confirmedAt         DateTime?
+  /// Selected for inclusion in the client delivery package.
+  includedInPackage   Boolean            @default(false)
+  isFinal             Boolean            @default(false)
+  supersededById      String?
+  retrievedAt         DateTime           @default(now())
+  purgeAfter          DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+
+  engagement    Engagement       @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  supersededBy  SourceDocument?  @relation("SupersededSource", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes    SourceDocument[] @relation("SupersededSource")
+  evidence      FieldEvidence[]
+
+  @@unique([engagementId, fileHash, kind])
+  @@index([engagementId, kind])
+  @@index([karbonDocumentId])
+  @@map("source_document")
+}
+
+model DocumentVersion {
+  id                    String                @id @default(uuid())
+  engagementId          String
+  coverLetterPackageId  String?
+  documentType          DocumentType
+  versionNumber         Int
+  status                DocumentVersionStatus @default(DRAFT)
+  templateVersionId     String?
+  /// Hash of the template/source inputs this version was rendered from.
+  sourceFileHash        String?
+  generatedDocxReference String?
+  generatedPdfReference  String?
+  docxHash              String?
+  pdfHash               String?
+  pageCount             Int?
+  karbonDocumentId      String?
+  karbonPdfDocumentId   String?
+  /// Resolved field values used for this render (audit-grade snapshot).
+  renderedFieldValues   Json?
+  validationReport      Json?
+  changeSummary         String?
+  createdBy             String?
+  createdAt             DateTime              @default(now())
+  approvedBy            String?
+  approvedAt            DateTime?
+  supersededAt          DateTime?
+
+  engagement       Engagement          @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  coverLetterPackage CoverLetterPackage? @relation(fields: [coverLetterPackageId], references: [id], onDelete: Cascade)
+  templateVersion  TemplateVersion?    @relation(fields: [templateVersionId], references: [id], onDelete: SetNull)
+  creator          User?               @relation("DocumentVersionCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  approver         User?               @relation("DocumentVersionApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull)
+
+  approvals         Approval[]
+  wordingExceptions WordingException[]
+  adobeAgreements   AdobeAgreement[]
+  reviewComments    ReviewComment[]
+  karbonActivities  KarbonActivity[]
+  jobs              BackgroundJob[]
+
+  @@unique([engagementId, documentType, versionNumber])
+  @@index([engagementId, status])
+  @@index([coverLetterPackageId])
+  @@map("document_version")
+}
+
+// ---------------------------------------------------------------------------
+// Extraction, evidence and conflicts
+// ---------------------------------------------------------------------------
+
+model ExtractedField {
+  id                 String           @id @default(uuid())
+  engagementId       String
+  coverLetterPackageId String?
+  /// Matches TemplateFieldDefinition.token where applicable.
+  token              String
+  value              String?
+  /// Typed representations so numeric/date fields survive round-tripping.
+  valueDecimal       Decimal?         @db.Decimal(14, 2)
+  valueDate          DateTime?
+  valueBoolean       Boolean?
+  source             ValueSource
+  extractionMethod   ExtractionMethod
+  confidence         Float?
+  extractedAt        DateTime         @default(now())
+  manuallyConfirmed  Boolean          @default(false)
+  confirmedByUserId  String?
+  confirmedAt        DateTime?
+  manualOverrideValue String?
+  overrideReason     String?
+
+  engagement         Engagement          @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  coverLetterPackage CoverLetterPackage? @relation(fields: [coverLetterPackageId], references: [id], onDelete: Cascade)
+  confirmedBy        User?               @relation(fields: [confirmedByUserId], references: [id], onDelete: SetNull)
+  evidence           FieldEvidence[]
+  conflicts          FieldConflict[]
+
+  @@unique([engagementId, coverLetterPackageId, token, source])
+  @@index([engagementId, token])
+  @@index([coverLetterPackageId])
+  @@map("extracted_field")
+}
+
+model FieldEvidence {
+  id               String   @id @default(uuid())
+  extractedFieldId String
+  sourceDocumentId String?
+  /// Version of the source document at extraction time.
+  sourceDocumentHash String?
+  pageNumber       Int?
+  /// The supporting text found in the document. Truncated; never a full doc.
+  supportingText   String?
+  boundingBox      Json?
+  createdAt        DateTime @default(now())
+
+  extractedField ExtractedField  @relation(fields: [extractedFieldId], references: [id], onDelete: Cascade)
+  sourceDocument SourceDocument? @relation(fields: [sourceDocumentId], references: [id], onDelete: SetNull)
+
+  @@index([extractedFieldId])
+  @@map("field_evidence")
+}
+
+model FieldConflict {
+  id                String         @id @default(uuid())
+  engagementId      String
+  extractedFieldId  String?
+  token             String
+  /// Competing values with their sources, as [{value, source, evidenceId}].
+  candidates        Json
+  recommendedValue  String?
+  recommendedSource ValueSource?
+  status            ConflictStatus @default(UNRESOLVED)
+  resolvedValue     String?
+  resolvedSource    ValueSource?
+  resolvedByUserId  String?
+  resolvedAt        DateTime?
+  resolutionNote    String?
+  createdAt         DateTime       @default(now())
+
+  engagement     Engagement      @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  extractedField ExtractedField? @relation(fields: [extractedFieldId], references: [id], onDelete: SetNull)
+  resolvedBy     User?           @relation(fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([engagementId, status])
+  @@map("field_conflict")
+}
+
+model ServiceSelection {
+  id             String   @id @default(uuid())
+  engagementId   String
+  /// Stable service code, e.g. `t2.gifi`, `t2.csrs4200`, `t1.t2125`.
+  serviceCode    String
+  label          String
+  isSelected     Boolean  @default(false)
+  /// Prior-year selection, shown as a suggestion only.
+  priorYearSelected Boolean?
+  /// True once a reviewer has explicitly confirmed the current-year selection.
+  confirmed      Boolean  @default(false)
+  confirmedByUserId String?
+  confirmedAt    DateTime?
+  freeTextValue  String?
+  displayOrder   Int      @default(0)
+
+  engagement Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@unique([engagementId, serviceCode])
+  @@index([engagementId])
+  @@map("service_selection")
+}
+
+// ---------------------------------------------------------------------------
+// Pricing
+// ---------------------------------------------------------------------------
+
+model FeeRule {
+  id             String       @id @default(uuid())
+  level          FeeRuleLevel
+  /// Populated according to the level.
+  engagementType EngagementType?
+  clientId       String?
+  clientGroup    String?
+  partnerUserId  String?
+  feeKind        FeeKind?
+  method         FeeMethod
+  percentage     Decimal?     @db.Decimal(7, 4)
+  fixedAmount    Decimal?     @db.Decimal(12, 2)
+  exactTarget    Decimal?     @db.Decimal(12, 2)
+  /// Disables the round-up-to-$5 rule. Administrator exception policy only.
+  skipRounding   Boolean      @default(false)
+  /// When false, retainers/hourly/extras are not auto-increased.
+  appliesToAncillaryCharges Boolean @default(false)
+  effectiveFrom  DateTime     @default(now())
+  effectiveTo    DateTime?
+  isActive       Boolean      @default(true)
+  description    String?
+  createdBy      String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  client          Client?          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  feeCalculations FeeCalculation[]
+
+  @@index([level, engagementType])
+  @@index([clientId])
+  @@index([isActive])
+  @@map("fee_rule")
+}
+
+model FeeCalculation {
+  id                 String    @id @default(uuid())
+  engagementId       String
+  feeKind            FeeKind
+  feeRuleId          String?
+  previousFee        Decimal?  @db.Decimal(12, 2)
+  previousFeeSource  ValueSource?
+  previousFeeEvidence String?
+  method             FeeMethod
+  percentage         Decimal?  @db.Decimal(7, 4)
+  fixedAmount        Decimal?  @db.Decimal(12, 2)
+  exactTarget        Decimal?  @db.Decimal(12, 2)
+  /// Result before the round-up rule.
+  unroundedFee       Decimal?  @db.Decimal(12, 2)
+  /// Final fee after ceiling(fee / 5) * 5.
+  roundedFee         Decimal?  @db.Decimal(12, 2)
+  increaseAmount     Decimal?  @db.Decimal(12, 2)
+  /// Effective percentage increase after rounding.
+  effectivePercentage Decimal? @db.Decimal(9, 4)
+  roundingApplied    Boolean   @default(true)
+  /// True when fees are quoted before GST (the default).
+  isPreTax           Boolean   @default(true)
+  taxNote            String?
+  isManualOverride   Boolean   @default(false)
+  overrideReason     String?
+  requiresApprovalType ApprovalType?
+  approvedByUserId   String?
+  approvedAt         DateTime?
+  /// Non-blocking warnings surfaced to the reviewer.
+  warnings           Json?
+  isBlocked          Boolean   @default(false)
+  blockedReason      String?
+  calculatedByUserId String?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  engagement Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  feeRule    FeeRule?   @relation(fields: [feeRuleId], references: [id], onDelete: SetNull)
+  calculatedBy User?    @relation(fields: [calculatedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([engagementId, feeKind])
+  @@index([engagementId])
+  @@map("fee_calculation")
+}
+
+// ---------------------------------------------------------------------------
+// Dates
+// ---------------------------------------------------------------------------
+
+model DateRule {
+  id             String   @id @default(uuid())
+  /// Stable code, e.g. `t2.filing_deadline`, `t1.payment_deadline`.
+  code           String   @unique
+  label          String
+  engagementType EngagementType?
+  /// Declarative definition interpreted by packages/dates.
+  definition     Json
+  /// True when the calculated result must be confirmed by a human.
+  requiresConfirmation Boolean @default(true)
+  isActive       Boolean  @default(true)
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  calculatedDates CalculatedDate[]
+
+  @@index([engagementType])
+  @@map("date_rule")
+}
+
+model CalculatedDate {
+  id                String    @id @default(uuid())
+  engagementId      String
+  dateRuleId        String?
+  token             String
+  inputDate         DateTime?
+  result            DateTime?
+  ruleCode          String?
+  assumptions       Json?
+  source            ValueSource @default(CALCULATED)
+  requiresConfirmation Boolean  @default(true)
+  confirmedByUserId String?
+  confirmedAt       DateTime?
+  /// Set when a required input was missing, which blocks approval.
+  isBlocked         Boolean   @default(false)
+  blockedReason     String?
+  manualOverride    DateTime?
+  overrideReason    String?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  engagement  Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  dateRule    DateRule?  @relation(fields: [dateRuleId], references: [id], onDelete: SetNull)
+  confirmedBy User?      @relation(fields: [confirmedByUserId], references: [id], onDelete: SetNull)
+
+  @@unique([engagementId, token])
+  @@index([engagementId])
+  @@map("calculated_date")
+}
+
+// ---------------------------------------------------------------------------
+// Review, approval and wording exceptions
+// ---------------------------------------------------------------------------
+
+model ReviewAssignment {
+  id           String    @id @default(uuid())
+  engagementId String
+  userId       String
+  role         String
+  assignedAt   DateTime  @default(now())
+  assignedBy   String?
+  dueDate      DateTime?
+  completedAt  DateTime?
+
+  engagement Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@index([userId, completedAt])
+  @@map("review_assignment")
+}
+
+model ReviewComment {
+  id                String   @id @default(uuid())
+  engagementId      String
+  documentVersionId String?
+  userId            String
+  body              String
+  /// Field token or section anchor the comment is attached to.
+  anchor            String?
+  isInternal        Boolean  @default(true)
+  resolvedAt        DateTime?
+  resolvedByUserId  String?
+  createdAt         DateTime @default(now())
+
+  engagement      Engagement       @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  documentVersion DocumentVersion? @relation(fields: [documentVersionId], references: [id], onDelete: Cascade)
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@index([documentVersionId])
+  @@map("review_comment")
+}
+
+model Approval {
+  id                String           @id @default(uuid())
+  engagementId      String
+  documentVersionId String?
+  coverLetterPackageId String?
+  type              ApprovalType
+  decision          ApprovalDecision
+  userId            String
+  /// Role the user was acting under, captured at decision time.
+  actingRole        Role
+  comment           String?
+  /// Exceptions the approver explicitly accepted.
+  exceptionsAccepted Json?
+  /// Hash of the exact file approved, so the approval is provably about it.
+  documentHash      String?
+  sourceDocumentVersions Json?
+  createdAt         DateTime         @default(now())
+
+  engagement         Engagement          @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  documentVersion    DocumentVersion?    @relation(fields: [documentVersionId], references: [id], onDelete: Cascade)
+  coverLetterPackage CoverLetterPackage? @relation(fields: [coverLetterPackageId], references: [id], onDelete: Cascade)
+  user               User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([engagementId, type])
+  @@index([documentVersionId])
+  @@map("approval")
+}
+
+model WordingException {
+  id                String   @id @default(uuid())
+  engagementId      String
+  documentVersionId String?
+  /// Section or paragraph anchor within the template manifest.
+  sectionAnchor     String
+  /// Wording as published in the approved master template version.
+  originalWording   String
+  revisedWording    String
+  reason            String
+  authorUserId      String
+  createdAt         DateTime @default(now())
+  approvedByUserId  String?
+  approvedAt        DateTime?
+  rejectedAt        DateTime?
+  rejectionReason   String?
+  /// Applies only to this document version unless promoted to a new template.
+  promotedToTemplateVersionId String?
+
+  engagement      Engagement       @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  documentVersion DocumentVersion? @relation(fields: [documentVersionId], references: [id], onDelete: Cascade)
+  author          User             @relation("WordingExceptionAuthor", fields: [authorUserId], references: [id], onDelete: Restrict)
+  approver        User?            @relation("WordingExceptionApprover", fields: [approvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([engagementId])
+  @@map("wording_exception")
+}
+
+// ---------------------------------------------------------------------------
+// Adobe Acrobat Sign
+// ---------------------------------------------------------------------------
+
+model AdobeAgreement {
+  id                String               @id @default(uuid())
+  engagementId      String
+  documentVersionId String
+  /// Adobe's agreement id. Null until the create call succeeds.
+  agreementId       String?              @unique
+  /// Deterministic key that makes agreement creation idempotent.
+  idempotencyKey    String               @unique
+  status            AdobeAgreementStatus @default(CREATED)
+  title             String
+  signingAttempt    Int                  @default(1)
+  isTestMode        Boolean              @default(false)
+  reminderFrequency String?
+  expiresAt         DateTime?
+  ccEmails          Json?
+  sentAt            DateTime?
+  completedAt       DateTime?
+  declinedAt        DateTime?
+  declineReason     String?
+  cancelledAt       DateTime?
+  expiredAt         DateTime?
+  failureReason     String?
+  signedPdfKarbonDocumentId String?
+  certificateKarbonDocumentId String?
+  signedPdfHash     String?
+  certificateHash   String?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  engagement      Engagement      @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  documentVersion DocumentVersion @relation(fields: [documentVersionId], references: [id], onDelete: Cascade)
+  signers         AdobeSigner[]
+  events          AdobeEvent[]
+
+  @@index([engagementId])
+  @@index([status])
+  @@map("adobe_agreement")
+}
+
+model AdobeSigner {
+  id               String            @id @default(uuid())
+  agreementId      String
+  participantId    String?
+  name             String
+  email            String
+  role             ParticipantRole
+  signingOrder     Int               @default(1)
+  status           AdobeSignerStatus @default(NOT_YET_NOTIFIED)
+  viewedAt         DateTime?
+  signedAt         DateTime?
+  declinedAt       DateTime?
+  delegatedToEmail String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  agreement   AdobeAgreement         @relation(fields: [agreementId], references: [id], onDelete: Cascade)
+  participant EngagementParticipant? @relation(fields: [participantId], references: [id], onDelete: SetNull)
+
+  @@index([agreementId])
+  @@map("adobe_signer")
+}
+
+model AdobeEvent {
+  id              String   @id @default(uuid())
+  agreementId     String?
+  /// Adobe's own event id, used for webhook de-duplication.
+  providerEventId String   @unique
+  eventType       String
+  payload         Json
+  signatureValid  Boolean  @default(false)
+  processedAt     DateTime?
+  processingError String?
+  receivedAt      DateTime @default(now())
+
+  agreement AdobeAgreement? @relation(fields: [agreementId], references: [id], onDelete: SetNull)
+
+  @@index([agreementId])
+  @@index([eventType])
+  @@map("adobe_event")
+}
+
+// ---------------------------------------------------------------------------
+// Cover letters
+// ---------------------------------------------------------------------------
+
+model CoverLetterPackage {
+  id             String            @id @default(uuid())
+  engagementId   String
+  documentType   DocumentType
+  /// Populated for per-taxpayer T1 cover letters.
+  participantId  String?
+  status         CoverLetterStatus @default(BLOCKED)
+  idempotencyKey String            @unique
+  /// Fingerprint of the exact source-document set used. Drives staleness.
+  sourceFingerprint String?
+  /// Enclosures actually included in the client package.
+  enclosures     Json?
+  blockedReason  String?
+  staleReason    String?
+  markedStaleAt  DateTime?
+  readyForDeliveryAt DateTime?
+  approvedByUserId String?
+  approvedAt     DateTime?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  engagement      Engagement             @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  participant     EngagementParticipant? @relation(fields: [participantId], references: [id], onDelete: SetNull)
+  documentVersions DocumentVersion[]
+  extractedFields ExtractedField[]
+  approvals       Approval[]
+
+  @@index([engagementId, status])
+  @@map("cover_letter_package")
+}
+
+// ---------------------------------------------------------------------------
+// Integrations, jobs, workflow and audit
+// ---------------------------------------------------------------------------
+
+model KarbonActivity {
+  id                String             @id @default(uuid())
+  engagementId      String?
+  documentVersionId String?
+  karbonWorkItemKey String?
+  type              KarbonActivityType
+  outcome           ActivityOutcome
+  /// Deterministic key preventing duplicate uploads and comments on retry.
+  idempotencyKey    String?            @unique
+  karbonObjectId    String?
+  requestSummary    Json?
+  responseSummary   Json?
+  errorMessage      String?
+  correlationId     String?
+  createdAt         DateTime           @default(now())
+
+  engagement      Engagement?      @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  documentVersion DocumentVersion? @relation(fields: [documentVersionId], references: [id], onDelete: SetNull)
+
+  @@index([engagementId])
+  @@index([type, outcome])
+  @@map("karbon_activity")
+}
+
+model IntegrationConnection {
+  id             String              @id @default(uuid())
+  provider       IntegrationProvider @unique
+  displayName    String
+  isEnabled      Boolean             @default(false)
+  /// True when pointing at a vendor sandbox rather than production.
+  isSandbox      Boolean             @default(true)
+  /// Envelope-encrypted credential blob. Never plaintext.
+  encryptedCredentials String?
+  baseUrl        String?
+  /// Result of the last connectivity check.
+  lastCheckedAt  DateTime?
+  lastCheckOk    Boolean?
+  lastCheckError String?
+  capabilities   Json?
+  rotatedAt      DateTime?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@map("integration_connection")
+}
+
+model BackgroundJob {
+  id                String    @id @default(uuid())
+  jobType           String
+  status            JobStatus @default(PENDING)
+  /// Prevents duplicate work across retries and concurrent enqueues.
+  idempotencyKey    String    @unique
+  correlationId     String
+  payload           Json
+  result            Json?
+  engagementId      String?
+  documentVersionId String?
+  attempt           Int       @default(0)
+  maxAttempts       Int       @default(5)
+  runAt             DateTime  @default(now())
+  startedAt         DateTime?
+  completedAt       DateTime?
+  failureReason     String?
+  /// Full technical detail, visible to administrators only.
+  failureDetail     Json?
+  /// Human-readable message shown to the assigned user.
+  userMessage       String?
+  lockedBy          String?
+  lockedAt          DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  engagement      Engagement?      @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  documentVersion DocumentVersion? @relation(fields: [documentVersionId], references: [id], onDelete: SetNull)
+
+  @@index([status, runAt])
+  @@index([engagementId])
+  @@index([jobType, status])
+  @@map("background_job")
+}
+
+model WorkflowEvent {
+  id            String            @id @default(uuid())
+  engagementId  String
+  fromStatus    EngagementStatus?
+  toStatus      EngagementStatus
+  reason        String?
+  triggeredBy   String?
+  correlationId String?
+  createdAt     DateTime          @default(now())
+
+  engagement Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId, createdAt])
+  @@map("workflow_event")
+}
+
+/// Immutable audit trail. A database trigger rejects UPDATE and DELETE.
+model AuditEvent {
+  id            String   @id @default(uuid())
+  userId        String?
+  engagementId  String?
+  eventType     String
+  objectType    String
+  objectId      String?
+  beforeValue   Json?
+  afterValue    Json?
+  reason        String?
+  correlationId String?
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime @default(now())
+
+  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
+  engagement Engagement? @relation(fields: [engagementId], references: [id], onDelete: SetNull)
+
+  @@index([engagementId, createdAt])
+  @@index([userId, createdAt])
+  @@index([eventType])
+  @@index([correlationId])
+  @@index([objectType, objectId])
+  @@map("audit_event")
+}
+
+model SystemSetting {
+  key         String   @id
+  value       Json
+  description String?
+  /// Settings only an administrator may change.
+  isProtected Boolean  @default(true)
+  updatedBy   String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("system_setting")
+}
+
+/// Drives the database-level workflow guard. Seeded from
+/// packages/workflows/src/engagement-state-machine.ts and verified by a test.
+model WorkflowTransition {
+  fromStatus EngagementStatus
+  toStatus   EngagementStatus
+
+  @@id([fromStatus, toStatus])
+  @@map("workflow_transition")
+}

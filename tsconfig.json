@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "plugins": [{ "name": "next" }]
+  },
+  "include": [
+    "packages/**/*.ts",
+    "packages/**/*.tsx",
+    "apps/**/*.ts",
+    "apps/**/*.tsx",
+    "scripts/**/*.ts",
+    "tests/**/*.ts",
+    "*.ts",
+    "*.mts",
+    "apps/web/next-env.d.ts"
+  ],
+  "exclude": ["node_modules", "**/node_modules", "**/.next", "**/dist", "**/build"]
+}

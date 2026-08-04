@@ -1,0 +1,24 @@
+{
+  "name": "@element/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch --tsconfig ../../tsconfig.json src/index.ts",
+    "start": "tsx --tsconfig ../../tsconfig.json src/index.ts"
+  },
+  "dependencies": {
+    "@element/audit": "workspace:*",
+    "@element/database": "workspace:*",
+    "@element/dates": "workspace:*",
+    "@element/documents": "workspace:*",
+    "@element/integrations": "workspace:*",
+    "@element/pricing": "workspace:*",
+    "@element/services": "workspace:*",
+    "@element/shared": "workspace:*",
+    "@element/workflows": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "4.23.5"
+  }
+}

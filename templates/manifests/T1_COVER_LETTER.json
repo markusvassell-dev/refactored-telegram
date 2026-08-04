@@ -1,0 +1,305 @@
+{
+  "manifestVersion": 1,
+  "documentType": "T1_COVER_LETTER",
+  "templateVersion": 1,
+  "sourceFileName": "T1 Cover Letter.docx",
+  "sourceFileHash": "a982fb6a0e7b970c17e50d5f0b12e6d301ba50cfbb692ea9af86a3cf61be87c6",
+  "normalizedFileHash": "615f7c46fe0d244b473171f31ebcbbe05bd007c1dc65978da4cb8993cf3c910a",
+  "fields": [
+    {
+      "token": "taxpayer.full_legal_name",
+      "label": "Taxpayer name",
+      "dataType": "STRING",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "CLIENT",
+      "displayOrder": 1
+    },
+    {
+      "token": "taxpayer.address",
+      "label": "Address",
+      "dataType": "MULTILINE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "CLIENT",
+      "displayOrder": 2
+    },
+    {
+      "token": "engagement.tax_year",
+      "label": "Taxation year",
+      "dataType": "YEAR",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 1
+    },
+    {
+      "token": "dates.sent",
+      "label": "Date sent",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 2
+    },
+    {
+      "token": "dates.filing_deadline",
+      "label": "Filing deadline",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 3
+    },
+    {
+      "token": "dates.payment_deadline",
+      "label": "Payment deadline",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 4
+    },
+    {
+      "token": "dates.t183_requested_by",
+      "label": "Signed Form T183 requested by",
+      "dataType": "DATE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 5
+    },
+    {
+      "token": "dates.balance_payment_date",
+      "label": "Balance payment / refund date",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "DATES",
+      "displayOrder": 6
+    },
+    {
+      "token": "amounts.estimated_balance",
+      "label": "Estimated balance owing / (refund)",
+      "dataType": "MONEY",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 1
+    },
+    {
+      "token": "amounts.instalments_or_withheld",
+      "label": "Prior instalments or tax withheld",
+      "dataType": "MONEY",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 2
+    },
+    {
+      "token": "amounts.net_balance",
+      "label": "Net estimated balance / (refund)",
+      "dataType": "MONEY",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 3
+    },
+    {
+      "token": "instalment1.date",
+      "label": "Instalment 1 date",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 10
+    },
+    {
+      "token": "instalment1.amount",
+      "label": "Instalment 1 amount",
+      "dataType": "MONEY",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 11
+    },
+    {
+      "token": "instalment1.notes",
+      "label": "Instalment 1 notes",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 12
+    },
+    {
+      "token": "instalment2.date",
+      "label": "Instalment 2 date",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 13
+    },
+    {
+      "token": "instalment2.amount",
+      "label": "Instalment 2 amount",
+      "dataType": "MONEY",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 14
+    },
+    {
+      "token": "instalment2.notes",
+      "label": "Instalment 2 notes",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 15
+    },
+    {
+      "token": "foreign.details",
+      "label": "Foreign information returns prepared or required",
+      "dataType": "STRING",
+      "required": false,
+      "autoPopulatable": true,
+      "displayGroup": "COVER_LETTER",
+      "displayOrder": 20
+    },
+    {
+      "token": "firm.telephone",
+      "label": "Firm telephone number",
+      "dataType": "PHONE",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "FIRM",
+      "displayOrder": 1
+    },
+    {
+      "token": "firm.email",
+      "label": "Firm email address",
+      "dataType": "EMAIL",
+      "required": true,
+      "autoPopulatable": true,
+      "displayGroup": "FIRM",
+      "displayOrder": 2
+    }
+  ],
+  "conditionalSections": [],
+  "checkboxes": [
+    {
+      "code": "enc.t1_return",
+      "label": "Personal income tax return and supporting schedules",
+      "anchorText": "Personal income tax return and supporting schedules",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "enc.t183",
+      "label": "T183 Information Return for Electronic Filing",
+      "anchorText": "T183 Information Return for Electronic Filing",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "enc.tax_summary",
+      "label": "Tax summary showing the estimated balance owing or refund",
+      "anchorText": "Tax summary showing the estimated balance owing or refund",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "enc.instalment_information",
+      "label": "Instalment information",
+      "anchorText": "Instalment information, where applicable",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "enc.engagement_letter",
+      "label": "Engagement letter",
+      "anchorText": "Engagement letter, where applicable",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "enc.other_schedules",
+      "label": "Other schedules, elections or information returns",
+      "anchorText": "Other schedules, elections or information returns prepared",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "instalments.not_required",
+      "label": "Instalments not currently expected",
+      "anchorText": "You are not currently expected to be required to make personal income tax instalments",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "instalments.required",
+      "label": "Instalments may be required",
+      "anchorText": "You may be required to make personal income tax instalments",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "foreign.none",
+      "label": "No additional foreign information returns required",
+      "anchorText": "You were not required to file any additional foreign information returns",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "foreign.required",
+      "label": "Foreign information returns prepared or required",
+      "anchorText": "The following foreign information returns were prepared",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    },
+    {
+      "code": "review.identity",
+      "label": "Name, address, marital status, residency and dependants accurate",
+      "anchorText": "Your name, address, marital status, residency and dependant information are accurate",
+      "defaultChecked": false,
+      "alwaysChecked": false
+    }
+  ],
+  "signatureAnchors": [],
+  "internalOnlySections": [],
+  "editableSections": [
+    {
+      "key": "cover_letter_intro",
+      "label": "Introductory paragraphs",
+      "range": {
+        "startsWith": "We are pleased to enclose your personal income tax return",
+        "endsBefore": "1. Documents enclosed",
+        "inclusiveEnd": false
+      },
+      "editLevel": "ORDINARY"
+    }
+  ],
+  "sanitation": {
+    "removeAllHighlights": true,
+    "forbiddenText": [],
+    "placeholderPatterns": [
+      "\\[[A-Z][^\\]]{2,}\\]",
+      "\\[\\[[a-z0-9_.]+\\]\\]"
+    ],
+    "expectedPageRange": [
+      3,
+      10
+    ],
+    "requiredText": [
+      "PERSONAL INCOME TAX COVER LETTER",
+      "16. Final review checklist"
+    ],
+    "requiredMediaParts": [
+      "word/media/image1.png"
+    ]
+  },
+  "lockedWordingByDefault": true,
+  "notes": "Written for a single taxpayer. A joint T1 engagement produces one cover letter per taxpayer; two taxpayers are never combined into one letter unless an approved joint cover-letter template is added."
+}

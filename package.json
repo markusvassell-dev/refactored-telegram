@@ -1,0 +1,53 @@
+{
+  "name": "element-engagements",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=22.0.0 <23"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "playwright test",
+    "build": "pnpm --filter @element/web build",
+    "dev": "pnpm --filter @element/web dev",
+    "dev:worker": "pnpm --filter @element/worker dev",
+    "db:generate": "prisma generate --schema packages/database/prisma/schema.prisma",
+    "db:migrate": "prisma migrate deploy --schema packages/database/prisma/schema.prisma",
+    "db:migrate:dev": "prisma migrate dev --schema packages/database/prisma/schema.prisma",
+    "db:push": "prisma db push --schema packages/database/prisma/schema.prisma",
+    "db:seed": "tsx packages/database/src/seed.ts",
+    "db:studio": "prisma studio --schema packages/database/prisma/schema.prisma",
+    "templates:normalize": "tsx scripts/normalize-templates.ts",
+    "templates:verify": "tsx scripts/verify-template-hashes.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "@playwright/test": "1.62.1",
+    "@types/node": "22.20.1",
+    "@types/react": "19.0.12",
+    "@types/react-dom": "19.0.4",
+    "eslint": "9.39.5",
+    "eslint-config-prettier": "9.1.0",
+    "prettier": "3.4.2",
+    "prisma": "6.19.3",
+    "tsx": "4.23.5",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.66.0",
+    "vite-tsconfig-paths": "5.1.4",
+    "vitest": "3.2.7"
+  },
+  "pnpm": {
+    "overrides": {
+      "@types/react": "19.0.12",
+      "@types/react-dom": "19.0.4"
+    }
+  }
+}
