@@ -56,10 +56,17 @@ LOCATE_PRIOR_YEAR_DOCUMENTS
   ├─ ambiguous ──► SOURCE_DOCUMENT_REVIEW_REQUIRED   (a person chooses)
   ▼
 EXTRACT_DOCUMENT_TEXT      deterministic patterns first; AI only for what
-  │                        is left, and only when explicitly enabled
+  │                        is left, and only when explicitly enabled;
+  │                        prior-year checkbox states read as suggestions
   ▼
-Pricing · Dates · Services      each value keeps its source and evidence
-  │
+PREPARE_ENGAGEMENT
+  │  records current Karbon information as its own source
+  │  raises a FieldConflict wherever sources disagree — never chooses
+  │  seeds one ServiceSelection per template checkbox, unconfirmed
+  │  calculates every fee from the resolved price rule
+  │  evaluates the date rules, blocking any deadline whose inputs
+  │    are unknown rather than assuming the common case
+  ├─ conflicts · blocked fees · blocked deadlines ──► a person decides
   ▼
 GENERATE_ENGAGEMENT_LETTER
   │  approved master template + confirmed values

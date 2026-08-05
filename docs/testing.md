@@ -3,10 +3,10 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (176 tests)
-pnpm test:unit          # 122 — no external dependencies
-pnpm test:integration   # 54  — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 13  — needs a browser
+pnpm test               # unit + integration  (213 tests)
+pnpm test:unit          # 140 — no external dependencies
+pnpm test:integration   # 73  — needs Postgres and LibreOffice Writer
+pnpm test:e2e           # 16  — needs a browser
 pnpm build              # production build
 ```
 
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (122)
+## Unit tests (140)
 
 No database, no filesystem, no network.
 
@@ -68,7 +68,20 @@ first run's formatting; several replacements in one paragraph; XML escaping;
 curly-quote and dash tolerance; scoped normalisation; highlight stripping;
 manifest validation.
 
-## Integration tests (54)
+**Prior-year checkboxes and date facts (9)** — a ticked and an unticked box read
+from the same document; the glyph nearest the anchor winning; matching through
+smart quotes and collapsed whitespace; and — the point of the suite — an anchor
+that cannot be found, carries no glyph, or points at a token coming back as
+`null` rather than `false`, because `false` would silently drop a service the
+client actually bought. Every catalogued date fact has a question and an
+explanation, and an uncatalogued one still produces something askable.
+
+**Signed download links (9)** — a reference survives a round trip through a URL
+path segment; a signature cannot be moved onto another document, cannot have its
+expiry extended, cannot be forged or malformed, does not survive a different
+deployment secret, and stops verifying once it expires.
+
+## Integration tests (73)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -99,7 +112,20 @@ non-compilation T2 refused the compilation template; staleness on a changed
 source; human approval recording the file hash and source documents; duplicate
 webhooks; joint T1 parallel signing.
 
-## Browser tests (13)
+**Preparation (19)** — current Karbon values recorded as their own source and
+never overwriting a confirmed one; a disagreement raising a conflict that
+recommends the higher-priority source instead of choosing; a cosmetic difference
+treated as agreement; the same conflict not raised twice and a resolved one left
+alone; fees taken from the prior-year letter, increased and rounded upward
+($1,234 → $1,271.02 → $1,275), and blocked outright when no prior-year amount
+was found; the compilation fee priced only when compilation is selected for the
+new year; each date recording its rule, input and assumptions; the balance-due
+day blocked until eligibility is answered, then two months for "no" and three
+for "yes"; a confirmed date never rewritten; last year's ticks carried forward
+as `priorYearSelected` with `confirmed` still false; and three consecutive runs
+producing exactly the same row counts.
+
+## Browser tests (16)
 
 Playwright, Test Mode on.
 
@@ -110,6 +136,16 @@ levels; production sending un-armable while the environment sets `TEST_MODE`;
 unsupplied templates shown as awaiting approval; a read-only user refused the
 audit log; skip link, landmarks and ARIA tab wiring; health and readiness
 endpoints; webhook signature rejection and the Adobe verification handshake.
+
+Two of them cover the work a reviewer actually does. Preparing an engagement
+from the Overview tab must leave the balance-due day blocked, ask the question
+that unblocks it, recalculate when it is answered, and leave every service
+unconfirmed. And a generated PDF must be readable in place: the test puts a real
+working copy where the server will find it, then asserts the frame's signed
+`src`, a `200 application/pdf` served `inline` with `X-Frame-Options:
+SAMEORIGIN` and `frame-ancestors 'self'` — a blanket `DENY` would leave a blank
+panel — a `403` for a tampered signature and a `401` for the same link without a
+session.
 
 ## Structural regression
 
@@ -139,6 +175,11 @@ Each was fixed in the code, not the test:
 6. The Content-Security-Policy blocked `'unsafe-eval'`, which React Refresh
    needs, so **the entire application was non-interactive under `next dev`** —
    every button and tab inert.
+7. The global `X-Frame-Options: DENY` and `frame-ancestors 'none'` applied to
+   the download route too, so the new document preview would have been a blank
+   panel. Narrowed to `SAMEORIGIN` / `frame-ancestors 'self'` on that one route.
+8. An uncatalogued date fact rendered as "has Non Resident Beneficiary" —
+   readable, but not a sentence anyone would write.
 
 ## What is not covered
 

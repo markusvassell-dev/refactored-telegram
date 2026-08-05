@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from 'react';
 import { ActionForm } from '@/components/action-form';
+import type { DocumentVersionLinks } from '@/lib/document-links';
 import {
   addComment,
   approveDocument,
@@ -9,9 +10,12 @@ import {
   approveWordingException,
   confirmCompilationSelection,
   confirmDate,
+  confirmDateFact,
+  confirmServiceSelection,
   generateCoverLetter,
   markReadyToSend,
   overrideFee,
+  prepareEngagement,
   requestChanges,
   resolveConflict,
   sendForSignature,
@@ -51,17 +55,29 @@ const TABS = [
 
 type Tab = (typeof TABS)[number];
 
+/** A fact a date rule depends on, with the answer recorded so far. */
+export interface DateFactPrompt {
+  key: string;
+  question: string;
+  help: string;
+  answer: boolean | null;
+}
+
 export function ReviewWorkspace({
   csrfToken,
   engagement,
   auditEvents,
   templateVersion,
+  documentLinks,
+  dateFacts,
   generationGate,
 }: {
   csrfToken: string;
   engagement: any;
   auditEvents: any[];
   templateVersion: any;
+  documentLinks: Record<string, DocumentVersionLinks>;
+  dateFacts: DateFactPrompt[];
   generationGate: { ok: boolean; blockers: string[]; warnings: string[] };
 }): ReactNode {
   const [tab, setTab] = useState<Tab>('Overview');
@@ -99,19 +115,21 @@ export function ReviewWorkspace({
         ) : null}
         {tab === 'Source Documents' ? <SourceDocuments engagement={engagement} /> : null}
         {tab === 'Client Information' ? <ClientInformation csrfToken={csrfToken} engagement={engagement} /> : null}
-        {tab === 'Dates and Deadlines' ? <Dates csrfToken={csrfToken} engagement={engagement} /> : null}
+        {tab === 'Dates and Deadlines' ? (
+          <Dates csrfToken={csrfToken} engagement={engagement} dateFacts={dateFacts} />
+        ) : null}
         {tab === 'Services' ? <Services csrfToken={csrfToken} engagement={engagement} /> : null}
         {tab === 'Pricing' ? <Pricing csrfToken={csrfToken} engagement={engagement} /> : null}
         {tab === 'Previous-Year Comparison' ? <PreviousYear engagement={engagement} /> : null}
         {tab === 'Master-Template Comparison' ? (
           <MasterTemplate csrfToken={csrfToken} engagement={engagement} templateVersion={templateVersion} />
         ) : null}
-        {tab === 'Document Preview' ? <Preview engagement={engagement} /> : null}
+        {tab === 'Document Preview' ? <Preview engagement={engagement} documentLinks={documentLinks} /> : null}
         {tab === 'Signers' ? <Signers engagement={engagement} /> : null}
         {tab === 'Approvals' ? <Approvals csrfToken={csrfToken} engagement={engagement} /> : null}
         {tab === 'Karbon Activity' ? <KarbonActivity engagement={engagement} /> : null}
         {tab === 'Adobe Sign' ? <AdobeSign csrfToken={csrfToken} engagement={engagement} /> : null}
-        {tab === 'Version History' ? <Versions engagement={engagement} /> : null}
+        {tab === 'Version History' ? <Versions engagement={engagement} documentLinks={documentLinks} /> : null}
         {tab === 'Audit History' ? <AuditHistory auditEvents={auditEvents} /> : null}
       </div>
     </div>
@@ -195,6 +213,15 @@ function Overview({
 
       <Card title="Actions">
         <div className="grid gap-6 lg:grid-cols-2">
+          <ActionForm action={prepareEngagement} csrfToken={csrfToken} submitLabel="Prepare" variant="secondary">
+            <input type="hidden" name="engagementId" value={engagement.id} />
+            <p className="text-sm text-slate-600">
+              Records the current Karbon information, raises a conflict wherever it disagrees with the prior-year
+              letter, seeds the service selections, calculates the fees and evaluates the deadline rules. Nothing you
+              have already confirmed is overwritten, so this is safe to re-run.
+            </p>
+          </ActionForm>
+
           <ActionForm
             action={startGeneration}
             csrfToken={csrfToken}
@@ -412,7 +439,65 @@ function ClientInformation({ csrfToken, engagement }: { csrfToken: string; engag
   );
 }
 
-function Dates({ csrfToken, engagement }: { csrfToken: string; engagement: any }): ReactNode {
+function Dates({
+  csrfToken,
+  engagement,
+  dateFacts,
+}: {
+  csrfToken: string;
+  engagement: any;
+  dateFacts: DateFactPrompt[];
+}): ReactNode {
+  const unanswered = dateFacts.filter((fact) => fact.answer === null);
+
+  return (
+    <>
+      {dateFacts.length > 0 ? (
+        <Card
+          title="Information the deadlines depend on"
+          description={
+            unanswered.length > 0
+              ? 'These deadlines stay blocked until each question is answered. The application will not assume the common case — a wrong legal deadline in a signed letter is not recoverable.'
+              : 'Every fact these deadlines depend on has been answered. Change an answer to recalculate.'
+          }
+        >
+          {dateFacts.map((fact) => (
+            <div key={fact.key} className="mb-4 rounded border border-slate-200 p-3 last:mb-0">
+              <p className="text-sm font-medium text-slate-900">{fact.question}</p>
+              <p className="mt-1 text-xs text-slate-600">{fact.help}</p>
+              <p className="mt-2 text-sm">
+                Current answer:{' '}
+                <strong>{fact.answer === null ? 'Not answered' : fact.answer ? 'Yes' : 'No'}</strong>
+              </p>
+              <ActionForm
+                action={confirmDateFact}
+                csrfToken={csrfToken}
+                submitLabel={fact.answer === null ? 'Record answer' : 'Change answer'}
+                variant="secondary"
+              >
+                <input type="hidden" name="engagementId" value={engagement.id} />
+                <input type="hidden" name="factKey" value={fact.key} />
+                <fieldset className="mt-1">
+                  <legend className="sr-only">{fact.question}</legend>
+                  <label className="flex items-center gap-2 text-sm">
+                    <input type="radio" name="answer" value="yes" defaultChecked={fact.answer === true} required /> Yes
+                  </label>
+                  <label className="mt-1 flex items-center gap-2 text-sm">
+                    <input type="radio" name="answer" value="no" defaultChecked={fact.answer === false} /> No
+                  </label>
+                </fieldset>
+              </ActionForm>
+            </div>
+          ))}
+        </Card>
+      ) : null}
+
+      <DateTable csrfToken={csrfToken} engagement={engagement} />
+    </>
+  );
+}
+
+function DateTable({ csrfToken, engagement }: { csrfToken: string; engagement: any }): ReactNode {
   return (
     <Card
       title="Dates and deadlines"
@@ -464,9 +549,12 @@ function Dates({ csrfToken, engagement }: { csrfToken: string; engagement: any }
 function Services({ csrfToken, engagement }: { csrfToken: string; engagement: any }): ReactNode {
   return (
     <>
-      <Card title="Selected services">
+      <Card
+        title="Selected services"
+        description="Last year's selection is carried forward as a suggestion only. Each service is confirmed for the new year before the letter can be generated."
+      >
         {engagement.serviceSelections.length === 0 ? (
-          <Empty message="No services have been recorded yet." />
+          <Empty message="No services have been recorded yet. Run Prepare on the Overview tab." />
         ) : (
           <table className="table">
             <thead>
@@ -475,6 +563,7 @@ function Services({ csrfToken, engagement }: { csrfToken: string; engagement: an
                 <th scope="col">This year</th>
                 <th scope="col">Last year</th>
                 <th scope="col">Confirmed</th>
+                <th scope="col">Set for this year</th>
               </tr>
             </thead>
             <tbody>
@@ -489,7 +578,31 @@ function Services({ csrfToken, engagement }: { csrfToken: string; engagement: an
                         ? 'Included (suggestion only)'
                         : 'Not included'}
                   </td>
-                  <td>{service.confirmed ? 'Yes' : 'No'}</td>
+                  <td>{service.confirmed ? 'Yes' : <span className="text-amber-700">No</span>}</td>
+                  <td>
+                    <div className="flex gap-2">
+                      <ActionForm
+                        action={confirmServiceSelection}
+                        csrfToken={csrfToken}
+                        submitLabel="Include"
+                        variant="secondary"
+                      >
+                        <input type="hidden" name="engagementId" value={engagement.id} />
+                        <input type="hidden" name="serviceCode" value={service.serviceCode} />
+                        <input type="hidden" name="selected" value="yes" />
+                      </ActionForm>
+                      <ActionForm
+                        action={confirmServiceSelection}
+                        csrfToken={csrfToken}
+                        submitLabel="Exclude"
+                        variant="secondary"
+                      >
+                        <input type="hidden" name="engagementId" value={engagement.id} />
+                        <input type="hidden" name="serviceCode" value={service.serviceCode} />
+                        <input type="hidden" name="selected" value="no" />
+                      </ActionForm>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -786,8 +899,15 @@ function MasterTemplate({
   );
 }
 
-function Preview({ engagement }: { engagement: any }): ReactNode {
+function Preview({
+  engagement,
+  documentLinks,
+}: {
+  engagement: any;
+  documentLinks: Record<string, DocumentVersionLinks>;
+}): ReactNode {
   const latest = engagement.documentVersions?.[0];
+  const links = latest ? documentLinks[latest.id] : undefined;
 
   return (
     <Card title="Document preview">
@@ -798,6 +918,34 @@ function Preview({ engagement }: { engagement: any }): ReactNode {
           <p className="text-sm text-slate-600">
             Version {latest.versionNumber} · {latest.pageCount ?? '?'} pages · status {latest.status}
           </p>
+
+          <div className="mt-3 flex flex-wrap gap-3">
+            {links?.pdf ? (
+              <a className="btn-secondary" href={links.pdf.url} target="_blank" rel="noreferrer">
+                Open PDF in a new tab
+              </a>
+            ) : null}
+            {links?.docx ? (
+              <a className="btn-secondary" href={links.docx.url} download>
+                Download Word working copy
+              </a>
+            ) : null}
+          </div>
+
+          {links?.pdf ? (
+            <iframe
+              title={`Engagement letter version ${latest.versionNumber}`}
+              src={links.pdf.url}
+              className="mt-3 h-[70vh] w-full rounded border border-slate-300 bg-slate-50"
+            />
+          ) : (
+            <p className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-800">
+              This version has no PDF working copy to display. It may not have been converted yet, or the temporary
+              copy may have passed its retention period — regenerate it, or open the copy held in Karbon. Do not
+              approve a version you cannot read.
+            </p>
+          )}
+
           {latest.validationReport ? (
             <div className="mt-3">
               <p className="text-sm font-medium">
@@ -1091,36 +1239,66 @@ function AdobeSign({ csrfToken, engagement }: { csrfToken: string; engagement: a
   );
 }
 
-function Versions({ engagement }: { engagement: any }): ReactNode {
+function Versions({
+  engagement,
+  documentLinks,
+}: {
+  engagement: any;
+  documentLinks: Record<string, DocumentVersionLinks>;
+}): ReactNode {
   return (
     <Card title="Version history" description="Every saved edit creates a new version. Approved and signed versions are immutable.">
       {engagement.documentVersions.length === 0 ? (
         <Empty message="No versions have been generated." />
       ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th scope="col">Version</th>
-              <th scope="col">Type</th>
-              <th scope="col">Status</th>
-              <th scope="col">Created by</th>
-              <th scope="col">Approved by</th>
-              <th scope="col">PDF hash</th>
-            </tr>
-          </thead>
-          <tbody>
-            {engagement.documentVersions.map((version: any) => (
-              <tr key={version.id}>
-                <td>v{version.versionNumber}</td>
-                <td className="text-xs">{version.documentType.replace(/_/g, ' ').toLowerCase()}</td>
-                <td>{version.status.replace(/_/g, ' ').toLowerCase()}</td>
-                <td>{version.creator?.displayName ?? '—'}</td>
-                <td>{version.approver?.displayName ?? '—'}</td>
-                <td className="max-w-[10rem] truncate font-mono text-xs">{version.pdfHash ?? '—'}</td>
+        <>
+          <table className="table">
+            <thead>
+              <tr>
+                <th scope="col">Version</th>
+                <th scope="col">Type</th>
+                <th scope="col">Status</th>
+                <th scope="col">Created by</th>
+                <th scope="col">Approved by</th>
+                <th scope="col">PDF hash</th>
+                <th scope="col">Working copies</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {engagement.documentVersions.map((version: any) => {
+                const links = documentLinks[version.id];
+                return (
+                  <tr key={version.id}>
+                    <td>v{version.versionNumber}</td>
+                    <td className="text-xs">{version.documentType.replace(/_/g, ' ').toLowerCase()}</td>
+                    <td>{version.status.replace(/_/g, ' ').toLowerCase()}</td>
+                    <td>{version.creator?.displayName ?? '—'}</td>
+                    <td>{version.approver?.displayName ?? '—'}</td>
+                    <td className="max-w-[10rem] truncate font-mono text-xs">{version.pdfHash ?? '—'}</td>
+                    <td className="text-xs">
+                      {links?.pdf ? (
+                        <a className="text-brand-700 underline" href={links.pdf.url} target="_blank" rel="noreferrer">
+                          PDF
+                        </a>
+                      ) : null}
+                      {links?.pdf && links?.docx ? <span className="px-1 text-slate-400">·</span> : null}
+                      {links?.docx ? (
+                        <a className="text-brand-700 underline" href={links.docx.url} download>
+                          Word
+                        </a>
+                      ) : null}
+                      {!links?.pdf && !links?.docx ? 'Expired' : null}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="mt-3 text-xs text-slate-500">
+            Working copies are temporary and expire; Karbon holds the authoritative copy. Links are signed and valid
+            for fifteen minutes.
+          </p>
+        </>
       )}
     </Card>
   );

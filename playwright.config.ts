@@ -7,7 +7,33 @@ import { defineConfig, devices } from '@playwright/test';
  * configured, so no external vendor is contacted. The database must be
  * migrated and seeded first; see docs/testing.md.
  */
+/**
+ * Settings shared with the server this run starts, so a test can set up state
+ * that server will actually see rather than the two guessing at each other's
+ * database, directory and signing secret.
+ *
+ * Resolved once, here, and handed to the workers through `metadata`. Importing
+ * these constants into a spec would not be safe: the Prisma client loads `.env`
+ * when a worker imports it, so a worker can end up resolving `process.env`
+ * differently from the process that launched the server — which is a silent
+ * mismatch, not a loud one.
+ */
+export interface E2EEnvironment {
+  storageDirectory: string;
+  databaseUrl: string;
+  sessionSecret: string;
+}
+
+const e2eEnvironment: E2EEnvironment = {
+  storageDirectory: process.env.DOCUMENT_STORAGE_DIRECTORY ?? '/tmp/element-engagements-e2e/storage',
+  databaseUrl:
+    process.env.TEST_DATABASE_URL ??
+    'postgresql://postgres:postgres@localhost:5432/element_engagements_test?schema=public',
+  sessionSecret: '1'.repeat(64),
+};
+
 export default defineConfig({
+  metadata: { e2eEnvironment },
   testDir: './tests/e2e',
   fullyParallel: false,
   workers: 1,
@@ -50,11 +76,12 @@ export default defineConfig({
           TEST_MODE: 'true',
           ALLOW_PRODUCTION_SENDING: 'false',
           DEV_LOGIN_ENABLED: 'true',
-          DATABASE_URL:
-            process.env.TEST_DATABASE_URL ??
-            'postgresql://postgres:postgres@localhost:5432/element_engagements_test?schema=public',
+          DATABASE_URL: e2eEnvironment.databaseUrl,
           ENCRYPTION_KEY: '0'.repeat(64),
-          SESSION_SECRET: '1'.repeat(64),
+          SESSION_SECRET: e2eEnvironment.sessionSecret,
+          // Pinned so a test can put a working copy where the server will look
+          // for it, and sign a link the server will accept.
+          DOCUMENT_STORAGE_DIRECTORY: e2eEnvironment.storageDirectory,
         },
       },
 });

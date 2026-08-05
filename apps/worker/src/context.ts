@@ -8,6 +8,7 @@ import {
   GenerationService,
   JobQueue,
   KarbonNotificationService,
+  PreparationService,
   PricingService,
   SettingsService,
   SigningService,
@@ -36,6 +37,7 @@ export interface WorkerContext {
   settings: SettingsService;
   workflow: WorkflowService;
   pricing: PricingService;
+  preparation: PreparationService;
   generation: GenerationService;
   approvals: ApprovalService;
   signing: SigningService;
@@ -68,6 +70,7 @@ export function buildWorkerContext(): WorkerContext {
   const queue = new JobQueue(prisma, logger);
   const workflow = new WorkflowService(prisma, audit);
   const pricing = new PricingService(prisma, audit);
+  const preparation = new PreparationService({ prisma, audit, pricing, logger });
 
   const templateDirectory = resolve(process.cwd(), 'templates', 'normalized');
 
@@ -116,6 +119,7 @@ export function buildWorkerContext(): WorkerContext {
     settings,
     workflow,
     pricing,
+    preparation,
     generation,
     approvals,
     signing,

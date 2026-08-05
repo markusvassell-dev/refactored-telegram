@@ -54,10 +54,31 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob:",
               "object-src 'none'",
+              // The document preview embeds a same-origin PDF.
+              "frame-src 'self' blob:",
               "frame-ancestors 'none'",
               "base-uri 'self'",
               "form-action 'self'",
             ].join('; '),
+          },
+        ],
+      },
+      {
+        // The download route is the one thing this application frames, and it
+        // frames it in its own review workspace. `frame-src 'self'` on the page
+        // is not enough on its own: the *framed* response must also permit it,
+        // and a blanket `DENY` / `frame-ancestors 'none'` would refuse even a
+        // same-origin parent. Narrowed to `self` here and nowhere else, so no
+        // other site can frame a document either.
+        //
+        // Listed after the catch-all deliberately: a later rule matching the
+        // same path wins for the headers it names.
+        source: '/api/documents/:path*',
+        headers: [
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
+          {
+            key: 'Content-Security-Policy',
+            value: ["default-src 'none'", "frame-ancestors 'self'", "base-uri 'none'", "form-action 'none'"].join('; '),
           },
         ],
       },

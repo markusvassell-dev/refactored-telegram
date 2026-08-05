@@ -256,16 +256,7 @@ export const DEFAULT_DATE_RULES: readonly SeedDateRule[] = [
   },
 ];
 
-/** Facts a reviewer must supply before certain deadlines can be calculated. */
-export const DATE_FACTS: readonly { key: string; label: string; appliesTo: EngagementType[] }[] = [
-  {
-    key: 'isSelfEmployedOrSpouseOfSelfEmployed',
-    label: 'Taxpayer (or spouse/common-law partner) has self-employment income',
-    appliesTo: ['T1_JOINT', 'T1_SINGLE'],
-  },
-  {
-    key: 'qualifiesForThreeMonthBalanceDueDay',
-    label: 'Corporation qualifies for the three-month balance-due day',
-    appliesTo: ['T2'],
-  },
-];
+// The facts these rules depend on are catalogued in ./facts.ts, with the
+// question a reviewer is actually asked. Which facts apply to an engagement is
+// derived from the rules above rather than listed separately, so an
+// administrator who edits a rule cannot leave a stale list behind.

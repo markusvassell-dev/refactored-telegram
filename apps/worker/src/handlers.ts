@@ -1,6 +1,6 @@
 import type { JobHandler, JobType } from '@element/services';
 import { extractPdfText, DeterministicExtractor, selectPriorYearDocument } from '@element/integrations';
-import { extractParagraphs } from '@element/documents';
+import { detectCheckboxStates, extractParagraphs, parseManifest } from '@element/documents';
 import { PreconditionError, ValidationError, sha256Hex, type DocumentType } from '@element/shared';
 import type { WorkerContext } from './context.js';
 
@@ -38,6 +38,7 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       value: string | null;
       valueDecimal: string | null;
       valueDate: Date | null;
+      valueBoolean?: boolean | null;
       extractionMethod: 'STRUCTURED_EXPORT' | 'PDF_TEXT' | 'DETERMINISTIC_PATTERN' | 'AI_ASSISTED' | 'OCR_VISION' | 'MANUAL_ENTRY';
       confidence: number;
     },
@@ -55,7 +56,12 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
     if (existing) {
       return context.prisma.extractedField.update({
         where: { id: existing.id },
-        data: { value: input.value, valueDecimal: input.valueDecimal, confidence: input.confidence },
+        data: {
+          value: input.value,
+          valueDecimal: input.valueDecimal,
+          valueBoolean: input.valueBoolean ?? null,
+          confidence: input.confidence,
+        },
       });
     }
 
@@ -66,11 +72,35 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         value: input.value,
         valueDecimal: input.valueDecimal,
         valueDate: input.valueDate,
+        valueBoolean: input.valueBoolean ?? null,
         source: 'PRIOR_YEAR_DOCUMENT',
         extractionMethod: input.extractionMethod,
         confidence: input.confidence,
       },
     });
+  }
+
+  /** The active manifest for a document type, or null when none is published. */
+  async function activeManifest(documentType: DocumentType) {
+    const template = await context.prisma.documentTemplate.findUnique({
+      where: { documentType },
+      include: { versions: { where: { status: 'ACTIVE' }, orderBy: { versionNumber: 'desc' }, take: 1 } },
+    });
+    const version = template?.versions[0];
+    return version ? parseManifest(version.manifest) : null;
+  }
+
+  function documentTypeFor(engagementType: string): DocumentType {
+    switch (engagementType) {
+      case 'T1_JOINT':
+        return 'T1_JOINT_ENGAGEMENT_LETTER';
+      case 'T1_SINGLE':
+        return 'T1_SINGLE_ENGAGEMENT_LETTER';
+      case 'T3':
+        return 'T3_ENGAGEMENT_LETTER';
+      default:
+        return 'T2_ENGAGEMENT_LETTER';
+    }
   }
 
   return {
@@ -334,16 +364,103 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         }
       }
 
+      // Read last year's checkbox states so the reviewer can see what was
+      // selected, as a suggestion. Nothing is carried forward automatically.
+      let checkboxesDetected = 0;
+      const manifest = await activeManifest(documentTypeFor(engagement.engagementType));
+
+      if (manifest) {
+        for (const detection of detectCheckboxStates(text.fullText, manifest.checkboxes)) {
+          if (detection.selected === null) continue;
+
+          const field = await upsertEngagementField(engagementId, {
+            token: `service.${detection.code}`,
+            value: detection.selected ? 'selected' : 'not selected',
+            valueDecimal: null,
+            valueDate: null,
+            valueBoolean: detection.selected,
+            extractionMethod: 'DETERMINISTIC_PATTERN',
+            confidence: 1,
+          });
+
+          if (detection.evidence) {
+            await context.prisma.fieldEvidence.create({
+              data: {
+                extractedFieldId: field.id,
+                sourceDocumentId: source?.id ?? null,
+                sourceDocumentHash: source?.fileHash ?? null,
+                pageNumber: null,
+                supportingText: detection.evidence.slice(0, 400),
+              },
+            });
+          }
+
+          checkboxesDetected += 1;
+        }
+      }
+
       await context.audit.record({
         eventType: 'FIELD_EXTRACTED',
         objectType: 'SourceDocument',
         objectId: source?.id ?? karbonDocumentId,
         engagementId,
         correlationId: job.correlationId,
-        afterValue: { extracted: result.values.length, missing: result.missingTokens },
+        afterValue: {
+          extracted: result.values.length,
+          missing: result.missingTokens,
+          priorYearSelectionsDetected: checkboxesDetected,
+        },
       });
 
-      return { extracted: result.values.length, missing: result.missingTokens.length };
+      // Extraction only observes. Preparation is what turns observations into
+      // proposed fees, deadlines and selections for a reviewer to confirm.
+      await context.queue.enqueue({
+        jobType: 'PREPARE_ENGAGEMENT',
+        idempotencyKey: `prepare_${engagementId}_${source?.fileHash ?? karbonDocumentId}`,
+        payload: { engagementId, actorId: job.payload.actorId ?? systemActorId },
+        engagementId,
+        correlationId: job.correlationId,
+      });
+
+      return {
+        extracted: result.values.length,
+        missing: result.missingTokens.length,
+        priorYearSelectionsDetected: checkboxesDetected,
+      };
+    },
+
+    // ----------------------------------------------------------- Preparation
+    PREPARE_ENGAGEMENT: async ({ job }) => {
+      const engagementId = requireString(job.payload, 'engagementId');
+      const actorId = typeof job.payload.actorId === 'string' ? job.payload.actorId : systemActorId;
+
+      const threshold = await context.settings.highIncreaseThresholdPercent(
+        context.env.HIGH_FEE_INCREASE_THRESHOLD_PERCENT,
+      );
+
+      const result = await context.preparation.prepare({
+        engagementId,
+        actorId,
+        correlationId: job.correlationId,
+        highIncreaseThresholdPercent: threshold,
+      });
+
+      // Preparation proposes; a person confirms. The engagement lands in the
+      // review queue rather than proceeding straight to generation.
+      const current = await context.workflow.currentStatus(engagementId);
+      if (current === 'EXTRACTING_DATA') {
+        await context.workflow.transition({
+          engagementId,
+          to: 'SOURCE_DOCUMENT_REVIEW_REQUIRED',
+          reason:
+            result.conflictsRaised > 0 || result.blockedFees.length > 0 || result.blockedDates.length > 0
+              ? 'Prepared with items needing a reviewer decision.'
+              : 'Prepared and ready for review.',
+          correlationId: job.correlationId,
+        });
+      }
+
+      return { ...result };
     },
 
     // ------------------------------------------------------------ Generation

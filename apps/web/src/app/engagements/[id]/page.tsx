@@ -1,7 +1,10 @@
 import { notFound } from 'next/navigation';
+import { dateFactQuestion, dateRuleDefinitionSchema } from '@element/dates';
+import { FACT_TOKEN_PREFIX } from '@element/services';
 import { formatMoney } from '@element/shared';
 import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
+import { linksForAll } from '@/lib/document-links';
 import { PageHeader, StatusBadge } from '@/components/shell';
 import { ReviewWorkspace } from './workspace';
 
@@ -77,6 +80,31 @@ export default async function EngagementDetailPage({ params }: { params: Promise
     userDisplayName: event.userId ? (auditUserNames.get(event.userId) ?? null) : null,
   }));
 
+  // Signed, short-lived links so a reviewer can actually read what they are
+  // approving. Generated per request; they expire in fifteen minutes.
+  const documentLinks = linksForAll(engagement.documentVersions);
+
+  // Which facts do this engagement's date rules actually depend on? Read from
+  // the rules themselves rather than a hard-coded list, so an administrator who
+  // edits a rule gets the matching question without a code change.
+  const requiredFactKeys = new Set<string>();
+  for (const date of engagement.calculatedDates) {
+    const parsed = dateRuleDefinitionSchema.safeParse(date.dateRule?.definition);
+    if (!parsed.success) continue;
+    for (const key of parsed.data.requiredFacts) requiredFactKeys.add(key);
+  }
+
+  const factAnswers = new Map(
+    engagement.extractedFields
+      .filter((field) => field.token.startsWith(FACT_TOKEN_PREFIX))
+      .map((field) => [field.token.slice(FACT_TOKEN_PREFIX.length), field.valueBoolean]),
+  );
+
+  const dateFacts = [...requiredFactKeys].sort().map((key) => ({
+    ...dateFactQuestion(key),
+    answer: factAnswers.get(key) ?? null,
+  }));
+
   const primaryFee = engagement.feeCalculations.find((fee) => fee.feeKind !== 'CSRS_4200_COMPILATION');
 
   return (
@@ -109,6 +137,8 @@ export default async function EngagementDetailPage({ params }: { params: Promise
         engagement={JSON.parse(JSON.stringify(engagement))}
         auditEvents={JSON.parse(JSON.stringify(auditEventsForDisplay))}
         templateVersion={JSON.parse(JSON.stringify(templateVersion))}
+        documentLinks={documentLinks}
+        dateFacts={dateFacts}
         generationGate={gate}
       />
     </>

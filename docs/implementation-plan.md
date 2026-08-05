@@ -63,6 +63,18 @@ engine, CSRS 4200 confirmation, T2 generation, Word and PDF rendering,
 validation and sanitation, Karbon upload and notification, the fifteen-tab
 review workspace, and the approval workflow.
 
+`PREPARE_ENGAGEMENT` is what joins extraction to generation. It records the
+current Karbon values as their own source, raises a `FieldConflict` wherever
+sources disagree, seeds one unconfirmed `ServiceSelection` per template
+checkbox, calculates every fee, and evaluates the date rules — blocking any
+deadline whose inputs are unknown rather than assuming the common case. It is
+idempotent and never overwrites a value, date or selection a person has
+confirmed, so a reviewer can re-run it safely.
+
+A reviewer reads the PDF in the workspace, in a same-origin frame served by a
+signed link that expires in fifteen minutes. Approving a document you cannot
+see is not a workflow this application asks anyone to perform.
+
 ### Phase 2 — complete against a mock
 
 OAuth refresh, text-tag anchors, the signer model, agreement creation with
@@ -131,10 +143,6 @@ approval and staleness all work. The in-place editor for cover-letter narrative
 sections is defined in the manifests (`editableSections` with `ORDINARY`) but
 has no UI; wording edits go through the exceptional-edit path instead.
 
-**Conflict detection is not automatic.** `FieldConflict` is modelled, displayed
-and resolvable, and resolution is audited, but nothing yet compares current
-Karbon values against prior-year values to *create* the rows.
-
 **No malware scanning.** The integration point is `DocumentStore.put` — the
 single choke point every stored byte passes through, already validating type
 and size.
@@ -150,23 +158,34 @@ through the `entra_role_mapping` setting, and the user created or updated on
 first sign-in. It has only been typechecked and reviewed, not run against a
 live directory. Browser tests use the development login.
 
+**No engagement-creation UI.** Engagements arrive from the Karbon sync job, the
+bulk rollout service or the seed. There is no form for starting one by hand, so
+a pilot depends on one of those three paths.
+
+**Structured field editing asks for the raw token.** The Client Information tab
+edits any field, but the reviewer types `corporation.legal_name` rather than
+picking from a list. `TemplateFieldDefinition` — label, help text, data type,
+required-when rules — is written at template publication and not yet read by
+the editor.
+
 ## Next implementation step
 
-**Automatic conflict detection.** `FieldConflict` is modelled, displayed,
-resolvable and audited, but nothing compares current Karbon values against
-prior-year extracted values to *create* the rows, so the reviewer sees a
-conflict only if one is inserted by hand.
+**A field editor driven by the template definitions.** Every field in the
+active template is already recorded with its label, help text, data type,
+whether it may be auto-populated and when it is required. The Client
+Information tab ignores all of it and offers a free-text token box instead,
+which makes a typo indistinguishable from a real value and gives the reviewer
+no list of what is still outstanding.
 
-The work is a reconciliation pass in the extraction job: for each token present
-from more than one source, compare the normalised values; where they differ,
-create a `FieldConflict` with both candidates and recommend the higher-priority
-source (current Karbon over the prior-year document), leaving the decision to a
-person. `sourceRank()` in `@element/shared` already encodes the priority order,
-and the review UI already renders and resolves whatever rows exist.
+The work is to read `TemplateFieldDefinition` for the engagement's active
+template version and render a real form from it: grouped by section, labelled,
+typed, marked required where `requiredFieldTokens` says so, showing the current
+value with its source, confidence and evidence beside each input. The service
+layer, the audit trail and the validation gate all already exist.
 
-It is the highest-value gap because it is the one place where the requirement
-"do not silently choose one" currently depends on there being nothing to
-choose between.
+It is the highest-value remaining gap because it is where a reviewer spends
+most of their time, and the only place where a mistyped token silently produces
+nothing at all.
 
-After that, in order: the bulk rollout selection form, the administration write
-UI, and the cover-letter narrative editor.
+After that, in order: the bulk rollout selection form, an engagement-creation
+form, the administration write UI, and the cover-letter narrative editor.

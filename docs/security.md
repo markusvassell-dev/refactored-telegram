@@ -80,8 +80,15 @@ run a health check. `IntegrationConnection.rotatedAt` records when.
   is refused.
 - Size limited by `DOCUMENT_MAX_UPLOAD_BYTES` (default 25 MB).
 - Path traversal blocked — a resolved path must stay inside the storage root.
-- Downloads only through short-lived signed links (default 300 s), verified
-  independently of the session, served `no-store` with `nosniff`.
+- Downloads only through short-lived signed links (default 300 s; the review
+  workspace issues 900 s links), verified independently of the session, served
+  `no-store` with `nosniff`.
+- A reviewer reads the PDF in place, in a same-origin `<iframe>` pointed at one
+  of those signed links. `frame-src 'self' blob:` permits exactly that and
+  nothing else, and `frame-ancestors 'none'` still forbids anyone framing this
+  application. The link carries no session of its own: an expired link stops
+  working even in an open tab, and a copied URL is useless to anyone who is not
+  signed in.
 
 **Malware scanning is not implemented.** The integration point is
 `DocumentStore.put`, which already validates type and size and is the single
@@ -91,8 +98,8 @@ before the write.
 ## Web security
 
 - CSP with `frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'self'`,
-  `form-action 'self'`; `X-Frame-Options: DENY`; `nosniff`; a strict referrer
-  policy; a restrictive permissions policy.
+  `form-action 'self'`, `frame-src 'self' blob:`; `X-Frame-Options: DENY`;
+  `nosniff`; a strict referrer policy; a restrictive permissions policy.
 - CSRF: a token bound to the session, checked by every mutating action, on top
   of the same-origin guarantee of server actions.
 - Errors show a digest reference; stack traces stay in the server logs.

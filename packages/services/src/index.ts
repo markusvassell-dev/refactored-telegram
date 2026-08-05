@@ -3,6 +3,7 @@ export * from './providers.js';
 export * from './storage.js';
 export * from './workflow-service.js';
 export * from './pricing-service.js';
+export * from './preparation-service.js';
 export * from './generation-service.js';
 export * from './approval-service.js';
 export * from './signing-service.js';

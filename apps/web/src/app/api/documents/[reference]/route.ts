@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { container } from '@/lib/container';
+import { decodeReference } from '@/lib/document-reference';
 import { requireUser } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
@@ -26,7 +27,7 @@ export async function GET(
   const expires = Number(url.searchParams.get('expires'));
   const signature = url.searchParams.get('signature') ?? '';
 
-  const reference = Buffer.from(decodeURIComponent(encoded), 'base64url').toString('utf8');
+  const reference = decodeReference(encoded);
 
   if (!container.store.verifySignedLink(reference, expires, signature)) {
     return NextResponse.json({ error: 'This download link is invalid or has expired.' }, { status: 403 });

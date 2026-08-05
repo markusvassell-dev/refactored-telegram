@@ -10,6 +10,7 @@ import {
   GenerationService,
   JobQueue,
   KarbonNotificationService,
+  PreparationService,
   PricingService,
   SettingsService,
   SigningService,
@@ -32,6 +33,7 @@ const settings = new SettingsService(prisma);
 const queue = new JobQueue(prisma, logger);
 const workflow = new WorkflowService(prisma, audit);
 const pricing = new PricingService(prisma, audit);
+const preparation = new PreparationService({ prisma, audit, pricing, logger });
 
 const store = new DocumentStore({
   rootDirectory: configuration.DOCUMENT_STORAGE_DIRECTORY,
@@ -87,6 +89,7 @@ export const container = {
   queue,
   workflow,
   pricing,
+  preparation,
   store,
   generation,
   approvals,

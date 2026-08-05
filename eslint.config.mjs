@@ -86,4 +86,11 @@ export default tseslint.config(
     files: ['apps/web/**/*.tsx'],
     rules: { 'no-restricted-syntax': 'off' },
   },
+
+  {
+    // Playwright requires a hook's first argument to be a destructuring
+    // pattern, so a hook that only wants the worker info must write `({}, w)`.
+    files: ['tests/e2e/**/*.ts'],
+    rules: { 'no-empty-pattern': 'off' },
+  },
 );

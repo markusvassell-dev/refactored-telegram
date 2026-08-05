@@ -11,6 +11,7 @@ import {
   type EngagementType,
   type FeeKind,
 } from '@element/shared';
+import { factToken } from '@element/services';
 import { container } from '@/lib/container';
 import { assertCsrf, requirePermission, requestContext } from '@/lib/session';
 
@@ -617,5 +618,159 @@ export async function setProductionSending(formData: FormData): Promise<ActionRe
 
     revalidatePath('/settings');
     return enabled ? 'Production sending is armed.' : 'Production sending is disabled.';
+  });
+}
+
+/**
+ * Runs the preparation step: records what Karbon says, raises conflicts where
+ * sources disagree, seeds service selections from the prior year as
+ * suggestions, calculates the fees, and evaluates the deadlines.
+ *
+ * It proposes; a reviewer confirms. It never overwrites a decision a person
+ * has already made.
+ */
+export async function prepareEngagement(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('generation:start');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    if (!engagementId) throw new ValidationError('An engagement is required.');
+
+    const threshold = await container.settings.highIncreaseThresholdPercent(
+      container.env.HIGH_FEE_INCREASE_THRESHOLD_PERCENT,
+    );
+
+    const result = await container.preparation.prepare({
+      engagementId,
+      actorId: actor.id,
+      correlationId: newCorrelationId(),
+      highIncreaseThresholdPercent: threshold,
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+
+    const outstanding: string[] = [];
+    if (result.conflictsRaised > 0) outstanding.push(`${result.conflictsRaised} conflicting value(s)`);
+    if (result.blockedFees.length > 0) outstanding.push(`${result.blockedFees.length} fee(s) without a prior-year amount`);
+    if (result.blockedDates.length > 0) outstanding.push(`${result.blockedDates.length} deadline(s) missing information`);
+
+    const summary =
+      `Prepared: ${result.feesCalculated.length} fee(s) calculated, ${result.datesCalculated} date(s) proposed, ` +
+      `${result.serviceSelectionsSeeded} service selection(s) seeded.`;
+
+    return outstanding.length > 0 ? `${summary} Needs your decision on ${outstanding.join(', ')}.` : summary;
+  });
+}
+
+/**
+ * Records a fact a deadline depends on — for example whether a corporation
+ * qualifies for the three-month balance-due day. Until it is answered the
+ * dependent deadline stays blocked rather than being guessed.
+ */
+export async function confirmDateFact(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('field:edit_structured');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const key = formData.get('factKey')?.toString();
+    const answer = formData.get('answer')?.toString();
+
+    if (!engagementId || !key || (answer !== 'yes' && answer !== 'no')) {
+      throw new ValidationError('Answer yes or no to record this fact.');
+    }
+
+    const token = factToken(key);
+    const value = answer === 'yes';
+
+    const existing = await container.prisma.extractedField.findFirst({
+      where: { engagementId, coverLetterPackageId: null, token, source: 'MANUAL_ENTRY' },
+      select: { id: true, valueBoolean: true },
+    });
+
+    if (existing) {
+      await container.prisma.extractedField.update({
+        where: { id: existing.id },
+        data: { valueBoolean: value, value: answer, confirmedByUserId: actor.id, confirmedAt: new Date() },
+      });
+    } else {
+      await container.prisma.extractedField.create({
+        data: {
+          engagementId,
+          token,
+          value: answer,
+          valueBoolean: value,
+          source: 'MANUAL_ENTRY',
+          extractionMethod: 'MANUAL_ENTRY',
+          confidence: 1,
+          manuallyConfirmed: true,
+          confirmedByUserId: actor.id,
+          confirmedAt: new Date(),
+        },
+      });
+    }
+
+    await container.audit.record({
+      eventType: 'DATE_CONFIRMED',
+      objectType: 'ExtractedField',
+      objectId: `${engagementId}:${token}`,
+      engagementId,
+      userId: actor.id,
+      beforeValue: { [key]: existing?.valueBoolean ?? null },
+      afterValue: { [key]: value },
+      reason: 'Reviewer confirmed a fact a deadline depends on.',
+    });
+
+    // Re-evaluate immediately so the reviewer sees the deadline unblock.
+    const threshold = await container.settings.highIncreaseThresholdPercent(
+      container.env.HIGH_FEE_INCREASE_THRESHOLD_PERCENT,
+    );
+    await container.preparation.prepare({
+      engagementId,
+      actorId: actor.id,
+      correlationId: newCorrelationId(),
+      highIncreaseThresholdPercent: threshold,
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+    return 'Recorded. The dependent deadlines have been recalculated.';
+  });
+}
+
+/** Confirms or clears a service selection for the new year. */
+export async function confirmServiceSelection(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('field:edit_structured');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const serviceCode = formData.get('serviceCode')?.toString();
+    const selected = formData.get('selected')?.toString() === 'yes';
+
+    if (!engagementId || !serviceCode) throw new ValidationError('A service is required.');
+
+    const existing = await container.prisma.serviceSelection.findUnique({
+      where: { engagementId_serviceCode: { engagementId, serviceCode } },
+    });
+
+    await container.prisma.serviceSelection.update({
+      where: { engagementId_serviceCode: { engagementId, serviceCode } },
+      data: { isSelected: selected, confirmed: true, confirmedByUserId: actor.id, confirmedAt: new Date() },
+    });
+
+    await container.audit.record({
+      eventType: 'FIELD_EDITED',
+      objectType: 'ServiceSelection',
+      objectId: `${engagementId}:${serviceCode}`,
+      engagementId,
+      userId: actor.id,
+      beforeValue: { isSelected: existing?.isSelected ?? null },
+      afterValue: { isSelected: selected },
+      reason: 'Reviewer confirmed the selection for the new year.',
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+    return selected ? 'Service included.' : 'Service not included.';
   });
 }
