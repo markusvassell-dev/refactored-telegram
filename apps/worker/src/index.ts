@@ -187,11 +187,22 @@ const healthServer = createServer((request, response) => {
   response.writeHead(404).end();
 });
 
-healthServer.listen(context.env.WORKER_HEALTH_PORT, () => {
+/**
+ * The platform assigns the port it will probe; the worker does not get to pick
+ * it. Railway sets PORT and health-checks that port, so a worker listening on
+ * its own WORKER_HEALTH_PORT is unreachable and the deployment is marked
+ * unhealthy even though the worker is running perfectly well. PORT wins when it
+ * is set; WORKER_HEALTH_PORT stays the default for local development and
+ * docker-compose, where nothing assigns one.
+ */
+const assignedPort = Number.parseInt(process.env.PORT ?? '', 10);
+const healthPort = Number.isFinite(assignedPort) && assignedPort > 0 ? assignedPort : context.env.WORKER_HEALTH_PORT;
+
+healthServer.listen(healthPort, () => {
   logger.info('Worker started', {
     workerId: WORKER_ID,
     concurrency: context.env.WORKER_CONCURRENCY,
-    healthPort: context.env.WORKER_HEALTH_PORT,
+    healthPort,
     testMode: context.env.TEST_MODE,
   });
 });

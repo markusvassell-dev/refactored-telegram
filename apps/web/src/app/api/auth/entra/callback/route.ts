@@ -5,6 +5,7 @@ import { env, randomToken, unseal, type Role } from '@element/shared';
 import { container } from '@/lib/container';
 import { createSession, requestContext } from '@/lib/session';
 import { ENTRA_FLOW_COOKIE, type EntraFlowState } from '@/lib/entra-flow';
+import { grantBootstrapAdministrator } from '@/lib/bootstrap-admin';
 
 export const dynamic = 'force-dynamic';
 
@@ -103,6 +104,20 @@ export async function GET(request: Request): Promise<Response> {
 
   if (!user.isActive) {
     return failure('this account has been deactivated');
+  }
+
+  // Only reachable once Entra ID has authenticated the address; see
+  // lib/bootstrap-admin.ts for why this path exists at all.
+  const bootstrap = await grantBootstrapAdministrator({
+    prisma: container.prisma,
+    audit: container.audit,
+    authenticatedEmail: identity.email,
+    userId: user.id,
+    configuredEmails: configuration.BOOTSTRAP_ADMIN_EMAILS,
+  });
+
+  if (bootstrap.granted) {
+    container.logger.warn('Granted ADMINISTRATOR from BOOTSTRAP_ADMIN_EMAILS', { userId: user.id });
   }
 
   // Directory-mapped roles are applied on every sign-in, so a revocation in

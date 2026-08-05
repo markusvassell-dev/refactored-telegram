@@ -8,9 +8,17 @@ FROM node:22-bookworm-slim AS base
 
 ENV PNPM_HOME=/usr/local/bin \
     NODE_OPTIONS=--max-old-space-size=1536 \
-    NEXT_TELEMETRY_DISABLED=1
+    NEXT_TELEMETRY_DISABLED=1 \
+    COREPACK_HOME=/opt/corepack
 
-RUN corepack enable && corepack prepare pnpm@9.15.4 --activate
+# COREPACK_HOME is set to a shared path deliberately. Its default is inside the
+# invoking user's home directory, so a pnpm prepared here as root would be
+# invisible to the unprivileged runtime user, and corepack would try to download
+# pnpm from the network on every container start — a slow boot that fails
+# outright on a locked-down network.
+RUN corepack enable \
+ && corepack prepare pnpm@9.15.4 --activate \
+ && chmod -R a+rX "$COREPACK_HOME"
 
 WORKDIR /app
 
@@ -95,11 +103,18 @@ RUN mkdir -p "$DOCUMENT_TEMP_DIRECTORY" "$DOCUMENT_STORAGE_DIRECTORY" \
  && useradd --system --uid 10001 --home /app element \
  && chown -R element:element /app "$DOCUMENT_TEMP_DIRECTORY" "$DOCUMENT_STORAGE_DIRECTORY"
 
+RUN chmod +x /app/scripts/start-web.sh /app/scripts/start-worker.sh
+
 USER element
 
-EXPOSE 3000 3001
+# One port, deliberately. Railway infers the port it will health-check from the
+# image when PORT is not set, and two exposed ports make that a coin toss — the
+# web service gets probed on 3001, the worker on 3000, and both deployments are
+# marked unhealthy while both processes are running. Each service listens on
+# whatever PORT it is given; see scripts/start-*.sh.
+EXPOSE 3000
 
-# Railway overrides this per service:
-#   web    → pnpm --filter @element/web start
-#   worker → pnpm --filter @element/worker start
-CMD ["pnpm", "--filter", "@element/web", "start"]
+# Railway overrides this for the worker service:
+#   web    → ./scripts/start-web.sh
+#   worker → ./scripts/start-worker.sh
+CMD ["./scripts/start-web.sh"]

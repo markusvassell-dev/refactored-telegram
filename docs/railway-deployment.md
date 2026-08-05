@@ -6,8 +6,8 @@ Three, from one repository:
 
 | Service | Start command | Health check | Notes |
 | --- | --- | --- | --- |
-| **web** | `pnpm db:migrate && pnpm --filter @element/web start` | `GET /api/health` | Runs migrations on boot; safe to run concurrently, Prisma takes an advisory lock |
-| **worker** | `pnpm --filter @element/worker start` | `GET /ready` on `WORKER_HEALTH_PORT` | Needs LibreOffice, which the image provides |
+| **web** | `./scripts/start-web.sh` | `GET /api/health` | Applies migrations, then starts. Owns the schema |
+| **worker** | `./scripts/start-worker.sh` | `GET /health` | Waits for the schema; never migrates. Needs LibreOffice, which the image provides |
 | **PostgreSQL** | Railway plugin | — | Version 16 |
 
 Both application services build from the same `Dockerfile`. Point the worker
@@ -16,6 +16,21 @@ UI.
 
 No other service is justified. The job queue is Postgres-backed, so there is no
 broker to run.
+
+### Ports
+
+Neither service picks its own port. Railway assigns `PORT` and health-checks
+that port; the web service passes it to `next start` and the worker listens on
+it in place of `WORKER_HEALTH_PORT`. The image exposes one port for the same
+reason — with two exposed, Railway's inference can probe the web service on
+3001 and the worker on 3000, and mark both unhealthy while both are running
+correctly.
+
+### Why the web service migrates and the worker does not
+
+One writer, so two services never race for the same advisory lock and a worker
+can never apply a migration the running web code does not expect. The worker
+polls `prisma migrate status` until the schema is there, then starts.
 
 ## Environment variables
 
@@ -31,6 +46,19 @@ Set on **both** the web and worker services unless noted.
 | `APP_BASE_URL` | Public URL; used in Karbon deep links |
 | `APP_ENV` | `staging` or `production` |
 | `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` | Required outside development — the app refuses to boot without them |
+| `ENTRA_REDIRECT_URI` | `https://<your-domain>/api/auth/entra/callback`, registered identically in Entra |
+| `BOOTSTRAP_ADMIN_EMAILS` | The first administrator. Required on a first deployment; see below |
+
+#### The first administrator
+
+Directory role mapping starts empty, so the first person to sign in gets a user
+record and no roles — and granting a role requires an administrator who does
+not exist yet. `BOOTSTRAP_ADMIN_EMAILS` breaks that deadlock: a listed address
+is granted `ADMINISTRATOR` **after** Entra ID authenticates it, never before,
+and the grant is written to the audit trail as `ROLE_GRANTED`.
+
+It is the only path to a role without an existing administrator. Sign in once,
+configure the directory role mapping under Settings, then clear the variable.
 
 ### Safety switches
 
@@ -89,19 +117,78 @@ on redeploy and the reviewer regenerates or opens the Karbon copy.
 | Worker `GET /health` | Liveness |
 | Worker `GET /ready` | Readiness, plus in-flight count, processed, failed, and last success time |
 
+Both deploy gates are liveness, deliberately. A readiness gate makes a first
+deployment depend on start-up order — the worker would fail its own deploy
+while waiting for a database that is still coming up.
+
 The worker's `/ready` is the one to alert on: a rising `failed` with a stale
 `lastSuccessAt` means it is running but not draining work.
 
+## "Healthcheck failed"
+
+Railway reports every start-up problem this way, and it is almost always the
+wrong description. `/api/health` returns 200 without touching the database, so
+if the health check cannot reach it, nothing is listening — the process exited
+before it got that far.
+
+**Read the Deploy Logs, not the Build Logs.** The build succeeding and the
+image pushing tells you nothing about why the container stopped. The start
+scripts print the reason there.
+
+Ranked by how often it is the cause:
+
+| Cause | What you will see in the deploy log |
+| --- | --- |
+| `DATABASE_URL` unset or not referencing the Postgres service | `FATAL: DATABASE_URL is not set` |
+| Migrations cannot reach the database | `FATAL: database migrations failed; the web server was not started` |
+| A required variable missing — `ENCRYPTION_KEY`, `SESSION_SECRET`, Entra in production | `Invalid environment configuration:` and the failing key |
+| Health check pointed at the wrong port | The server logs `Ready`, and the probe still fails |
+
+`DATABASE_URL` must be a reference, not a literal — `${{Postgres.DATABASE_URL}}`
+in the Railway variable editor. A pasted connection string goes stale the next
+time the database is redeployed.
+
 ## Deploying
 
-1. Push. Railway builds the Docker image.
-2. The web service runs migrations, then starts.
-3. Wait for both health checks.
-4. `GET /api/ready` — confirm `testMode: true` on a first deployment.
-5. Sign in via Entra ID.
-6. Configure integrations against **sandbox** credentials and health check.
-7. Exercise a full engagement in Test Mode.
-8. Only then: turn Test Mode off, and arm production sending in Settings.
+1. **Add the Postgres database first.** Both application services fail to start
+   without it, and the failure is reported as a health-check failure.
+2. Create the **web** service from this repository. Railway picks up
+   `railway.json`. Set its variables, generate a public domain.
+3. Create the **worker** service from the same repository, with start command
+   `./scripts/start-worker.sh`. Set the same variables. No public domain.
+4. Push. Railway builds one image for both.
+5. Each service checks its configuration, then the web service migrates. Both
+   print what they are doing in the **Deploy Logs**.
+6. `GET /api/ready` — confirm `testMode: true` on a first deployment.
+7. Sign in via Entra ID as a `BOOTSTRAP_ADMIN_EMAILS` address.
+8. Under Settings, configure the directory role mapping, then clear
+   `BOOTSTRAP_ADMIN_EMAILS`.
+9. Configure integrations against **sandbox** credentials and health check.
+10. Exercise a full engagement in Test Mode.
+11. Only then: turn Test Mode off, and arm production sending in Settings.
+
+### Variables Railway can fill in for you
+
+Use references rather than pasted literals — a reference follows the service it
+points at, a literal goes stale the next time that service is redeployed.
+
+```
+DATABASE_URL        = ${{Postgres.DATABASE_URL}}
+APP_BASE_URL        = https://${{RAILWAY_PUBLIC_DOMAIN}}
+ENTRA_REDIRECT_URI  = https://${{RAILWAY_PUBLIC_DOMAIN}}/api/auth/entra/callback
+```
+
+The worker has no public domain, so give it the web service's:
+`APP_BASE_URL = https://${{@element/web.RAILWAY_PUBLIC_DOMAIN}}`. It is used for
+the deep links written into Karbon, which must point at the web service.
+
+### A stray `.env` overrides the platform
+
+Prisma Client loads a `.env` from the project root when it is imported, and
+those values land in `process.env` before the environment schema reads them. A
+`.env` copied into an image would therefore silently override the variables set
+in Railway. `.dockerignore` excludes it for exactly this reason; do not add an
+exception.
 
 ## Backups
 

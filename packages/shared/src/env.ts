@@ -59,6 +59,28 @@ export const envSchema = z
     /** Only honoured when APP_ENV is development or test. */
     DEV_LOGIN_ENABLED: bool.default(false),
 
+    /**
+     * Comma-separated e-mail addresses granted ADMINISTRATOR on sign-in.
+     *
+     * Without this a first deployment is unusable: directory role mapping is
+     * empty until an administrator configures it, so the first person to sign in
+     * arrives with no roles and no way to grant themselves any. This is the only
+     * way a role is granted without an existing administrator, so it is narrow
+     * on purpose — it grants nothing by itself, it takes effect only after
+     * Entra ID has authenticated the address, and every grant is audited.
+     *
+     * Clear it once real administrators exist.
+     */
+    BOOTSTRAP_ADMIN_EMAILS: z
+      .string()
+      .default('')
+      .transform((value) =>
+        value
+          .split(',')
+          .map((entry) => entry.trim().toLowerCase())
+          .filter((entry) => entry.length > 0),
+      ),
+
     // ---- Karbon ----
     KARBON_API_BASE_URL: z.string().url().default('https://api.karbonhq.com/v3'),
     KARBON_BEARER_TOKEN: optionalString,

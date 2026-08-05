@@ -3,9 +3,9 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (328 tests)
-pnpm test:unit          # 171 — no external dependencies
-pnpm test:integration   # 157 — needs Postgres and LibreOffice Writer
+pnpm test               # unit + integration  (359 tests)
+pnpm test:unit          # 191 — no external dependencies
+pnpm test:integration   # 168 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 27  — needs a browser
 pnpm build              # production build
 ```
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (171)
+## Unit tests (191)
 
 No database, no filesystem, no network.
 
@@ -55,6 +55,18 @@ machine exactly; all five gates.
 **Permissions (21)** — each role's boundaries; that an **administrator cannot
 approve or send** client-facing documents; separation of duties; idempotency
 key determinism and sensitivity; source fingerprint stability.
+
+**Deployment configuration (20)** — the properties that decide whether a
+misconfigured deployment is legible or opaque. The image exposes exactly one
+port, because two make the health-check target a coin toss. The start scripts
+take the port the platform assigns, check configuration before touching the
+database, and name the failure — `DATABASE_URL` unset, migrations refused —
+rather than letting it read as a health-check failure. Only the web service
+migrates, so two services cannot race for the lock. `.dockerignore` excludes
+every path that could carry a credential into a layer. The first-administrator
+list is empty by default, case-folded, and tolerant of the spaces a person
+leaves after a comma; production without Entra ID is refused, and the missing
+key is named.
 
 **Dates (17)** — month-end clamping (31 Aug + 6 months = 28 Feb); business days
 skipping statutory holidays; T2 six-month filing and the two- versus
@@ -102,7 +114,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (157)
+## Integration tests (168)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -146,6 +158,16 @@ for "yes"; a confirmed date never rewritten; last year's ticks carried forward
 as `priorYearSelected` with `confirmed` still false; three consecutive runs
 producing exactly the same row counts; and a resolved conflict re-opened once a
 source changes, because a decision only covers the values it was made about.
+
+**The first administrator (11)** — the only path to a role that does not go
+through an existing administrator, so what it refuses is what matters. A listed
+address is granted `ADMINISTRATOR`, once, with an audit entry naming why; a
+near miss (`partner@firm.ca.evil.test`, `xpartner@firm.ca`) is refused rather
+than matched loosely; an empty list — the default — grants nothing, and neither
+does an empty address against a list containing one. Signing in again is a
+no-op that does not bury the original grant under duplicates, a role an
+administrator granted by hand is left exactly as it was, and only the user
+signing in is granted anything, not everyone on the list.
 
 **Editing a pricing rule (14)** — two failure modes drive these, and both are
 silent in production: a rule scoped to nothing never matches, and a method with
@@ -333,6 +355,33 @@ Each was fixed in the code, not the test:
 18. Confirming an uploaded document on "no disqualifiers" would have accepted
     another client's letter, which raises none. Confirmation now needs the
     contents to clear the acceptance threshold.
+19. A correctly deployed application was unusable. Directory role mapping starts
+    empty, so the first person to sign in got a user record and no roles — and
+    granting a role requires an administrator who did not exist yet. There was
+    no way in. `BOOTSTRAP_ADMIN_EMAILS` is the way out of that deadlock, and it
+    is the only path to a role that does not go through an existing
+    administrator.
+20. The image exposed two ports. Railway infers the port it will health-check
+    from the image, so the web service could be probed on the worker's port and
+    the worker on the web service's — both deployments marked unhealthy while
+    both processes ran correctly. One port now, and each service listens on
+    whatever the platform assigns.
+21. The worker ignored the platform's assigned port entirely and listened on
+    `WORKER_HEALTH_PORT`, so its health endpoint was unreachable wherever that
+    port was not the one being probed.
+22. `.env.example` claimed the application "refuses to boot on a
+    misconfiguration". The web service did not: the environment is validated on
+    first use, so a missing `ENTRA_CLIENT_ID` produced a *healthy* deployment
+    that returned 500 on every page. A pre-flight check now makes the claim
+    true, and names the key in the deploy log.
+23. `migrate && start` reported a database problem as "healthcheck failed",
+    which is never the reason — `/api/health` does not touch the database, so a
+    failing probe means nothing is listening. The start scripts say which
+    failure it was.
+24. There was no `.dockerignore`, so `COPY . .` carried a developer's local
+    `node_modules` and `.next` into the image — and their `.env` with it. Prisma
+    Client loads a project-root `.env` on import, so those values would have
+    silently overridden the variables set on the platform.
 
 ## What is not covered
 

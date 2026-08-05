@@ -1,0 +1,40 @@
+# Keep the build context to source. Without this the image carries a local
+# node_modules and .next — nearly 1.5 GB that the build regenerates anyway —
+# and, worse, a developer's .env would be baked into a layer.
+
+.git
+.gitignore
+
+node_modules
+**/node_modules
+.pnpm-store
+
+.next
+**/.next
+dist
+**/dist
+build
+out
+coverage
+*.tsbuildinfo
+.turbo
+packages/database/generated
+
+# Never copy real credentials into an image.
+.env
+.env.*
+!.env.example
+
+# Runtime scratch and test output; none of it belongs in a release image.
+storage
+test-results
+playwright-report
+blob-report
+.playwright
+tmp-smoke
+tmp-documents
+*.log
+
+Dockerfile
+.dockerignore
+docker-compose.yml

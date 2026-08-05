@@ -5,9 +5,9 @@
     "dockerfilePath": "Dockerfile"
   },
   "deploy": {
-    "startCommand": "pnpm db:migrate && pnpm --filter @element/web start",
+    "startCommand": "./scripts/start-web.sh",
     "healthcheckPath": "/api/health",
-    "healthcheckTimeout": 120,
+    "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 5,
     "numReplicas": 1
