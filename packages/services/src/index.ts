@@ -8,6 +8,7 @@ export * from './generation-service.js';
 export * from './approval-service.js';
 export * from './signing-service.js';
 export * from './cover-letter-service.js';
+export * from './cover-letter-narrative-service.js';
 export * from './karbon-notification.js';
 export * from './bulk-rollout.js';
 export * from './jobs/queue.js';

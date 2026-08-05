@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { expect, test, type Page, type WorkerInfo } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { PrismaClient } from '@element/database';
 import { createAuditLogger } from '@element/audit';
 import { DocumentStore, PricingService } from '@element/services';
@@ -21,9 +21,24 @@ async function signIn(page: Page, accountMatcher: RegExp): Promise<void> {
   await expect(page.getByRole('heading', { name: 'Dashboard' })).toBeVisible();
 }
 
+/**
+ * Picks a seeded development account.
+ *
+ * The seeded accounts are the "Sample …" ones, and they are what these tests
+ * mean: a matcher like /Reviewer/ is asking for the account that holds the
+ * REVIEWER role. Any user may appear in this list, though — an integration test
+ * leaves behind a "Creation Reviewer" with no roles at all — and picking one of
+ * those signs in successfully with no permissions, which shows up much later as
+ * a button mysteriously missing from a page. Preferring the seeded account
+ * makes the matcher mean what it reads as.
+ */
 async function optionLabel(page: Page, matcher: RegExp): Promise<string> {
   const labels = await page.getByLabel('Account').locator('option').allTextContents();
-  const found = labels.find((label) => matcher.test(label));
+  const matching = labels.filter((label) => matcher.test(label));
+
+  const seeded = matching.find((label) => label.startsWith('Sample '));
+  const found = seeded ?? matching[0];
+
   if (!found) throw new Error(`No seeded account matched ${matcher}. Run the seed first.`);
   return found;
 }
@@ -35,8 +50,8 @@ async function optionLabel(page: Page, matcher: RegExp): Promise<string> {
  * the Prisma client loads `.env` into this worker, which the process that
  * launched the server never saw.
  */
-function environmentFor(worker: WorkerInfo): E2EEnvironment {
-  return (worker.config.metadata as { e2eEnvironment: E2EEnvironment }).e2eEnvironment;
+function environmentFor(info: { config: { metadata: unknown } }): E2EEnvironment {
+  return (info.config.metadata as { e2eEnvironment: E2EEnvironment }).e2eEnvironment;
 }
 
 function clientFor(environment: E2EEnvironment): PrismaClient {
@@ -207,10 +222,27 @@ async function clearRolloutFixture(environment: E2EEnvironment, taxYear: number)
   }
 }
 
+/** Set by each suite's setup, and the engagement its tests then open. */
+let sampleEngagementId: string | null = null;
+
+/**
+ * The seeded sample engagement.
+ *
+ * "The oldest engagement" and "the first row of the engagement list" were two
+ * different things the moment a second engagement shared its tax year: the
+ * setup would reset one and the test would open the other, and a T2 test would
+ * quietly find itself reading a T1. Tests navigate to this id directly rather
+ * than clicking whatever happens to be at the top of a list that other tests
+ * and fixtures also write to.
+ */
 async function firstEngagementId(environment: E2EEnvironment): Promise<string | null> {
   const prisma = clientFor(environment);
   try {
-    const engagement = await prisma.engagement.findFirst({ orderBy: { createdAt: 'asc' } });
+    const engagement =
+      (await prisma.engagement.findFirst({
+        where: { client: { legalName: 'Northwind Sample Holdings Ltd.' } },
+        orderBy: { createdAt: 'asc' },
+      })) ?? (await prisma.engagement.findFirst({ orderBy: { createdAt: 'asc' } }));
     return engagement?.id ?? null;
   } finally {
     await prisma.$disconnect();
@@ -311,6 +343,109 @@ test.describe('role permissions', () => {
   });
 });
 
+/**
+ * Puts a cover letter package in front of a reviewer.
+ *
+ * The narrative editor only exists where there is a letter to edit, and a
+ * browser test that skips itself when the environment happens to have none
+ * proves nothing at all.
+ */
+async function seedCoverLetterPackage(environment: E2EEnvironment): Promise<string | null> {
+  const prisma = clientFor(environment);
+  try {
+    const engagement = await prisma.engagement.findFirst({
+      where: { engagementType: { in: ['T1_SINGLE', 'T1_JOINT'] } },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const target =
+      engagement ??
+      (await prisma.engagement.findFirst({ orderBy: { createdAt: 'asc' } }));
+    if (!target) return null;
+
+    const existing = await prisma.coverLetterPackage.findFirst({
+      where: { engagementId: target.id, documentType: 'T1_COVER_LETTER' },
+    });
+    if (existing) {
+      await prisma.coverLetterNarrative.deleteMany({ where: { coverLetterPackageId: existing.id } });
+      await prisma.coverLetterPackage.update({
+        where: { id: existing.id },
+        data: { status: 'REVIEW_REQUIRED', staleReason: null, approvedAt: null, approvedByUserId: null },
+      });
+      return existing.id;
+    }
+
+    const created = await prisma.coverLetterPackage.create({
+      data: {
+        engagementId: target.id,
+        documentType: 'T1_COVER_LETTER',
+        status: 'REVIEW_REQUIRED',
+        idempotencyKey: `e2e_narrative_${target.id}`,
+      },
+    });
+    return created.id;
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+test.describe('editing the cover letter narrative', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  // Each test starts from an unedited letter: one of them saves.
+  test.beforeEach(async ({}, testInfo) => {
+    await seedCoverLetterPackage(environmentFor(testInfo));
+  });
+
+  test('offers the narrative beside the approved wording, and shows what changes', async ({ page }) => {
+    await signIn(page, /Reviewer/);
+    await page.goto('/cover-letters');
+
+    const editor = page.getByLabel('Narrative').first();
+    await expect(editor).toBeVisible();
+
+    // The approved wording sits beside the box, not behind a link.
+    await expect(page.getByText('Approved template wording').first()).toBeVisible();
+    await expect(page.getByText(/Unchanged from the approved template wording/).first()).toBeVisible();
+
+    await editor.fill('A plainer opening paragraph.');
+
+    // The diff is computed in the browser as the reviewer types.
+    await expect(page.getByText('What changes').first()).toBeVisible();
+    await expect(page.getByText('A plainer opening paragraph.').first()).toBeVisible();
+  });
+
+  test('the server refuses a section the template does not mark editable', async ({ page }) => {
+    await signIn(page, /Reviewer/);
+    await page.goto('/cover-letters');
+
+    const sectionInput = page.locator('input[name="sectionKey"]').first();
+    await expect(sectionInput).toHaveCount(1);
+
+    // Typing first: the textarea is controlled, so a re-render restores the
+    // hidden field. The tamper has to be the last thing before the submit — a
+    // detail worth knowing, because it is the difference between this test
+    // exercising the server guard and quietly exercising nothing.
+    await page.getByLabel('Narrative').first().fill('Trying to rewrite the enclosure list.');
+    await sectionInput.evaluate((element: HTMLInputElement) => {
+      element.value = 'documents_enclosed';
+    });
+    await page.getByRole('button', { name: 'Save narrative' }).first().click();
+
+    // The browser is not what decides which wording can be rewritten.
+    await expect(page.getByText(/not an editable section/i)).toBeVisible();
+  });
+
+  test('a read-only user is shown the narrative but given no way to change it', async ({ page }) => {
+    await signIn(page, /Viewer/);
+    await page.goto('/cover-letters');
+
+    await expect(page.getByRole('heading', { name: 'Cover Letters' })).toBeVisible();
+    await expect(page.getByLabel('Narrative')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Save narrative' })).toHaveCount(0);
+  });
+});
+
 test.describe('paging a long list', () => {
   test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
 
@@ -379,19 +514,16 @@ test.describe('preparing an engagement', () => {
 
   test.beforeAll(async ({}, worker) => {
     const environment = environmentFor(worker);
-    const id = await firstEngagementId(environment);
-    if (id) await resetPreparation(environment, id);
+    sampleEngagementId = await firstEngagementId(environment);
+    if (sampleEngagementId) await resetPreparation(environment, sampleEngagementId);
   });
 
   test('preparing proposes deadlines, blocks the ones it cannot know, and never confirms a service itself', async ({
     page,
   }) => {
     await signIn(page, /Preparer/);
-    await page.goto('/engagements');
-
-    const firstEngagement = page.getByRole('table').getByRole('link').first();
-    if ((await firstEngagement.count()) === 0) test.skip(true, 'No engagements are seeded in this environment.');
-    await firstEngagement.click();
+    if (!sampleEngagementId) test.skip(true, 'No engagements are seeded in this environment.');
+    await page.goto(`/engagements/${sampleEngagementId}`);
 
     await page.getByRole('button', { name: 'Prepare', exact: true }).click();
     await expect(page.getByText(/Prepared:/)).toBeVisible();
@@ -418,11 +550,8 @@ test.describe('preparing an engagement', () => {
 
   test('a reviewer is told plainly when there is no document to read', async ({ page }) => {
     await signIn(page, /Reviewer/);
-    await page.goto('/engagements');
-
-    const firstEngagement = page.getByRole('table').getByRole('link').first();
-    if ((await firstEngagement.count()) === 0) test.skip(true, 'No engagements are seeded in this environment.');
-    await firstEngagement.click();
+    if (!sampleEngagementId) test.skip(true, 'No engagements are seeded in this environment.');
+    await page.goto(`/engagements/${sampleEngagementId}`);
 
     await page.getByRole('tab', { name: 'Document Preview' }).click();
     const panel = page.getByRole('tabpanel');
@@ -665,11 +794,8 @@ test.describe('attaching a source document', () => {
 
   test('accepts a Word letter, refuses a file that is not what it claims to be', async ({ page }) => {
     await signIn(page, /Preparer/);
-    await page.goto('/engagements');
-
-    const firstEngagement = page.getByRole('table').getByRole('link').first();
-    if ((await firstEngagement.count()) === 0) test.skip(true, 'No engagements are seeded in this environment.');
-    await firstEngagement.click();
+    if (!sampleEngagementId) test.skip(true, 'No engagements are seeded in this environment.');
+    await page.goto(`/engagements/${sampleEngagementId}`);
 
     await page.getByRole('tab', { name: 'Source Documents' }).click();
     const panel = page.getByRole('tabpanel');
@@ -756,17 +882,14 @@ test.describe('filling in the structured fields', () => {
 
   test.beforeAll(async ({}, worker) => {
     const environment = environmentFor(worker);
-    const id = await firstEngagementId(environment);
-    if (id) await resetPreparation(environment, id);
+    sampleEngagementId = await firstEngagementId(environment);
+    if (sampleEngagementId) await resetPreparation(environment, sampleEngagementId);
   });
 
   test('offers a labelled form built from the template, and refuses a value that is not valid', async ({ page }) => {
     await signIn(page, /Preparer/);
-    await page.goto('/engagements');
-
-    const firstEngagement = page.getByRole('table').getByRole('link').first();
-    if ((await firstEngagement.count()) === 0) test.skip(true, 'No engagements are seeded in this environment.');
-    await firstEngagement.click();
+    if (!sampleEngagementId) test.skip(true, 'No engagements are seeded in this environment.');
+    await page.goto(`/engagements/${sampleEngagementId}`);
 
     await page.getByRole('tab', { name: 'Client Information' }).click();
     const panel = page.getByRole('tabpanel');
@@ -800,11 +923,8 @@ test.describe('filling in the structured fields', () => {
 
   test('shows a fee as read-only, because the pricing engine decides it', async ({ page }) => {
     await signIn(page, /Preparer/);
-    await page.goto('/engagements');
-
-    const firstEngagement = page.getByRole('table').getByRole('link').first();
-    if ((await firstEngagement.count()) === 0) test.skip(true, 'No engagements are seeded in this environment.');
-    await firstEngagement.click();
+    if (!sampleEngagementId) test.skip(true, 'No engagements are seeded in this environment.');
+    await page.goto(`/engagements/${sampleEngagementId}`);
 
     await page.getByRole('tab', { name: 'Client Information' }).click();
     const fee = page.getByRole('tabpanel').getByLabel('T2 preparation fee');

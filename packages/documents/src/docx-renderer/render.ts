@@ -2,8 +2,10 @@ import { ValidationError } from '@element/shared';
 import {
   parseBody,
   removeRanges,
+  replaceRangeWithParagraphs,
   resolveRange,
   serializeBody,
+  splitIntoParagraphs,
   type BodyBlock,
   type ParsedBody,
   type ResolvedRange,
@@ -50,6 +52,14 @@ export interface RenderOptions {
    */
   wordingExceptions?: readonly { sectionAnchor: string; revisedWording: string }[];
   /**
+   * Edited text for sections the manifest declares editable, keyed by section
+   * key. Only the narrative a person is meant to write — the manifest's
+   * `editableSections` — can be reached this way; every other word of the
+   * approved template is unreachable from here by construction, because a key
+   * the manifest does not declare has nowhere to apply.
+   */
+  editedSections?: Readonly<Record<string, string>>;
+  /**
    * Extra block ranges to remove — used for the dynamic enclosure list, where
    * a bullet is dropped when the matching final document is not in the package.
    */
@@ -67,6 +77,8 @@ export interface RenderResult {
   removedSections: string[];
   removedBlockCount: number;
   checkboxesSet: Record<string, boolean>;
+  /** Editable sections whose text was replaced by an edit. */
+  editedSections: string[];
 }
 
 function substituteTokens(
@@ -153,7 +165,16 @@ function applyWordingExceptions(
   for (const exception of exceptions) {
     const needle = exception.sectionAnchor.toLowerCase().trim();
     const block = blocks.find((candidate) => candidate.tag === 'w:p' && candidate.text.toLowerCase().includes(needle));
-    if (!block) continue;
+
+    // A partner approved this change to legal wording. If the anchor no longer
+    // matches — the template was revised beneath it — the document must not
+    // render with the original wording while the record says the exception was
+    // applied. That silence is how an unapproved sentence reaches a client.
+    if (!block) {
+      throw new ValidationError(
+        `An approved wording change cannot be applied: the template no longer contains "${exception.sectionAnchor}". Re-approve the change against the current template version.`,
+      );
+    }
 
     const text = blockText(block.xml);
     const xml = replaceTextRanges(block.xml, [{ start: 0, end: text.length, value: exception.revisedWording }]);
@@ -171,6 +192,7 @@ export async function renderDocx(templateDocx: Uint8Array | Buffer, options: Ren
   const parts = await readDocx(templateDocx);
   const emptyTokens = new Set<string>();
   const removedSections: string[] = [];
+  const editedSectionKeys: string[] = [];
   let removedBlockCount = 0;
 
   // ---- Main document body -------------------------------------------------
@@ -220,32 +242,63 @@ export async function renderDocx(templateDocx: Uint8Array | Buffer, options: Ren
     removedBlockCount = before - parsed.blocks.length;
   }
 
-  // 4. Approved wording exceptions.
+  // 4. Edited narrative sections.
+  //
+  //    Before wording exceptions and before token substitution: an edited
+  //    section is prose a person wrote, and the tokens inside it must resolve
+  //    exactly as the template's own prose does.
+  for (const [key, text] of Object.entries(options.editedSections ?? {})) {
+    const section = options.manifest.editableSections.find((candidate) => candidate.key === key);
+    if (!section) {
+      throw new ValidationError(
+        `"${key}" is not an editable section of this template. Only sections the approved template marks editable can be rewritten.`,
+      );
+    }
+
+    const range = resolveRange(parsed, section.range);
+    if (!range) {
+      throw new ValidationError(
+        `The template does not contain the editable section "${section.label}" where the manifest expects it. The template and manifest are out of step.`,
+      );
+    }
+
+    const replaced = replaceRangeWithParagraphs(parsed, range, splitIntoParagraphs(text));
+    if (!replaced) {
+      throw new ValidationError(
+        `The editable section "${section.label}" has no paragraph to take its formatting from, so the edit cannot be applied.`,
+      );
+    }
+
+    parsed = replaced;
+    editedSectionKeys.push(key);
+  }
+
+  // 5. Approved wording exceptions.
   if (options.wordingExceptions?.length) {
     parsed = applyWordingExceptions(parsed, options.wordingExceptions);
   }
 
-  // 5. Signature anchors.
+  // 6. Signature anchors.
   const signatureValues: Record<string, string> = {};
   for (const anchor of options.manifest.signatureAnchors) {
     signatureValues[anchor.token] =
       options.mode === 'FOR_SIGNATURE' ? anchor.adobeTag : anchor.draftPlaceholder;
   }
 
-  // 6. Checkboxes. This runs *before* token substitution because a checkbox
+  // 7. Checkboxes. This runs *before* token substitution because a checkbox
   //    anchor may point at a token (for example the "Other: [[…]]" bullets),
   //    which would otherwise have already been replaced by its value.
   const checkboxResult = applyCheckboxes(parsed, options.manifest, options.selections);
   parsed = checkboxResult.parsed;
 
-  // 7. Token substitution. Signature anchors win over supplied values so that
+  // 8. Token substitution. Signature anchors win over supplied values so that
   //    a stale signature value can never be written into a document.
   const values = { ...options.values, ...signatureValues };
   parsed = substituteTokens(parsed, values, emptyTokens);
 
   let documentXml = serializeBody(parsed);
 
-  // 8. Sanitation: strip every highlight so no yellow placeholder shading can
+  // 9. Sanitation: strip every highlight so no yellow placeholder shading can
   //    reach a client-facing document.
   if (options.manifest.sanitation.removeAllHighlights) {
     documentXml = stripHighlights(documentXml);
@@ -272,6 +325,7 @@ export async function renderDocx(templateDocx: Uint8Array | Buffer, options: Ren
     removedSections,
     removedBlockCount,
     checkboxesSet: checkboxResult.applied,
+    editedSections: editedSectionKeys,
   };
 }
 

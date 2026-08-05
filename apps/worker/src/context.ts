@@ -4,6 +4,7 @@ import { libreOfficeConverter, type PdfConverter } from '@element/documents';
 import {
   ApprovalService,
   CoverLetterService,
+  CoverLetterNarrativeService,
   DateRuleService,
   DocumentStore,
   EngagementService,
@@ -52,6 +53,7 @@ export interface WorkerContext {
   approvals: ApprovalService;
   signing: SigningService;
   coverLetters: CoverLetterService;
+  coverLetterNarratives: CoverLetterNarrativeService;
   notifications: KarbonNotificationService;
   providers(): Promise<ResolvedProviders>;
   testMode(): Promise<{ testMode: boolean; productionSendingEnabled: boolean }>;
@@ -110,6 +112,12 @@ export function buildWorkerContext(): WorkerContext {
     logger,
     templateDirectory,
   });
+
+  const coverLetterNarratives = new CoverLetterNarrativeService({
+    prisma,
+    audit,
+    templateDirectory,
+  });
   const notifications = new KarbonNotificationService({
     prisma,
     audit,
@@ -144,6 +152,7 @@ export function buildWorkerContext(): WorkerContext {
     approvals,
     signing,
     coverLetters,
+    coverLetterNarratives,
     notifications,
     testMode,
     providers: async () => {

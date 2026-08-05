@@ -245,6 +245,16 @@ export class CoverLetterService {
 
     const values = await this.buildValues(input.engagementId, packageRecord.id, template.manifest);
 
+    // Narrative edits a reviewer has made to this letter. Regenerating must not
+    // throw away someone's wording — that is what made the narrative
+    // uneditable in practice before there was anywhere to keep it.
+    const editedSections = await this.deps.prisma.coverLetterNarrative
+      .findMany({
+        where: { coverLetterPackageId: packageRecord.id, supersededAt: null },
+        select: { sectionKey: true, editedText: true },
+      })
+      .then((edits) => Object.fromEntries(edits.map((edit) => [edit.sectionKey, edit.editedText])));
+
     const rendered = await renderDocx(template.docx, {
       manifest: template.manifest,
       values,
@@ -252,6 +262,7 @@ export class CoverLetterService {
       includedSections: [],
       mode: 'DRAFT',
       removeBlocksMatching: enclosures.removeAnchors,
+      editedSections,
     });
 
     const pdf = await this.deps.pdfConverter.convert(rendered.docx);

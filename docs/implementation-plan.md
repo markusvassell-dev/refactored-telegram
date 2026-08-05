@@ -253,21 +253,32 @@ unlucky.
 Counting stops at 10,000 and reports a lower bound past it, so an append-only
 table stays cheap to page.
 
+## The cover letter narrative
+
+The opening paragraphs of a cover letter are editable; everything else is not.
+The boundary is the template's own `editableSections` declaration, so what may
+be rewritten is decided by the approved document rather than by the UI or the
+service. See `docs/template-system.md`.
+
+Edits are never overwritten — a new edit supersedes the previous row, and the
+database refuses to rewrite one in place. Every edit records the template's own
+wording, so restoring the original restores what the firm approved rather than
+whatever the last author wrote. Editing an approved letter sends it back for
+review, the same treatment a changed source document already gets; the document
+version that was approved is left exactly as it is.
+
 ## Next implementation step
 
-**The cover-letter narrative editor.** Cover letters are generated, reviewed and
-approved, but the narrative body can only be regenerated, not edited. A reviewer
-who wants to change one sentence has to change the underlying data and generate
-again, which is the wrong shape for the one part of the document that is meant
-to be written rather than derived.
+**Write UI for templates and users.** Both screens are read-only. Publishing a
+template version and granting a role are the two remaining operations that can
+only be done by editing the database, and both are exactly the kind of change
+that should leave a record — a template version is immutable once published, and
+a role grant decides who may approve a client-facing document.
 
-The work is a rich-enough editor over the narrative section only — the approved
-legal wording around it must stay untouchable, as it is today — with the same
-version-and-diff treatment the engagement letter fields already get, so an
-approver sees what changed since they last looked.
+The work is a publish flow that normalises, hashes and validates a new version
+before it can be activated, and a role editor that enforces separation of duties
+at the point of granting rather than only at the point of use.
 
-After that: write UI for templates and users, and pagination on the four
-remaining capped lists (`/system-jobs` at 100, `/needs-attention` at 50, the
-review queue, and the per-engagement activity lists at 20–100). The pagination
-helper now exists, so each is small; they are listed together because none of
-them is as load-bearing as the two just done.
+After that: pagination on the remaining capped lists (`/system-jobs` at 100,
+`/needs-attention` at 50, and the per-engagement activity lists at 20–100). The
+helper exists, so each is small.

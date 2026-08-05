@@ -4,11 +4,13 @@ import { requireUser, sessionCsrfToken } from '@/lib/session';
 import { EmptyState, PageHeader } from '@/components/shell';
 import { ActionForm } from '@/components/action-form';
 import { approveCoverLetter, markCoverLetterReady } from '@/app/actions';
+import { NarrativeEditor, type NarrativeSectionView } from './narrative-editor';
+import { can } from '@element/shared';
 
 export const dynamic = 'force-dynamic';
 
 export default async function CoverLettersPage() {
-  await requireUser();
+  const user = await requireUser();
   const csrfToken = (await sessionCsrfToken()) ?? '';
 
   const packages = await container.prisma.coverLetterPackage.findMany({
@@ -20,6 +22,40 @@ export default async function CoverLettersPage() {
     },
     orderBy: { updatedAt: 'desc' },
   });
+
+  // The editable sections come from the approved template, so a letter whose
+  // template declares none simply has no editor — nothing here decides what may
+  // be rewritten. A template that has drifted from its manifest raises, and the
+  // reason is shown rather than the section quietly disappearing.
+  const narrativesByPackage = new Map<string, { sections: NarrativeSectionView[] } | { error: string }>();
+  for (const record of packages) {
+    try {
+      const sections = await container.coverLetterNarratives.sectionsFor(record.id);
+      narrativesByPackage.set(record.id, {
+        sections: sections
+          .filter((section) => section.editLevel === 'ORDINARY')
+          .map((section) => ({
+            key: section.key,
+            label: section.label,
+            originalText: section.originalText,
+            effectiveText: section.effectiveText,
+            edit: section.edit
+              ? {
+                  editedText: section.edit.editedText,
+                  reason: section.edit.reason,
+                  authorName: section.edit.authorName,
+                  createdAt: section.edit.createdAt.toISOString().slice(0, 10),
+                  fromSupersededTemplate: section.edit.fromSupersededTemplate,
+                }
+              : null,
+          })),
+      });
+    } catch (error) {
+      narrativesByPackage.set(record.id, {
+        error: error instanceof Error ? error.message : 'The narrative could not be read from the template.',
+      });
+    }
+  }
 
   return (
     <>
@@ -68,6 +104,29 @@ export default async function CoverLettersPage() {
                     </ul>
                   )}
                 </div>
+
+                {(() => {
+                  const narrative = narrativesByPackage.get(record.id);
+                  if (!narrative) return null;
+
+                  if ('error' in narrative) {
+                    return (
+                      <p role="note" className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                        The narrative cannot be edited: {narrative.error}
+                      </p>
+                    );
+                  }
+
+                  return narrative.sections.map((section) => (
+                    <NarrativeEditor
+                      key={section.key}
+                      coverLetterPackageId={record.id}
+                      section={section}
+                      csrfToken={csrfToken}
+                      canEdit={can(user, 'cover_letter:edit')}
+                    />
+                  ));
+                })()}
 
                 {unconfirmed.length > 0 ? (
                   <p className="text-sm text-amber-700">

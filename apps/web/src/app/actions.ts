@@ -550,6 +550,54 @@ export async function approveCoverLetter(formData: FormData): Promise<ActionResu
   });
 }
 
+export async function saveCoverLetterNarrative(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('cover_letter:edit');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const coverLetterPackageId = formData.get('coverLetterPackageId')?.toString();
+    const sectionKey = formData.get('sectionKey')?.toString();
+    const text = formData.get('text')?.toString();
+    if (!coverLetterPackageId || !sectionKey) throw new ValidationError('A cover letter section is required.');
+    if (text === undefined) throw new ValidationError('The narrative is required.');
+
+    const outcome = await container.coverLetterNarratives.save({
+      coverLetterPackageId,
+      sectionKey,
+      text,
+      reason: formData.get('reason')?.toString(),
+      actor,
+    });
+
+    revalidatePath('/cover-letters');
+    return outcome.markedStale
+      ? 'Narrative saved. The letter had already been approved, so it has been sent back for review — regenerate it to produce the new wording.'
+      : 'Narrative saved. Regenerate the letter to produce the new wording.';
+  });
+}
+
+export async function restoreCoverLetterNarrative(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('cover_letter:edit');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const coverLetterPackageId = formData.get('coverLetterPackageId')?.toString();
+    const sectionKey = formData.get('sectionKey')?.toString();
+    if (!coverLetterPackageId || !sectionKey) throw new ValidationError('A cover letter section is required.');
+
+    const outcome = await container.coverLetterNarratives.restoreOriginal({
+      coverLetterPackageId,
+      sectionKey,
+      actor,
+    });
+
+    revalidatePath('/cover-letters');
+    return outcome.markedStale
+      ? 'Template wording restored. The letter had already been approved, so it has been sent back for review.'
+      : 'Template wording restored. Regenerate the letter to produce it.';
+  });
+}
+
 export async function markCoverLetterReady(formData: FormData): Promise<ActionResult> {
   return run(async () => {
     const actor = await requirePermission('cover_letter:approve');

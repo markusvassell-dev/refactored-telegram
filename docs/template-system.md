@@ -179,3 +179,23 @@ comparison report.
 
 Until step 5, the type stays visible as *awaiting an approved template* and
 generation is refused.
+
+## Editable sections
+
+A manifest may declare `editableSections`: named ranges of the document that a
+person is meant to write rather than derive. Each carries an `editLevel`:
+
+| Level | Meaning |
+| --- | --- |
+| `ORDINARY` | Narrative. A reviewer may rewrite it directly; the change is audited and the letter goes back for review if it had been approved |
+| `EXCEPTIONAL` | Approved legal wording that happens to be addressable. Changing it needs a wording exception, which a partner must approve |
+
+The declaration is the boundary. The renderer accepts edited text only for a key
+the manifest lists, so no other word of an approved template can be reached
+through that path — not by a mistake in the editor, and not by a tampered form
+field. Both cover letters declare one `ORDINARY` section, `cover_letter_intro`.
+
+An edit replaces the section's paragraphs with new ones modelled on the
+paragraph that was there, so the font, size and spacing of the approved template
+are inherited rather than invented. Tokens inside edited text resolve exactly as
+the template's own prose does.

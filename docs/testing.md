@@ -3,10 +3,10 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (415 tests)
+pnpm test               # unit + integration  (444 tests)
 pnpm test:unit          # 237 — no external dependencies
-pnpm test:integration   # 178 — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 31  — needs a browser
+pnpm test:integration   # 207 — needs Postgres and LibreOffice Writer
+pnpm test:e2e           # 34  — needs a browser
 pnpm build              # production build
 ```
 
@@ -134,7 +134,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (178)
+## Integration tests (207)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -178,6 +178,22 @@ for "yes"; a confirmed date never rewritten; last year's ticks carried forward
 as `priorYearSelected` with `confirmed` still false; three consecutive runs
 producing exactly the same row counts; and a resolved conflict re-opened once a
 source changes, because a decision only covers the values it was made about.
+
+**The cover letter narrative (29)** — eleven against the real approved
+templates and eighteen through the service. The edit replaces the narrative and
+leaves every word after it identical; tokens inside the edited text still
+resolve; the replacement inherits the formatting of the paragraph it replaced
+rather than inventing one; the result still converts to a valid PDF and renders
+byte-identically twice. A section key the template does not mark editable is
+refused, as is a declared section the template no longer contains — rendering
+the original wording while reporting the edit as applied is the one outcome that
+must not happen. Through the service: only ORDINARY sections are reachable, an
+empty narrative is refused rather than silently deleting the opening, an edit is
+superseded rather than overwritten, the template's own wording is recorded on
+every edit so "restore the original" restores what the firm approved, the
+database keeps exactly one live edit per section and refuses to rewrite one in
+place, and an approved letter is sent back for review rather than diverging from
+what its approver read.
 
 **Paging real rows (10)** — written as one transaction, so every row carries an
 identical timestamp; the test asserts that premise before relying on it. Every
@@ -443,6 +459,23 @@ Each was fixed in the code, not the test:
     audit events. A reader had no way to tell a short answer from a truncated
     one, which on an audit trail is the difference between a record and a
     suggestion.
+31. An approved wording exception whose anchor no longer matched the template
+    was skipped in silence: the document rendered the original approved wording
+    while the record said the partner's change had been applied. That is how an
+    unapproved sentence reaches a client. It now refuses to render.
+32. `editableSections` was declared in every manifest, parsed into the manifest
+    type, and read by nothing. The templates had said which paragraphs were
+    meant to be written since the beginning; no code had ever honoured it.
+33. Two browser suites reset "the oldest engagement" and then opened "the first
+    row of the engagement list". Those were the same engagement only until a
+    second one shared its tax year, after which a T2 test read a T1 and failed
+    with an error about deadlines. Tests now navigate to the engagement they set
+    up, by id.
+34. The browser sign-in helper matched `/Reviewer/` against every user in the
+    development login, and an integration fixture named "Creation Reviewer" —
+    with no roles at all — sorted first. Signing in succeeded and every
+    permission check then failed, which surfaces much later as a button
+    mysteriously missing from a page.
 
 ## What is not covered
 

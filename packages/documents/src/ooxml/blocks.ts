@@ -1,4 +1,13 @@
-import { blockText, innerXml, paragraphStyle, splitTopLevelBlocks, type XmlBlock } from './xml.js';
+import {
+  blockText,
+  innerXml,
+  paragraphStyle,
+  preserveSpaces,
+  replaceTextRanges,
+  splitTopLevelBlocks,
+  textNodes,
+  type XmlBlock,
+} from './xml.js';
 import type { BlockRange } from '../template-engine/manifest.js';
 
 /**
@@ -116,6 +125,76 @@ export function removeRanges(parsed: ParsedBody, ranges: readonly ResolvedRange[
     .map((block, index) => ({ ...block, index }));
 
   return { ...parsed, blocks };
+}
+
+/**
+ * Replaces a range of blocks with new paragraphs, keeping the formatting of the
+ * paragraph that was there.
+ *
+ * The first paragraph in the range that actually carries text is used as the
+ * mould: each new paragraph is a copy of it with its visible text swapped, so
+ * the font, size, indentation and spacing of the approved template are inherited
+ * rather than invented. Producing paragraph XML from scratch would render an
+ * edited letter in a different typeface from the rest of the page.
+ *
+ * Returns `null` when the range holds no paragraph that could serve as a mould —
+ * a range of tables, say, or nothing at all. The caller raises; silently leaving
+ * the original wording in place while reporting an edit as applied is the one
+ * outcome that must not happen.
+ */
+export function replaceRangeWithParagraphs(
+  parsed: ParsedBody,
+  range: ResolvedRange,
+  paragraphs: readonly string[],
+): ParsedBody | null {
+  const withinRange = parsed.blocks.slice(range.from, range.to);
+  const mould =
+    withinRange.find((block) => block.tag === 'w:p' && textNodes(block.xml).length > 0) ??
+    withinRange.find((block) => block.tag === 'w:p');
+
+  if (!mould) return null;
+  if (textNodes(mould.xml).length === 0) return null;
+
+  const mouldText = blockText(mould.xml);
+
+  const replacements = paragraphs.map((text) =>
+    preserveSpaces(replaceTextRanges(mould.xml, [{ start: 0, end: mouldText.length, value: text }])),
+  );
+
+  const blocks = [
+    ...parsed.blocks.slice(0, range.from),
+    // `start`/`end` are offsets into the original body fragment, which no
+    // longer describe anything once blocks are spliced. They are carried from
+    // the mould so the shape stays whole; `serializeBody` joins `xml` and never
+    // reads them back.
+    ...replacements.map((xml) => ({
+      tag: mould.tag,
+      start: mould.start,
+      end: mould.end,
+      xml,
+      index: 0,
+      text: normalizeText(blockText(xml)),
+      style: mould.style,
+    })),
+    ...parsed.blocks.slice(range.to),
+  ].map((block, index) => ({ ...block, index }));
+
+  return { ...parsed, blocks };
+}
+
+/**
+ * Splits edited text into paragraphs.
+ *
+ * One paragraph per line, blank lines collapsed. A reader pressing Enter twice
+ * means "new paragraph", not "empty paragraph"; Word expresses the gap between
+ * paragraphs as spacing on the paragraph itself, which the mould already
+ * carries.
+ */
+export function splitIntoParagraphs(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
 export interface SubFragment {
