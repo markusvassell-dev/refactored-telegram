@@ -151,16 +151,23 @@ async function maintenance(): Promise<void> {
 
 // ---- Health endpoints -------------------------------------------------------
 
+/**
+ * `/api/health` and `/api/ready` are aliases of the worker's own paths, so that
+ * one platform configuration serves both services. Railway applies a single
+ * `railway.json` to every service built from this repository; a health-check
+ * path that only the web service answered would fail the worker's deployment
+ * while the worker itself was running perfectly well.
+ */
 const healthServer = createServer((request, response) => {
   const url = request.url ?? '/';
 
-  if (url === '/health' || url === '/healthz') {
+  if (url === '/health' || url === '/healthz' || url === '/api/health') {
     response.writeHead(200, { 'content-type': 'application/json' });
-    response.end(JSON.stringify({ status: 'ok', workerId: WORKER_ID }));
+    response.end(JSON.stringify({ status: 'ok', service: 'worker', workerId: WORKER_ID }));
     return;
   }
 
-  if (url === '/ready') {
+  if (url === '/ready' || url === '/api/ready') {
     void context.prisma
       .$queryRaw`SELECT 1`
       .then(() => {

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadEnv } from '@element/shared';
@@ -81,8 +81,8 @@ describe('the image', () => {
     expect(dockerfile).toMatch(/COREPACK_HOME=/);
   });
 
-  it('starts through the scripts that report why a start-up failed', () => {
-    expect(dockerfile).toMatch(/CMD \["\.\/scripts\/start-web\.sh"\]/);
+  it('starts through the one entrypoint that decides its own role', () => {
+    expect(dockerfile).toMatch(/CMD \["\.\/scripts\/start\.sh"\]/);
   });
 });
 
@@ -102,23 +102,51 @@ describe('the build context', () => {
   });
 });
 
-describe('the Railway service definitions', () => {
-  const web = JSON.parse(read('railway.json')) as { deploy: Record<string, unknown> };
-  const worker = JSON.parse(read('railway.worker.json')) as { deploy: Record<string, unknown> };
+describe('the Railway service definition', () => {
+  const railway = JSON.parse(read('railway.json')) as { deploy: Record<string, unknown> };
 
-  it('gates each deploy on liveness, so start-up order cannot fail a deployment', () => {
-    expect(web.deploy.healthcheckPath).toBe('/api/health');
-    expect(worker.deploy.healthcheckPath).toBe('/health');
+  it('is the only one, because Railway reads only the root file', () => {
+    // A second config that has to be selected per service is a setting nobody
+    // remembers, and missing it makes the worker run the web service's command
+    // and answer for the web service's health path.
+    expect(existsSync(resolve(root, 'railway.worker.json'))).toBe(false);
+  });
+
+  it('gates the deploy on liveness, so start-up order cannot fail a deployment', () => {
+    expect(railway.deploy.healthcheckPath).toBe('/api/health');
   });
 
   it('allows migrations time to run before the first probe gives up', () => {
-    expect(Number(web.deploy.healthcheckTimeout)).toBeGreaterThanOrEqual(300);
-    expect(Number(worker.deploy.healthcheckTimeout)).toBeGreaterThanOrEqual(300);
+    expect(Number(railway.deploy.healthcheckTimeout)).toBeGreaterThanOrEqual(300);
   });
 
-  it('starts through the scripts rather than a chained shell command that hides its failure', () => {
-    expect(web.deploy.startCommand).toBe('./scripts/start-web.sh');
-    expect(worker.deploy.startCommand).toBe('./scripts/start-worker.sh');
+  it('starts through the entrypoint rather than a chained command that hides its failure', () => {
+    expect(railway.deploy.startCommand).toBe('./scripts/start.sh');
+  });
+});
+
+describe('choosing which service a container becomes', () => {
+  const entrypoint = read('scripts/start.sh');
+
+  it('defaults to the web service, so an unset role is not a broken deployment', () => {
+    expect(entrypoint).toMatch(/ROLE="\$\{SERVICE_ROLE:-web\}"/);
+  });
+
+  it('dispatches to both, and refuses a role it does not recognise', () => {
+    expect(entrypoint).toMatch(/exec \.\/scripts\/start-web\.sh/);
+    expect(entrypoint).toMatch(/exec \.\/scripts\/start-worker\.sh/);
+    expect(entrypoint).toMatch(/FATAL: SERVICE_ROLE is/);
+  });
+
+  it('lets the worker answer the same health path, so one config serves both', () => {
+    const worker = read('apps/worker/src/index.ts');
+    expect(worker).toMatch(/'\/api\/health'/);
+    expect(worker).toMatch(/'\/api\/ready'/);
+  });
+
+  it('takes the port the platform assigns rather than one of its own choosing', () => {
+    const worker = read('apps/worker/src/index.ts');
+    expect(worker).toMatch(/process\.env\.PORT/);
   });
 });
 

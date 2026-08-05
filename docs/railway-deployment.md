@@ -4,18 +4,39 @@
 
 Three, from one repository:
 
-| Service | Start command | Health check | Notes |
-| --- | --- | --- | --- |
-| **web** | `./scripts/start-web.sh` | `GET /api/health` | Applies migrations, then starts. Owns the schema |
-| **worker** | `./scripts/start-worker.sh` | `GET /health` | Waits for the schema; never migrates. Needs LibreOffice, which the image provides |
-| **PostgreSQL** | Railway plugin | — | Version 16 |
+| Service | `SERVICE_ROLE` | Notes |
+| --- | --- | --- |
+| **web** | `web` (the default) | Applies migrations, then starts. Owns the schema |
+| **worker** | `worker` | Waits for the schema; never migrates. Needs LibreOffice, which the image provides |
+| **PostgreSQL** | — | Railway plugin, version 16 |
 
-Both application services build from the same `Dockerfile`. Point the worker
-service at `railway.worker.json`, or override its start command in the Railway
-UI.
+Both application services build from the same `Dockerfile`, run the same start
+command, and answer the same health path. Nothing is configured per service
+except its variables.
 
 No other service is justified. The job queue is Postgres-backed, so there is no
 broker to run.
+
+### One config file, one entrypoint
+
+Railway reads a single `railway.json` from the repository root and applies it to
+every service built from that repository. A second file has to be selected in
+each service's settings, and when that is missed nothing says so — the worker
+runs the web service's start command, is probed on the web service's health
+path, and fails with a health-check error that has nothing to do with either.
+That is the failure this repository originally shipped.
+
+So the role travels with the service's own variables, next to `DATABASE_URL` and
+everything else that has to be set there anyway:
+
+```
+SERVICE_ROLE=worker
+```
+
+`scripts/start.sh` dispatches on it, defaults to `web`, and refuses a value it
+does not recognise rather than starting the wrong thing. The worker answers
+`/api/health` and `/api/ready` as aliases of its own paths, so one health-check
+path serves both.
 
 ### Ports
 
@@ -154,8 +175,9 @@ time the database is redeployed.
    without it, and the failure is reported as a health-check failure.
 2. Create the **web** service from this repository. Railway picks up
    `railway.json`. Set its variables, generate a public domain.
-3. Create the **worker** service from the same repository, with start command
-   `./scripts/start-worker.sh`. Set the same variables. No public domain.
+3. Create the **worker** service from the same repository. Set the same
+   variables plus `SERVICE_ROLE=worker`. No public domain, no start command
+   override, no config-file override.
 4. Push. Railway builds one image for both.
 5. Each service checks its configuration, then the web service migrates. Both
    print what they are doing in the **Deploy Logs**.
@@ -181,6 +203,13 @@ ENTRA_REDIRECT_URI  = https://${{RAILWAY_PUBLIC_DOMAIN}}/api/auth/entra/callback
 The worker has no public domain, so give it the web service's:
 `APP_BASE_URL = https://${{@element/web.RAILWAY_PUBLIC_DOMAIN}}`. It is used for
 the deep links written into Karbon, which must point at the web service.
+
+### `SERVICE_ROLE` on the worker
+
+The one variable that distinguishes the two services. Miss it and the worker
+runs the web service's start command: it will try to migrate, and if it gets
+that far it will serve the application instead of draining the queue. Both
+services would then be web services and no job would ever run.
 
 ### A stray `.env` overrides the platform
 

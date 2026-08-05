@@ -103,7 +103,7 @@ RUN mkdir -p "$DOCUMENT_TEMP_DIRECTORY" "$DOCUMENT_STORAGE_DIRECTORY" \
  && useradd --system --uid 10001 --home /app element \
  && chown -R element:element /app "$DOCUMENT_TEMP_DIRECTORY" "$DOCUMENT_STORAGE_DIRECTORY"
 
-RUN chmod +x /app/scripts/start-web.sh /app/scripts/start-worker.sh
+RUN chmod +x /app/scripts/start.sh /app/scripts/start-web.sh /app/scripts/start-worker.sh
 
 USER element
 
@@ -114,7 +114,7 @@ USER element
 # whatever PORT it is given; see scripts/start-*.sh.
 EXPOSE 3000
 
-# Railway overrides this for the worker service:
-#   web    → ./scripts/start-web.sh
-#   worker → ./scripts/start-worker.sh
-CMD ["./scripts/start-web.sh"]
+# One command for both services. Which one this container becomes is decided by
+# SERVICE_ROLE in its own variables, not by a per-service override that fails
+# silently when it is forgotten.
+CMD ["./scripts/start.sh"]

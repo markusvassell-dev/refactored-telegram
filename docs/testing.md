@@ -3,8 +3,8 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (359 tests)
-pnpm test:unit          # 191 — no external dependencies
+pnpm test               # unit + integration  (364 tests)
+pnpm test:unit          # 196 — no external dependencies
 pnpm test:integration   # 168 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 27  — needs a browser
 pnpm build              # production build
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (191)
+## Unit tests (196)
 
 No database, no filesystem, no network.
 
@@ -56,7 +56,7 @@ machine exactly; all five gates.
 approve or send** client-facing documents; separation of duties; idempotency
 key determinism and sensitivity; source fingerprint stability.
 
-**Deployment configuration (20)** — the properties that decide whether a
+**Deployment configuration (25)** — the properties that decide whether a
 misconfigured deployment is legible or opaque. The image exposes exactly one
 port, because two make the health-check target a coin toss. The start scripts
 take the port the platform assigns, check configuration before touching the
@@ -382,6 +382,12 @@ Each was fixed in the code, not the test:
     `node_modules` and `.next` into the image — and their `.env` with it. Prisma
     Client loads a project-root `.env` on import, so those values would have
     silently overridden the variables set on the platform.
+25. The worker's configuration was in a second file, `railway.worker.json`,
+    which Railway never reads unless each service is individually pointed at it.
+    Missing that is silent: the worker ran the web service's start command and
+    was probed on the web service's health path, then failed with a health-check
+    error about neither. One config file now, and the role travels with the
+    service's own variables as `SERVICE_ROLE`.
 
 ## What is not covered
 
