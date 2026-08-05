@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { NotFoundError, PreconditionError, sha256Hex } from '@element/shared';
 import type {
   AdobeSignProvider,
@@ -76,7 +76,9 @@ export class MockAdobeSignProvider implements AdobeSignProvider {
       return { agreementId: existingId, status: existing?.status ?? 'OUT_FOR_SIGNATURE', deduplicated: true };
     }
 
-    const agreementId = `mock-agreement-${this.agreements.size + 1}`;
+    // Adobe agreement ids are globally unique; the mock mirrors that so two
+    // adapter instances in the same database cannot collide.
+    const agreementId = `mock-agreement-${randomUUID()}`;
     const orders = [...new Set(request.signers.map((signer) => signer.order))].sort((a, b) => a - b);
     const firstOrder = orders[0];
 

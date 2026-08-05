@@ -198,6 +198,19 @@ export class CoverLetterService {
       include: { client: true },
     });
 
+    // Enter the generating state here rather than relying on the caller, so a
+    // direct call and the background job follow the same status path.
+    const currentStatus = await this.deps.workflow.currentStatus(input.engagementId);
+    if (currentStatus !== 'COVER_LETTER_GENERATING') {
+      await this.deps.workflow.transition({
+        engagementId: input.engagementId,
+        to: 'COVER_LETTER_GENERATING',
+        userId: input.actor.id,
+        reason: 'Generating the completion cover letter',
+        correlationId: input.correlationId,
+      });
+    }
+
     const sources = await this.deps.prisma.sourceDocument.findMany({
       where: { engagementId: input.engagementId, includedInPackage: true },
     });

@@ -115,28 +115,59 @@ export function diffParagraphs(left: readonly string[], right: readonly string[]
   return mergeAdjacentReplacements(changes);
 }
 
-/** A REMOVED immediately followed by an ADDED reads better as MODIFIED. */
+/**
+ * Turns a removal-and-reinsertion of the same clause into a single MODIFIED
+ * entry, which is how a reviewer reads it.
+ *
+ * Pairing happens within a contiguous block of changes rather than only for
+ * immediately adjacent entries, because the LCS walk often emits every removal
+ * in a block before the corresponding additions.
+ */
 function mergeAdjacentReplacements(changes: readonly ParagraphChange[]): ParagraphChange[] {
   const merged: ParagraphChange[] = [];
+  let index = 0;
 
-  for (let index = 0; index < changes.length; index += 1) {
+  while (index < changes.length) {
     const current = changes[index];
-    const next = changes[index + 1];
-    if (!current) continue;
+    if (!current) break;
 
-    if (current.kind === 'REMOVED' && next?.kind === 'ADDED' && looksRelated(current.leftText, next.rightText)) {
-      merged.push({
-        kind: 'MODIFIED',
-        leftIndex: current.leftIndex,
-        rightIndex: next.rightIndex,
-        leftText: current.leftText,
-        rightText: next.rightText,
-      });
+    if (current.kind === 'UNCHANGED') {
+      merged.push(current);
       index += 1;
       continue;
     }
 
-    merged.push(current);
+    // Collect the whole contiguous run of changes.
+    const runStart = index;
+    while (index < changes.length && changes[index]?.kind !== 'UNCHANGED') index += 1;
+    const run = changes.slice(runStart, index);
+
+    const removals = run.filter((change) => change.kind === 'REMOVED');
+    const additions = run.filter((change) => change.kind === 'ADDED');
+    const pairedAdditions = new Set<ParagraphChange>();
+
+    for (const removal of removals) {
+      const match = additions.find(
+        (addition) => !pairedAdditions.has(addition) && looksRelated(removal.leftText, addition.rightText),
+      );
+
+      if (match) {
+        pairedAdditions.add(match);
+        merged.push({
+          kind: 'MODIFIED',
+          leftIndex: removal.leftIndex,
+          rightIndex: match.rightIndex,
+          leftText: removal.leftText,
+          rightText: match.rightText,
+        });
+      } else {
+        merged.push(removal);
+      }
+    }
+
+    for (const addition of additions) {
+      if (!pairedAdditions.has(addition)) merged.push(addition);
+    }
   }
 
   return merged;

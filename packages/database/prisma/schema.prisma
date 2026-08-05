@@ -293,7 +293,6 @@ model User {
   reviewAssignments      ReviewAssignment[]
   reviewComments         ReviewComment[]
   approvals              Approval[]
-  auditEvents            AuditEvent[]
   documentVersions       DocumentVersion[] @relation("DocumentVersionCreatedBy")
   approvedVersions       DocumentVersion[] @relation("DocumentVersionApprovedBy")
   wordingExceptions      WordingException[] @relation("WordingExceptionAuthor")
@@ -463,7 +462,6 @@ model Engagement {
   karbonActivities  KarbonActivity[]
   workflowEvents    WorkflowEvent[]
   jobs              BackgroundJob[]
-  auditEvents       AuditEvent[]
 
   /// One engagement per client + type + year.
   @@unique([clientId, engagementType, taxYear])
@@ -1248,8 +1246,10 @@ model AuditEvent {
   userAgent     String?
   createdAt     DateTime @default(now())
 
-  user       User?       @relation(fields: [userId], references: [id], onDelete: SetNull)
-  engagement Engagement? @relation(fields: [engagementId], references: [id], onDelete: SetNull)
+  /// `userId` and `engagementId` are deliberately plain columns rather than
+  /// foreign keys. An audit trail must outlive the records it describes, and
+  /// an ON DELETE SET NULL would be an UPDATE, which the immutability trigger
+  /// correctly refuses.
 
   @@index([engagementId, createdAt])
   @@index([userId, createdAt])

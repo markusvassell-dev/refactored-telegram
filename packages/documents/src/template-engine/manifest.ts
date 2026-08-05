@@ -194,9 +194,14 @@ export function requiredFieldTokens(
   const tokens = new Set<string>();
 
   for (const field of manifest.fields) {
-    if (!field.required) continue;
-    if (field.requiredWhenSection && !includedSections.includes(field.requiredWhenSection)) continue;
-    tokens.add(field.token);
+    // `requiredWhenSection` makes a field required exactly when that section is
+    // included, whatever the unconditional `required` flag says. That is what
+    // makes the CSRS 4200 fields mandatory only when compilation is selected.
+    if (field.requiredWhenSection) {
+      if (includedSections.includes(field.requiredWhenSection)) tokens.add(field.token);
+      continue;
+    }
+    if (field.required) tokens.add(field.token);
   }
 
   for (const section of manifest.conditionalSections) {

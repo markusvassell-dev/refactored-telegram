@@ -22,5 +22,5 @@ if (process.env.NODE_ENV !== 'production') {
   globalForPrisma.elementPrisma = prisma;
 }
 
-export type { PrismaClient };
+// Re-exports the generated client, including PrismaClient as a value.
 export * from '../generated/client/index.js';

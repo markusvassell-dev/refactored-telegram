@@ -54,7 +54,6 @@ export default async function EngagementDetailPage({ params }: { params: Promise
   const [auditEvents, templateVersion, gate] = await Promise.all([
     container.prisma.auditEvent.findMany({
       where: { engagementId: id },
-      include: { user: true },
       orderBy: { createdAt: 'desc' },
       take: 100,
     }),
@@ -65,6 +64,18 @@ export default async function EngagementDetailPage({ params }: { params: Promise
       .evaluateGate(id, documentTypeFor(engagement.engagementType))
       .catch(() => ({ ok: false, blockers: ['The generation gate could not be evaluated.'], warnings: [] })),
   ]);
+
+  // audit_event has no foreign keys, so history survives the deletion of the
+  // records it describes. Names are joined here for display.
+  const auditUsers = await container.prisma.user.findMany({
+    where: { id: { in: [...new Set(auditEvents.map((event) => event.userId).filter(Boolean))] as string[] } },
+    select: { id: true, displayName: true },
+  });
+  const auditUserNames = new Map(auditUsers.map((user) => [user.id, user.displayName]));
+  const auditEventsForDisplay = auditEvents.map((event) => ({
+    ...event,
+    userDisplayName: event.userId ? (auditUserNames.get(event.userId) ?? null) : null,
+  }));
 
   const primaryFee = engagement.feeCalculations.find((fee) => fee.feeKind !== 'CSRS_4200_COMPILATION');
 
@@ -96,7 +107,7 @@ export default async function EngagementDetailPage({ params }: { params: Promise
       <ReviewWorkspace
         csrfToken={csrfToken}
         engagement={JSON.parse(JSON.stringify(engagement))}
-        auditEvents={JSON.parse(JSON.stringify(auditEvents))}
+        auditEvents={JSON.parse(JSON.stringify(auditEventsForDisplay))}
         templateVersion={JSON.parse(JSON.stringify(templateVersion))}
         generationGate={gate}
       />

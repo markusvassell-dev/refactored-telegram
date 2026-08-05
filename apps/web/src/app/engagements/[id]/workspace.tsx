@@ -1148,7 +1148,7 @@ function AuditHistory({ auditEvents }: { auditEvents: any[] }): ReactNode {
               <tr key={event.id}>
                 <td className="text-xs font-medium">{event.eventType}</td>
                 <td className="text-xs">{event.objectType}</td>
-                <td className="text-xs">{event.user?.displayName ?? 'system'}</td>
+                <td className="text-xs">{event.userDisplayName ?? 'system'}</td>
                 <td className="max-w-xs text-xs">{event.reason ?? '—'}</td>
                 <td className="max-w-[8rem] truncate font-mono text-xs">{event.correlationId ?? '—'}</td>
                 <td className="text-xs">{new Date(event.createdAt).toISOString().slice(0, 16).replace('T', ' ')}</td>

@@ -28,10 +28,25 @@ export default async function AuditLogPage({
           }
         : {}),
     },
-    include: { user: true, engagement: { include: { client: true } } },
     orderBy: { createdAt: 'desc' },
     take: 250,
   });
+
+  // audit_event deliberately has no foreign keys, so that history survives the
+  // deletion of what it describes. The display names are joined here instead.
+  const [users, engagements] = await Promise.all([
+    container.prisma.user.findMany({
+      where: { id: { in: [...new Set(events.map((event) => event.userId).filter(Boolean))] as string[] } },
+      select: { id: true, displayName: true },
+    }),
+    container.prisma.engagement.findMany({
+      where: { id: { in: [...new Set(events.map((event) => event.engagementId).filter(Boolean))] as string[] } },
+      select: { id: true, client: { select: { legalName: true } } },
+    }),
+  ]);
+
+  const userNames = new Map(users.map((user) => [user.id, user.displayName]));
+  const clientNames = new Map(engagements.map((engagement) => [engagement.id, engagement.client.legalName]));
 
   return (
     <>
@@ -85,8 +100,8 @@ export default async function AuditLogPage({
                   </td>
                   <td className="text-xs font-medium">{event.eventType}</td>
                   <td className="text-xs">{event.objectType}</td>
-                  <td className="text-xs">{event.engagement?.client.legalName ?? '—'}</td>
-                  <td className="text-xs">{event.user?.displayName ?? 'system'}</td>
+                  <td className="text-xs">{(event.engagementId ? clientNames.get(event.engagementId) : null) ?? '—'}</td>
+                  <td className="text-xs">{(event.userId ? userNames.get(event.userId) : null) ?? 'system'}</td>
                   <td className="max-w-xs text-xs">{event.reason ?? '—'}</td>
                   <td className="max-w-[8rem] truncate font-mono text-xs">{event.correlationId ?? '—'}</td>
                 </tr>

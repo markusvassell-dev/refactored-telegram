@@ -627,13 +627,8 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         include: { userRoles: true },
       });
 
-      await context.workflow.transition({
-        engagementId,
-        to: 'COVER_LETTER_GENERATING',
-        reason: 'Generating the completion cover letter',
-        correlationId: job.correlationId,
-      });
-
+      // The service enters COVER_LETTER_GENERATING itself, so both this job
+      // and a direct call follow the same status path.
       const result = await context.coverLetters.generate({
         engagementId,
         actor: {
