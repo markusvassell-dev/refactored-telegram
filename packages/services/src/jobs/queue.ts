@@ -1,4 +1,4 @@
-import { Prisma, type JobStatus, type PrismaClient } from '@element/database';
+import { Prisma, isUniqueConstraintError, type JobStatus, type PrismaClient } from '@element/database';
 import { AppError, isRetryable, newCorrelationId, toUserMessage, type Logger } from '@element/shared';
 
 /**
@@ -115,7 +115,7 @@ export class JobQueue {
       return { jobId: job.id, deduplicated: false };
     } catch (error) {
       // A concurrent enqueue won the race; that is still a successful dedupe.
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      if (isUniqueConstraintError(error)) {
         const raced = await this.prisma.backgroundJob.findUnique({
           where: { idempotencyKey: options.idempotencyKey },
           select: { id: true },

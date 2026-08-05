@@ -198,6 +198,15 @@ changes, preparation re-opens it rather than applying a stale answer.
 
 ## Deliberate decisions
 
+**Prisma errors are matched by code, not by `instanceof`.** Next bundles server
+code in layers and the generated Prisma runtime can be loaded more than once in
+one process, so `instanceof PrismaClientKnownRequestError` returns false for a
+genuine Prisma error raised through the other copy. Every handled unique
+constraint — a duplicate engagement, a raced enqueue, a repeated webhook — then
+becomes an unhandled failure in the web app while passing in tests. The error
+code is part of Prisma's documented contract; `isUniqueConstraintError` in
+`@element/database` matches on that instead.
+
 **OOXML surgery, not DOM round-tripping.** Re-serialising WordprocessingML is
 the standard way to lose numbering, headers, footers and content controls. The
 renderer splices text runs and deletes whole block ranges, so anything it does

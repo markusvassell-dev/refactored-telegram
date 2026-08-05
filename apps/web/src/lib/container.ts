@@ -7,6 +7,7 @@ import {
   BulkRolloutService,
   CoverLetterService,
   DocumentStore,
+  EngagementService,
   FieldFormService,
   GenerationService,
   JobQueue,
@@ -36,6 +37,7 @@ const workflow = new WorkflowService(prisma, audit);
 const pricing = new PricingService(prisma, audit);
 const preparation = new PreparationService({ prisma, audit, pricing, logger });
 const fields = new FieldFormService({ prisma, audit });
+const engagements = new EngagementService({ prisma, audit });
 
 const store = new DocumentStore({
   rootDirectory: configuration.DOCUMENT_STORAGE_DIRECTORY,
@@ -93,6 +95,7 @@ export const container = {
   pricing,
   preparation,
   fields,
+  engagements,
   store,
   generation,
   approvals,

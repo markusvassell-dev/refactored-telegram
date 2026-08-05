@@ -3,10 +3,10 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (262 tests)
+pnpm test               # unit + integration  (280 tests)
 pnpm test:unit          # 159 — no external dependencies
-pnpm test:integration   # 103 — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 20  — needs a browser
+pnpm test:integration   # 121 — needs Postgres and LibreOffice Writer
+pnpm test:e2e           # 22  — needs a browser
 pnpm build              # production build
 ```
 
@@ -91,7 +91,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (103)
+## Integration tests (121)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -136,6 +136,17 @@ as `priorYearSelected` with `confirmed` still false; three consecutive runs
 producing exactly the same row counts; and a resolved conflict re-opened once a
 source changes, because a decision only covers the values it was made about.
 
+**Starting an engagement (18)** — what it refuses is the point, because each of
+these is easy to create by accident and awkward to unpick. A type with no
+approved template could never produce a document; a corporate engagement without
+its year-end could never have a filing deadline; February 31 and a tax year of
+9999 are refused rather than stored; a second engagement for the same client,
+type and year names the one that already exists; a new client whose name already
+exists is refused rather than splitting one firm across two records. What it
+does automatically is narrow and checked: the prior year is linked when it
+exists, a Karbon work item is linked only when this application already knows
+it, and a T1 is calendar-year so a supplied year-end is not recorded.
+
 **Bulk rollout (11)** — the annual rollout is the only action that touches many
 clients at once, so these are about restraint. A role without `generation:start`
 is refused. A blocked engagement is refused *even when its id is submitted* — a
@@ -160,7 +171,7 @@ text, records the edit without copying the value into the audit trail, reports
 an unchanged value instead of rewriting it, and treats an emptied box as
 clearing the value rather than storing `""`.
 
-## Browser tests (20)
+## Browser tests (22)
 
 Playwright, Test Mode on.
 
@@ -172,7 +183,10 @@ unsupplied templates shown as awaiting approval; a read-only user refused the
 audit log; skip link, landmarks and ARIA tab wiring; health and readiness
 endpoints; webhook signature rejection and the Adobe verification handshake.
 
-Two cover the annual rollout: the control says how many drafts it will produce,
+Two cover starting an engagement: the form is reached from the engagements list,
+refuses a corporate engagement with no year-end, creates one from a new client,
+then refuses a second for the same year — and is neither offered to nor reachable
+by a role without `engagement:create`. Two cover the annual rollout: the control says how many drafts it will produce,
 a dry run reports without queueing, and the real run asks for confirmation
 naming the count before it queues. Four more cover the work a reviewer actually
 does. The Client Information tab
@@ -245,6 +259,16 @@ Each was fixed in the code, not the test:
     checkbox showing unchecked while the component still believed it was on.
     Replaced with two submit buttons, so the choice travels with the submission
     instead of living in state.
+15. The same reset threw away everything a user had typed whenever a submission
+    was rejected — being told the year-end is missing *and* losing the client
+    name is how a person gives up on a form. `ActionForm` now restores the
+    submission when the answer comes back "no".
+16. `instanceof Prisma.PrismaClientKnownRequestError` is false inside Next's
+    server bundle, because the generated Prisma runtime is loaded more than once
+    in that process. Every handled unique-constraint violation — a duplicate
+    engagement, a raced job enqueue, a duplicate webhook — surfaced as an
+    unhandled "something went wrong" in the web app while passing in tests.
+    Matching on the documented error code instead.
 
 ## What is not covered
 

@@ -48,6 +48,20 @@ Findings that shaped the design:
 | **5 — T3** | Generation and signing model complete; see gaps |
 | **6 — Bulk rollout and administration** | Preview and queueing complete; see gaps |
 
+### Starting an engagement
+
+Until now an engagement existed only because the seed made one: the Karbon sync
+job upserts work items but does not create engagements, and the bulk rollout
+queues generation for engagements that already exist. `/engagements/new` closes
+that, which is what makes a Test Mode pilot possible before Karbon has been
+verified against a live tenant.
+
+It refuses what cannot be recovered from later: a type with no approved template,
+a corporate or trust engagement without the year-end its deadlines are computed
+from, an implausible tax year, a duplicate for the same client and year, and a
+new client whose name already exists. It links the prior year automatically, and
+a Karbon work item only when this application already knows it.
+
 ### Phase 0 — complete
 
 Monorepo, 36-entity data model, database-level guards, workflow state machine,
@@ -164,10 +178,6 @@ through the `entra_role_mapping` setting, and the user created or updated on
 first sign-in. It has only been typechecked and reviewed, not run against a
 live directory. Browser tests use the development login.
 
-**No engagement-creation UI.** Engagements arrive from the Karbon sync job, the
-bulk rollout service or the seed. There is no form for starting one by hand, so
-a pilot depends on one of those three paths.
-
 **`sourcePlaceholder` needs a new template version to appear.** The bracketed
 text a token replaced is derived during normalisation and written into the
 manifest. A published template version is immutable, and rightly so, which means
@@ -177,17 +187,19 @@ stored manifest by migration and need nothing.
 
 ## Next implementation step
 
-**An engagement-creation form.** Engagements arrive from the Karbon sync job,
-the bulk rollout service or the seed. Since Karbon is unverified against a live
-tenant, a pilot in Test Mode has no supported way to start an engagement at all
-— which makes it the gap that blocks trying the application on real work.
+**Locating and extracting a prior-year letter without Karbon.** Preparation,
+pricing and the whole review workspace assume a prior-year letter has been
+found and read. Every path to one runs through Karbon: `LOCATE_PRIOR_YEAR_DOCUMENTS`
+searches work items, and the extraction job reads what that found. In Test Mode
+with the mock adapter there is nothing real to find, so a pilot can create an
+engagement and then cannot get past a blocked fee.
 
-The work is a form that picks a client (or creates one), an engagement type, a
-tax year and a year-end, optionally links a Karbon work item key, and creates
-the engagement in `NOT_STARTED` with the preparer assigned — then hands
-straight over to Prepare. The uniqueness constraint on client, type and year is
-already enforced by the database, so the form's job is to report that clearly
-rather than to guard it.
+The work is an upload on the Source Documents tab: accept a `.docx` or `.pdf`,
+store it through `DocumentStore.put` (which already validates type, size and
+path), record it as a `SourceDocument` with its hash, and enqueue
+`EXTRACT_DOCUMENT_TEXT` against it. The extraction, verification scoring,
+evidence and staleness machinery all already exist and are tested — what is
+missing is the one way to hand them a file by hand.
 
 After that, in order: the administration write UI (templates, pricing rules,
 date rules, users), and the cover-letter narrative editor.

@@ -43,6 +43,17 @@ async function run(action: () => Promise<ActionOutcome>): Promise<ActionResult> 
     if (typeof outcome === 'string') return { ok: true, message: outcome };
     return { ok: true, message: outcome.message, ...(outcome.blockers?.length ? { blockers: outcome.blockers } : {}) };
   } catch (error) {
+    // An expected refusal explains itself to the user. Anything else shows a
+    // generic message on purpose — and must therefore reach the log, or it
+    // leaves no trace anywhere at all.
+    if (!(error instanceof AppError)) {
+      container.logger.error('Server action failed', {
+        name: error instanceof Error ? error.name : 'Unknown',
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack?.split('\n').slice(0, 6).join('\n') : undefined,
+      });
+    }
+
     // Any error may carry the specific reasons a reviewer can act on — a
     // blocked precondition and a field that failed validation are both things
     // to list rather than summarise.
@@ -844,5 +855,49 @@ export async function runBulkRollout(formData: FormData): Promise<ActionResult> 
     }
 
     return message;
+  });
+}
+
+/**
+ * Starts an engagement by hand.
+ *
+ * The only other way one exists is the seed, so this is what lets a firm begin
+ * real work before the Karbon connection has been verified against a live
+ * tenant. Everything it refuses, it refuses with a reason a person can act on.
+ */
+export async function createEngagement(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('engagement:create');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementType = formData.get('engagementType')?.toString() as EngagementType | undefined;
+    const taxYear = Number(formData.get('taxYear'));
+
+    if (!engagementType) throw new ValidationError('Choose an engagement type.');
+
+    const state = await container.testModeState();
+
+    const result = await container.engagements.create({
+      clientId: formData.get('clientId')?.toString() || null,
+      newClientName: formData.get('newClientName')?.toString() || null,
+      engagementType,
+      taxYear,
+      yearEnd: formData.get('yearEnd')?.toString() || null,
+      karbonWorkItemKey: formData.get('karbonWorkItemKey')?.toString() || null,
+      assignedReviewerId: formData.get('assignedReviewerId')?.toString() || null,
+      actorId: actor.id,
+      // A test-mode engagement is labelled as one everywhere it appears.
+      isTestMode: state.testMode,
+    });
+
+    revalidatePath('/engagements');
+
+    // Notes are informational, so they belong in the message rather than in
+    // `blockers`, which means "things standing in your way".
+    const parts = [`Engagement created. Open it at /engagements/${result.engagementId}.`];
+    if (result.clientCreated) parts.push('A new client record was created.');
+    parts.push(...result.notes);
+
+    return parts.join(' ');
   });
 }

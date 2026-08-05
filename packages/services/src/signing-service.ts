@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@element/database';
+import { isUniqueConstraintError, type Prisma, type PrismaClient } from '@element/database';
 import type { AuditLogger } from '@element/audit';
 import type { AdobeSignProvider, AgreementState, KarbonProvider } from '@element/integrations';
 import { DEFAULT_AGREEMENT_SETTINGS } from '@element/integrations';
@@ -370,7 +370,7 @@ export class SigningService {
         },
       });
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+      if (isUniqueConstraintError(error)) {
         return { handled: false, duplicate: true, reason: 'This event has already been processed.' };
       }
       throw error;

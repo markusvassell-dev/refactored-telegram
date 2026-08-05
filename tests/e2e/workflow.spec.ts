@@ -373,6 +373,66 @@ test.describe('preparing an engagement', () => {
   });
 });
 
+test.describe('starting an engagement', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  const CLIENT_NAME = 'End To End Start Co';
+
+  test.afterAll(async ({}, worker) => {
+    const prisma = clientFor(environmentFor(worker));
+    try {
+      const clients = await prisma.client.findMany({ where: { legalName: CLIENT_NAME }, select: { id: true } });
+      await prisma.engagement.deleteMany({ where: { clientId: { in: clients.map((row) => row.id) } } });
+      await prisma.client.deleteMany({ where: { id: { in: clients.map((row) => row.id) } } });
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  test('creates one from a new client, and refuses a second for the same year', async ({ page }) => {
+    await signIn(page, /Preparer/);
+    await page.goto('/engagements');
+
+    await page.getByRole('link', { name: 'Start an engagement' }).click();
+    await expect(page.getByRole('heading', { name: 'Start an engagement' })).toBeVisible();
+
+    // A type with no approved template is offered as unavailable, not hidden.
+    const singleTaxpayer = page.getByRole('option', { name: /T1 single taxpayer/ });
+    await expect(singleTaxpayer).toBeDisabled();
+    await expect(singleTaxpayer).toContainText('no approved template yet');
+
+    // A corporate engagement without its year-end is refused with the reason.
+    await page.getByLabel(/new client’s full legal name/).fill(CLIENT_NAME);
+    await page.getByLabel('Tax year').fill('2026');
+    await page.getByRole('button', { name: 'Create engagement' }).click();
+    await expect(page.getByText(/needs its year-end/)).toBeVisible();
+
+    await page.getByLabel('Year-end').fill('2026-03-31');
+    await page.getByRole('button', { name: 'Create engagement' }).click();
+    await expect(page.getByText(/Engagement created/)).toBeVisible();
+    await expect(page.getByText(/new client record was created/)).toBeVisible();
+
+    // The second attempt collides with the first, and says so.
+    await page.goto('/engagements/new');
+    await page.getByLabel('Existing client').selectOption({ label: CLIENT_NAME });
+    await page.getByLabel('Tax year').fill('2026');
+    await page.getByLabel('Year-end').fill('2026-03-31');
+    await page.getByRole('button', { name: 'Create engagement' }).click();
+    await expect(page.getByText(/already has a 2026 T2 engagement/)).toBeVisible();
+  });
+
+  test('is not offered to a role that cannot create one', async ({ page }) => {
+    await signIn(page, /Viewer/);
+    await page.goto('/engagements');
+
+    await expect(page.getByRole('link', { name: 'Start an engagement' })).toHaveCount(0);
+
+    // Hidden in the UI and refused on the server, not merely hidden.
+    const response = await page.request.get('/engagements/new');
+    expect(response.status()).toBeGreaterThanOrEqual(400);
+  });
+});
+
 test.describe('the annual rollout', () => {
   test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
 

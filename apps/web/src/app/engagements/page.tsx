@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { can } from '@element/shared';
 import { container } from '@/lib/container';
 import { requireUser } from '@/lib/session';
 import { EmptyState, PageHeader, StatusBadge } from '@/components/shell';
@@ -10,7 +11,7 @@ export default async function EngagementsPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requireUser();
+  const user = await requireUser();
   const params = await searchParams;
 
   const engagements = await container.prisma.engagement.findMany({
@@ -29,6 +30,13 @@ export default async function EngagementsPage({
       <PageHeader
         title="Engagements"
         description="Every engagement letter the application knows about, newest first."
+        actions={
+          can(user, 'engagement:create') ? (
+            <Link className="btn-primary" href="/engagements/new">
+              Start an engagement
+            </Link>
+          ) : undefined
+        }
       />
 
       <form method="get" className="card mb-4">

@@ -1,6 +1,6 @@
 'use client';
 
-import { useActionState } from 'react';
+import { useActionState, useEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import type { ActionResult } from '@/app/actions';
 
@@ -10,6 +10,32 @@ import type { ActionResult } from '@/app/actions';
  */
 
 const INITIAL: ActionResult | null = null;
+
+/**
+ * Puts back what the user typed after a rejected submission.
+ *
+ * React resets a form once its action completes, which is right after a
+ * success and wrong after a failure: being told the year-end is missing and
+ * simultaneously losing the client name, the tax year and everything else is
+ * how a person gives up on a form. The submission is captured before React
+ * resets it and restored when the answer comes back "no".
+ */
+function restore(form: HTMLFormElement, submitted: FormData): void {
+  for (const element of Array.from(form.elements)) {
+    const field = element as HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
+    if (!field.name || field.type === 'hidden' || field.type === 'submit') continue;
+
+    const values = submitted.getAll(field.name).filter((value): value is string => typeof value === 'string');
+
+    if (field instanceof HTMLInputElement && (field.type === 'checkbox' || field.type === 'radio')) {
+      field.checked = values.includes(field.value);
+      continue;
+    }
+
+    const value = values[0];
+    if (value !== undefined) field.value = value;
+  }
+}
 
 export function ActionForm({
   action,
@@ -35,15 +61,29 @@ export function ActionForm({
     INITIAL,
   );
 
+  const formRef = useRef<HTMLFormElement>(null);
+  const submitted = useRef<FormData | null>(null);
+
+  useEffect(() => {
+    if (!state || state.ok || !formRef.current || !submitted.current) return;
+    restore(formRef.current, submitted.current);
+  }, [state]);
+
   const buttonClass =
     variant === 'primary' ? 'btn-primary' : variant === 'danger' ? 'btn-danger' : 'btn-secondary';
 
   return (
     <form
+      ref={formRef}
       action={formAction}
       className="space-y-3"
       onSubmit={(event) => {
-        if (confirm && !window.confirm(confirm)) event.preventDefault();
+        if (confirm && !window.confirm(confirm)) {
+          event.preventDefault();
+          return;
+        }
+        // Captured before React resets the form on completion.
+        submitted.current = new FormData(event.currentTarget);
       }}
     >
       <input type="hidden" name="csrf" value={csrfToken} />
