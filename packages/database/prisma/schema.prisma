@@ -9,6 +9,9 @@
 
 generator client {
   provider = "prisma-client-js"
+  // Generated next to the package source so the query engine binary is traced
+  // into the Next.js and worker builds in this pnpm workspace.
+  output   = "../generated/client"
 }
 
 datasource db {

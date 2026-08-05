@@ -30,3 +30,4 @@ templates/**/*.local.*
 .DS_Store
 *.log
 tmp-smoke/
+packages/database/generated/

@@ -28,6 +28,7 @@
 
     "baseUrl": ".",
     "paths": {
+      "@/*": ["apps/web/src/*"],
       "@element/shared": ["packages/shared/src/index.ts"],
       "@element/shared/*": ["packages/shared/src/*"],
       "@element/database": ["packages/database/src/index.ts"],

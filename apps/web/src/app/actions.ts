@@ -1,0 +1,621 @@
+'use server';
+
+import { revalidatePath } from 'next/cache';
+import {
+  PreconditionError,
+  ValidationError,
+  generationIdempotencyKey,
+  newCorrelationId,
+  toUserMessage,
+  type DocumentType,
+  type EngagementType,
+  type FeeKind,
+} from '@element/shared';
+import { container } from '@/lib/container';
+import { assertCsrf, requirePermission, requestContext } from '@/lib/session';
+
+/**
+ * Server actions.
+ *
+ * Each action authenticates, authorises, verifies the CSRF token, delegates to
+ * a service, and returns a plain result. No business rule is implemented here.
+ */
+
+export interface ActionResult {
+  ok: boolean;
+  message: string;
+  /** Blocking reasons a reviewer can act on. */
+  blockers?: string[];
+}
+
+async function run(action: () => Promise<string>): Promise<ActionResult> {
+  try {
+    const message = await action();
+    return { ok: true, message };
+  } catch (error) {
+    const blockers =
+      error instanceof PreconditionError && Array.isArray(error.context.blockers)
+        ? (error.context.blockers as string[])
+        : undefined;
+    return { ok: false, message: toUserMessage(error), ...(blockers ? { blockers } : {}) };
+  }
+}
+
+const DOCUMENT_TYPE_BY_ENGAGEMENT: Record<EngagementType, DocumentType> = {
+  T1_JOINT: 'T1_JOINT_ENGAGEMENT_LETTER',
+  T1_SINGLE: 'T1_SINGLE_ENGAGEMENT_LETTER',
+  T2: 'T2_ENGAGEMENT_LETTER',
+  T3: 'T3_ENGAGEMENT_LETTER',
+};
+
+export async function startGeneration(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('generation:start');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    if (!engagementId) throw new ValidationError('An engagement is required.');
+
+    const engagement = await container.prisma.engagement.findUniqueOrThrow({
+      where: { id: engagementId },
+      select: { clientId: true, engagementType: true, taxYear: true },
+    });
+
+    const documentType = DOCUMENT_TYPE_BY_ENGAGEMENT[engagement.engagementType];
+
+    // The gate is evaluated up front so the user gets a specific reason rather
+    // than a job that fails minutes later.
+    const gate = await container.generation.evaluateGate(engagementId, documentType);
+    if (!gate.ok) {
+      throw new PreconditionError(`Generation is blocked: ${gate.blockers.join(' ')}`, { blockers: gate.blockers });
+    }
+
+    const result = await container.queue.enqueue({
+      jobType: 'GENERATE_ENGAGEMENT_LETTER',
+      idempotencyKey: generationIdempotencyKey({
+        clientId: engagement.clientId,
+        engagementType: engagement.engagementType,
+        taxYear: engagement.taxYear,
+        documentType,
+      }),
+      payload: { engagementId, documentType, actorId: actor.id },
+      engagementId,
+      correlationId: newCorrelationId(),
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+    return result.deduplicated
+      ? 'A draft is already being generated for this engagement; a second one was not started.'
+      : 'Generation has been queued. The draft will appear here shortly.';
+  });
+}
+
+export async function confirmCompilationSelection(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('field:edit_structured');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const selected = formData.get('selected')?.toString();
+    if (!engagementId || (selected !== 'yes' && selected !== 'no')) {
+      throw new ValidationError('Confirm whether CSRS 4200 compilation services are included.');
+    }
+
+    const isSelected = selected === 'yes';
+    const before = await container.prisma.engagement.findUniqueOrThrow({
+      where: { id: engagementId },
+      select: { compilationSelected: true },
+    });
+
+    await container.prisma.engagement.update({
+      where: { id: engagementId },
+      data: { compilationSelected: isSelected },
+    });
+
+    await container.prisma.serviceSelection.upsert({
+      where: { engagementId_serviceCode: { engagementId, serviceCode: 't2.csrs4200' } },
+      create: {
+        engagementId,
+        serviceCode: 't2.csrs4200',
+        label: 'Compilation engagement under CSRS 4200',
+        isSelected,
+        confirmed: true,
+        confirmedByUserId: actor.id,
+        confirmedAt: new Date(),
+      },
+      update: { isSelected, confirmed: true, confirmedByUserId: actor.id, confirmedAt: new Date() },
+    });
+
+    await container.audit.record({
+      eventType: 'FIELD_EDITED',
+      objectType: 'Engagement',
+      objectId: engagementId,
+      engagementId,
+      userId: actor.id,
+      beforeValue: { compilationSelected: before.compilationSelected },
+      afterValue: { compilationSelected: isSelected },
+      reason: 'Reviewer confirmed the CSRS 4200 selection for the new year.',
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+    return isSelected
+      ? 'Compilation services confirmed as included. Section 3A will be kept.'
+      : 'Compilation services confirmed as not included. Section 3A will be removed entirely.';
+  });
+}
+
+export async function updateStructuredField(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('field:edit_structured');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const token = formData.get('token')?.toString();
+    const value = formData.get('value')?.toString() ?? '';
+    if (!engagementId || !token) throw new ValidationError('A field and value are required.');
+
+    const existing = await container.prisma.extractedField.findFirst({
+      where: { engagementId, coverLetterPackageId: null, token, source: 'MANUAL_ENTRY' },
+    });
+
+    if (existing) {
+      await container.prisma.extractedField.update({
+        where: { id: existing.id },
+        data: { value, manuallyConfirmed: true, confirmedByUserId: actor.id, confirmedAt: new Date() },
+      });
+    } else {
+      await container.prisma.extractedField.create({
+        data: {
+          engagementId,
+          token,
+          value,
+          source: 'MANUAL_ENTRY',
+          extractionMethod: 'MANUAL_ENTRY',
+          confidence: 1,
+          manuallyConfirmed: true,
+          confirmedByUserId: actor.id,
+          confirmedAt: new Date(),
+        },
+      });
+    }
+
+    await container.audit.record({
+      eventType: 'FIELD_EDITED',
+      objectType: 'ExtractedField',
+      objectId: `${engagementId}:${token}`,
+      engagementId,
+      userId: actor.id,
+      afterValue: { token },
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+    return 'Saved.';
+  });
+}
+
+export async function resolveConflict(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('field:edit_structured');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const conflictId = formData.get('conflictId')?.toString();
+    const chosenValue = formData.get('chosenValue')?.toString();
+    const chosenSource = formData.get('chosenSource')?.toString();
+    if (!conflictId || !chosenValue || !chosenSource) {
+      throw new ValidationError('Choose which value is correct.');
+    }
+
+    const conflict = await container.prisma.fieldConflict.update({
+      where: { id: conflictId },
+      data: {
+        status: 'RESOLVED',
+        resolvedValue: chosenValue,
+        resolvedSource: chosenSource as never,
+        resolvedByUserId: actor.id,
+        resolvedAt: new Date(),
+      },
+    });
+
+    await container.audit.record({
+      eventType: 'CONFLICT_RESOLVED',
+      objectType: 'FieldConflict',
+      objectId: conflictId,
+      engagementId: conflict.engagementId,
+      userId: actor.id,
+      afterValue: { token: conflict.token, chosenValue, chosenSource },
+    });
+
+    revalidatePath(`/engagements/${conflict.engagementId}`);
+    return 'Conflict resolved. The chosen value and its source have been recorded.';
+  });
+}
+
+export async function confirmDate(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('field:edit_structured');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const calculatedDateId = formData.get('calculatedDateId')?.toString();
+    if (!calculatedDateId) throw new ValidationError('A date is required.');
+
+    const record = await container.prisma.calculatedDate.findUniqueOrThrow({ where: { id: calculatedDateId } });
+    if (record.isBlocked) {
+      throw new PreconditionError(
+        record.blockedReason ?? 'This deadline cannot be confirmed until the missing information is supplied.',
+      );
+    }
+
+    await container.prisma.calculatedDate.update({
+      where: { id: calculatedDateId },
+      data: { confirmedByUserId: actor.id, confirmedAt: new Date() },
+    });
+
+    await container.audit.record({
+      eventType: 'DATE_CONFIRMED',
+      objectType: 'CalculatedDate',
+      objectId: calculatedDateId,
+      engagementId: record.engagementId,
+      userId: actor.id,
+      afterValue: { token: record.token, result: record.result?.toISOString() ?? null, ruleCode: record.ruleCode },
+    });
+
+    revalidatePath(`/engagements/${record.engagementId}`);
+    return 'Date confirmed.';
+  });
+}
+
+export async function overrideFee(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('pricing:prepare');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const feeKind = formData.get('feeKind')?.toString() as FeeKind | undefined;
+    const amount = formData.get('amount')?.toString();
+    const reason = formData.get('reason')?.toString() ?? '';
+
+    if (!engagementId || !feeKind || !amount) throw new ValidationError('A fee amount is required.');
+
+    const threshold = await container.settings.highIncreaseThresholdPercent(
+      container.env.HIGH_FEE_INCREASE_THRESHOLD_PERCENT,
+    );
+
+    const result = await container.pricing.override({
+      engagementId,
+      feeKind,
+      amount,
+      reason,
+      actor,
+      highIncreaseThresholdPercent: threshold,
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+
+    return result.requiredApproval === 'NONE'
+      ? `Fee set to ${result.roundedFee?.toFixed(2) ?? '—'} (rounded up to the next $5).`
+      : `Fee set to ${result.roundedFee?.toFixed(2) ?? '—'}. This change requires partner approval before the letter can be sent.`;
+  });
+}
+
+export async function approveFee(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('fee:approve_high_increase');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const feeKind = formData.get('feeKind')?.toString() as FeeKind | undefined;
+    if (!engagementId || !feeKind) throw new ValidationError('A fee is required.');
+
+    await container.pricing.approveFee({ engagementId, feeKind, approver: actor });
+    revalidatePath(`/engagements/${engagementId}`);
+    return 'Fee change approved.';
+  });
+}
+
+export async function startReview(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('review:comment');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    if (!engagementId) throw new ValidationError('An engagement is required.');
+
+    await container.approvals.startReview(engagementId, actor);
+    revalidatePath(`/engagements/${engagementId}`);
+    return 'Review started.';
+  });
+}
+
+export async function addComment(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('review:comment');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const body = formData.get('body')?.toString() ?? '';
+    if (!engagementId) throw new ValidationError('An engagement is required.');
+
+    await container.approvals.addComment({
+      engagementId,
+      documentVersionId: formData.get('documentVersionId')?.toString() ?? null,
+      body,
+      anchor: formData.get('anchor')?.toString() ?? null,
+      actor,
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+    return 'Comment added.';
+  });
+}
+
+export async function requestChanges(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('review:request_changes');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const reason = formData.get('reason')?.toString() ?? '';
+    if (!engagementId) throw new ValidationError('An engagement is required.');
+
+    await container.approvals.requestChanges({ engagementId, reason, actor });
+    revalidatePath(`/engagements/${engagementId}`);
+    return 'Changes requested. The preparer has been notified.';
+  });
+}
+
+export async function approveDocument(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('review:approve_ordinary');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const documentVersionId = formData.get('documentVersionId')?.toString();
+    if (!engagementId || !documentVersionId) throw new ValidationError('A document version is required.');
+
+    await container.approvals.approveDocument({
+      engagementId,
+      documentVersionId,
+      actor,
+      comment: formData.get('comment')?.toString(),
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+    return 'Document approved. It can now be authorised for sending.';
+  });
+}
+
+export async function markReadyToSend(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('signing:send');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    if (!engagementId) throw new ValidationError('An engagement is required.');
+
+    await container.approvals.markReadyToSend(engagementId, actor);
+    revalidatePath(`/engagements/${engagementId}`);
+    return 'Authorised for sending.';
+  });
+}
+
+export async function sendForSignature(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('signing:send');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const documentVersionId = formData.get('documentVersionId')?.toString();
+    if (!engagementId || !documentVersionId) throw new ValidationError('A document version is required.');
+
+    const state = await container.testModeState();
+    const providers = await container.providers();
+
+    const result = await container.signing.sendForSignature({
+      engagementId,
+      documentVersionId,
+      actor,
+      adobeSign: providers.adobeSign,
+      testMode: state.testMode,
+      productionSendingEnabled: state.productionSendingEnabled,
+      sandboxConfigured: !providers.description.adobeSign.startsWith('blocked'),
+      correlationId: newCorrelationId(),
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+
+    return result.deduplicated
+      ? 'An agreement already exists for this approved version; a duplicate was not created.'
+      : state.testMode
+        ? `Test agreement ${result.agreementId} created with the ${providers.description.adobeSign}. No real client was contacted.`
+        : `Agreement ${result.agreementId} sent for signature.`;
+  });
+}
+
+export async function submitWordingException(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('wording:edit');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const documentVersionId = formData.get('documentVersionId')?.toString();
+    const sectionAnchor = formData.get('sectionAnchor')?.toString();
+    const originalWording = formData.get('originalWording')?.toString();
+    const revisedWording = formData.get('revisedWording')?.toString();
+    const reason = formData.get('reason')?.toString() ?? '';
+
+    if (!engagementId || !documentVersionId || !sectionAnchor || !originalWording || !revisedWording) {
+      throw new ValidationError('A section, the original wording, the revised wording and a reason are all required.');
+    }
+
+    await container.approvals.submitWordingException({
+      engagementId,
+      documentVersionId,
+      sectionAnchor,
+      originalWording,
+      revisedWording,
+      reason,
+      actor,
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+    return 'Wording change submitted. It requires partner approval before it can be used.';
+  });
+}
+
+export async function approveWordingException(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('wording:approve');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const exceptionId = formData.get('exceptionId')?.toString();
+    const engagementId = formData.get('engagementId')?.toString();
+    if (!exceptionId) throw new ValidationError('A wording change is required.');
+
+    await container.approvals.approveWordingException({ exceptionId, actor });
+    if (engagementId) revalidatePath(`/engagements/${engagementId}`);
+    return 'Wording change approved for this document version only.';
+  });
+}
+
+export async function generateCoverLetter(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('generation:start');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    if (!engagementId) throw new ValidationError('An engagement is required.');
+
+    const gate = await container.coverLetters.evaluateTriggerGate(engagementId);
+    if (!gate.ok) {
+      throw new PreconditionError(`The cover letter cannot be generated yet: ${gate.blockers.join(' ')}`, {
+        blockers: gate.blockers,
+      });
+    }
+
+    await container.queue.enqueue({
+      jobType: 'GENERATE_COVER_LETTER',
+      idempotencyKey: `coverletter_${engagementId}_${Date.now()}`,
+      payload: { engagementId, actorId: actor.id },
+      engagementId,
+      correlationId: newCorrelationId(),
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+    return 'Cover letter generation queued. It will require review before delivery.';
+  });
+}
+
+export async function approveCoverLetter(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('cover_letter:approve');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const coverLetterPackageId = formData.get('coverLetterPackageId')?.toString();
+    const documentVersionId = formData.get('documentVersionId')?.toString();
+    if (!coverLetterPackageId || !documentVersionId) throw new ValidationError('A cover letter is required.');
+
+    await container.coverLetters.approve({
+      coverLetterPackageId,
+      documentVersionId,
+      actor,
+      comment: formData.get('comment')?.toString(),
+    });
+
+    revalidatePath('/cover-letters');
+    return 'Cover letter approved.';
+  });
+}
+
+export async function markCoverLetterReady(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('cover_letter:approve');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const coverLetterPackageId = formData.get('coverLetterPackageId')?.toString();
+    if (!coverLetterPackageId) throw new ValidationError('A cover letter is required.');
+
+    await container.coverLetters.markReadyForDelivery({ coverLetterPackageId, actor });
+    revalidatePath('/cover-letters');
+    return 'Marked ready for delivery. Cover letters are not sent through Adobe Sign.';
+  });
+}
+
+export async function retryJob(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('job:retry');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const jobId = formData.get('jobId')?.toString();
+    if (!jobId) throw new ValidationError('A job is required.');
+
+    await container.queue.retry(jobId);
+    await container.audit.record({
+      eventType: 'JOB_RETRIED',
+      objectType: 'BackgroundJob',
+      objectId: jobId,
+      userId: actor.id,
+    });
+
+    revalidatePath('/system-jobs');
+    return 'Job re-queued. Idempotency keys prevent it from duplicating any earlier work.';
+  });
+}
+
+export async function setTestMode(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('system:manage_test_mode');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const enabled = formData.get('enabled')?.toString() === 'true';
+    const context = await requestContext();
+
+    await container.settings.set('test_mode', enabled, actor);
+    if (enabled) await container.settings.set('production_sending_enabled', false, actor);
+
+    await container.audit.record({
+      eventType: 'TEST_MODE_CHANGED',
+      objectType: 'SystemSetting',
+      objectId: 'test_mode',
+      userId: actor.id,
+      afterValue: { testMode: enabled },
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+    });
+
+    revalidatePath('/settings');
+    return enabled
+      ? 'Test Mode is on. Nothing will reach a real client, Karbon, or Adobe Sign.'
+      : 'Test Mode is off. Production sending still has to be armed separately.';
+  });
+}
+
+export async function setProductionSending(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('system:manage_test_mode');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const enabled = formData.get('enabled')?.toString() === 'true';
+    const context = await requestContext();
+
+    if (enabled && container.env.TEST_MODE) {
+      throw new PreconditionError(
+        'This deployment sets TEST_MODE, which cannot be overridden from the application. Change the environment variable first.',
+      );
+    }
+
+    await container.settings.set('production_sending_enabled', enabled, actor);
+
+    await container.audit.record({
+      eventType: 'PRODUCTION_SENDING_CHANGED',
+      objectType: 'SystemSetting',
+      objectId: 'production_sending_enabled',
+      userId: actor.id,
+      afterValue: { productionSendingEnabled: enabled },
+      ipAddress: context.ipAddress,
+      userAgent: context.userAgent,
+    });
+
+    revalidatePath('/settings');
+    return enabled ? 'Production sending is armed.' : 'Production sending is disabled.';
+  });
+}

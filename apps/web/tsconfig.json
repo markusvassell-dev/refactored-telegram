@@ -1,0 +1,24 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "plugins": [{ "name": "next" }],
+    // baseUrl must be declared here: when it is inherited it resolves relative
+    // to the file that declared it, which would point at the repository root.
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@element/shared": ["../../packages/shared/src/index.ts"],
+      "@element/database": ["../../packages/database/src/index.ts"],
+      "@element/documents": ["../../packages/documents/src/index.ts"],
+      "@element/integrations": ["../../packages/integrations/src/index.ts"],
+      "@element/services": ["../../packages/services/src/index.ts"],
+      "@element/workflows": ["../../packages/workflows/src/index.ts"],
+      "@element/pricing": ["../../packages/pricing/src/index.ts"],
+      "@element/dates": ["../../packages/dates/src/index.ts"],
+      "@element/audit": ["../../packages/audit/src/index.ts"],
+      "@element/ui": ["../../packages/ui/src/index.ts"]
+    }
+  },
+  "include": ["next-env.d.ts", "src/**/*.ts", "src/**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules"]
+}

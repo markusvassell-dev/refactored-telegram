@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '../generated/client/index.js';
 
 /**
  * Prisma client singleton.
@@ -23,4 +23,4 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 export type { PrismaClient };
-export * from '@prisma/client';
+export * from '../generated/client/index.js';
