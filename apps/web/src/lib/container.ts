@@ -16,6 +16,7 @@ import {
   PricingService,
   SettingsService,
   SigningService,
+  SourceDocumentService,
   WorkflowService,
   resolveProviders,
 } from '@element/services';
@@ -64,6 +65,7 @@ const generation = new GenerationService({
   templateDirectory,
 });
 
+const sourceDocuments = new SourceDocumentService({ prisma, audit, store });
 const approvals = new ApprovalService({ prisma, audit, workflow, settings });
 const signing = new SigningService({ prisma, audit, store, workflow, settings, logger });
 const coverLetters = new CoverLetterService({
@@ -96,6 +98,7 @@ export const container = {
   preparation,
   fields,
   engagements,
+  sourceDocuments,
   store,
   generation,
   approvals,

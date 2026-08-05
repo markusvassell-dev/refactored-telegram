@@ -3,10 +3,10 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (280 tests)
-pnpm test:unit          # 159 — no external dependencies
-pnpm test:integration   # 121 — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 22  — needs a browser
+pnpm test               # unit + integration  (302 tests)
+pnpm test:unit          # 171 — no external dependencies
+pnpm test:integration   # 131 — needs Postgres and LibreOffice Writer
+pnpm test:e2e           # 23  — needs a browser
 pnpm build              # production build
 ```
 
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (159)
+## Unit tests (171)
 
 No database, no filesystem, no network.
 
@@ -76,6 +76,17 @@ that cannot be found, carries no glyph, or points at a token coming back as
 client actually bought. Every catalogued date fact has a question and an
 explanation, and an uncatalogued one still produces something askable.
 
+**Document verification (12)** — the check standing between a file named
+`2025 Engagement Letter.docx` and last year's fee reaching a client. A genuine
+letter is accepted confidently; a client name still matches through casing and
+punctuation, and a business number however it is spaced. A document *marked* as
+a draft is disqualified, but one that merely offers "a draft return or filing
+summary for management review" — the approved template's own wording — is not.
+A letter for the wrong year is disqualified. Another client's letter raises no
+disqualifier at all and simply scores far below the threshold, which is why "no
+disqualifiers" is not the same as "this is the right document". A filename never
+carries a decision on its own.
+
 **Signed download links (9)** — a reference survives a round trip through a URL
 path segment; a signature cannot be moved onto another document, cannot have its
 expiry extended, cannot be forged or malformed, does not survive a different
@@ -91,7 +102,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (121)
+## Integration tests (131)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -136,6 +147,16 @@ as `priorYearSelected` with `confirmed` still false; three consecutive runs
 producing exactly the same row counts; and a resolved conflict re-opened once a
 source changes, because a decision only covers the values it was made about.
 
+**Attaching a source document (10)** — an uploaded file goes through the same
+checks as one Karbon located: bytes that are not the type they claim to be are
+refused outright, an unaccepted type is refused, and an empty file is refused.
+A genuine prior-year letter is stored, scored, confirmed, and its signals kept
+so a reviewer can see why. Another client's letter is stored *unconfirmed* —
+picking a file is not evidence about what is in it. The same file twice reports
+rather than creating a second candidate; a different file becomes a new one. A
+trial balance is stored without being scored as though it were an engagement
+letter.
+
 **Starting an engagement (18)** — what it refuses is the point, because each of
 these is easy to create by accident and awkward to unpick. A type with no
 approved template could never produce a document; a corporate engagement without
@@ -171,7 +192,7 @@ text, records the edit without copying the value into the audit trail, reports
 an unchanged value instead of rewriting it, and treats an emptied box as
 clearing the value rather than storing `""`.
 
-## Browser tests (22)
+## Browser tests (23)
 
 Playwright, Test Mode on.
 
@@ -183,7 +204,9 @@ unsupplied templates shown as awaiting approval; a read-only user refused the
 audit log; skip link, landmarks and ARIA tab wiring; health and readiness
 endpoints; webhook signature rejection and the Adobe verification handshake.
 
-Two cover starting an engagement: the form is reached from the engagements list,
+One covers attaching a source document: a `.docx` whose bytes are a PDF is
+refused, a real Word letter is accepted, scored and queued for reading, and it
+appears in the table afterwards. Two cover starting an engagement: the form is reached from the engagements list,
 refuses a corporate engagement with no year-end, creates one from a new client,
 then refuses a second for the same year — and is neither offered to nor reachable
 by a role without `engagement:create`. Two cover the annual rollout: the control says how many drafts it will produce,
@@ -269,6 +292,14 @@ Each was fixed in the code, not the test:
     engagement, a raced job enqueue, a duplicate webhook — surfaced as an
     unhandled "something went wrong" in the web app while passing in tests.
     Matching on the documented error code instead.
+17. The draft disqualifier fired on any document containing the word "draft"
+    unless it also contained "final" — and the approved T2 letter offers "a
+    draft return or filing summary for management review". A genuine prior-year
+    letter whose only "final" sat inside a removed conditional section was
+    rejected as a draft. Narrowed to markers that say the *document* is a draft.
+18. Confirming an uploaded document on "no disqualifiers" would have accepted
+    another client's letter, which raises none. Confirmation now needs the
+    contents to clear the acceptance threshold.
 
 ## What is not covered
 

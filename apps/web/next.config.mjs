@@ -21,6 +21,16 @@ const nextConfig = {
   // Keep the Prisma engine and the PDF parser out of the client bundle.
   serverExternalPackages: ['@prisma/client', 'pdfjs-dist'],
 
+  experimental: {
+    serverActions: {
+      // Server actions default to a 1 MB body, which would reject an ordinary
+      // scanned engagement letter with an opaque error. Matched to
+      // DOCUMENT_MAX_UPLOAD_BYTES, which is what actually enforces the limit —
+      // with a little headroom for the rest of the form.
+      bodySizeLimit: '26mb',
+    },
+  },
+
   webpack: (config) => {
     // Workspace packages are TypeScript ESM source and import siblings with a
     // .js specifier, which is what TypeScript emits. Teach webpack to resolve

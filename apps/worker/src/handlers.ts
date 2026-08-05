@@ -1,6 +1,6 @@
 import type { JobHandler, JobType } from '@element/services';
 import { extractPdfText, DeterministicExtractor, selectPriorYearDocument } from '@element/integrations';
-import { detectCheckboxStates, extractParagraphs, parseManifest } from '@element/documents';
+import { detectCheckboxStates, extractParagraphs, isPdf, parseManifest } from '@element/documents';
 import { PreconditionError, ValidationError, sha256Hex, type DocumentType } from '@element/shared';
 import type { WorkerContext } from './context.js';
 
@@ -279,26 +279,50 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
     // ------------------------------------------------------------ Extraction
     EXTRACT_DOCUMENT_TEXT: async ({ job }) => {
       const engagementId = requireString(job.payload, 'engagementId');
-      const karbonDocumentId = requireString(job.payload, 'karbonDocumentId');
-      const { karbon } = await context.providers();
+
+      // Two ways a document gets here: Karbon located it, or a person attached
+      // it. Both produce the same bytes, and everything below this point is
+      // identical — the only difference is where they are read from.
+      const sourceDocumentId =
+        typeof job.payload.sourceDocumentId === 'string' ? job.payload.sourceDocumentId : null;
+      const karbonDocumentId =
+        typeof job.payload.karbonDocumentId === 'string' ? job.payload.karbonDocumentId : null;
+
+      if (!sourceDocumentId && !karbonDocumentId) {
+        throw new ValidationError('Extraction needs either an attached document or a Karbon document id.');
+      }
 
       const engagement = await context.prisma.engagement.findUniqueOrThrow({
         where: { id: engagementId },
         include: { client: true },
       });
 
-      const downloaded = await karbon.downloadDocument(karbonDocumentId);
-      const text = /\.pdf$/i.test(downloaded.fileName)
+      const source = sourceDocumentId
+        ? await context.prisma.sourceDocument.findUnique({ where: { id: sourceDocumentId } })
+        : await context.prisma.sourceDocument.findFirst({
+            where: { engagementId, karbonDocumentId: karbonDocumentId as string },
+          });
+
+      let downloaded: { content: Buffer; fileName: string };
+      if (sourceDocumentId) {
+        const attached = await context.sourceDocuments.contentOf(sourceDocumentId);
+        if (!attached) {
+          throw new ValidationError('That attached document is no longer in temporary storage. Upload it again.');
+        }
+        downloaded = attached;
+      } else {
+        const { karbon } = await context.providers();
+        const fetched = await karbon.downloadDocument(karbonDocumentId as string);
+        downloaded = { content: Buffer.from(fetched.content), fileName: fetched.fileName };
+      }
+
+      const text = isPdf(downloaded.content)
         ? await extractPdfText(downloaded.content)
         : {
             pages: [{ pageNumber: 1, text: (await extractParagraphs(downloaded.content)).join('\n') }],
             fullText: (await extractParagraphs(downloaded.content)).join('\n'),
             requiresOcr: false,
           };
-
-      const source = await context.prisma.sourceDocument.findFirst({
-        where: { engagementId, karbonDocumentId },
-      });
 
       const extractor = new DeterministicExtractor('ENGAGEMENT_LETTER');
       const wanted = [
@@ -327,7 +351,7 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       ];
 
       const result = await extractor.extract({
-        documentId: source?.id ?? karbonDocumentId,
+        documentId: source?.id ?? (karbonDocumentId as string),
         documentHash: source?.fileHash ?? sha256Hex(downloaded.content),
         text,
         wantedTokens: wanted,
@@ -416,7 +440,7 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       // proposed fees, deadlines and selections for a reviewer to confirm.
       await context.queue.enqueue({
         jobType: 'PREPARE_ENGAGEMENT',
-        idempotencyKey: `prepare_${engagementId}_${source?.fileHash ?? karbonDocumentId}`,
+        idempotencyKey: `prepare_${engagementId}_${source?.fileHash ?? karbonDocumentId ?? sourceDocumentId}`,
         payload: { engagementId, actorId: job.payload.actorId ?? systemActorId },
         engagementId,
         correlationId: job.correlationId,

@@ -24,6 +24,7 @@ import {
   startGeneration,
   startReview,
   submitWordingException,
+  uploadSourceDocument,
 } from '@/app/actions';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -116,7 +117,9 @@ export function ReviewWorkspace({
         {tab === 'Overview' ? (
           <Overview csrfToken={csrfToken} engagement={engagement} generationGate={generationGate} />
         ) : null}
-        {tab === 'Source Documents' ? <SourceDocuments engagement={engagement} /> : null}
+        {tab === 'Source Documents' ? (
+          <SourceDocuments csrfToken={csrfToken} engagement={engagement} />
+        ) : null}
         {tab === 'Client Information' ? (
           <ClientInformation csrfToken={csrfToken} engagement={engagement} fieldForm={fieldForm} />
         ) : null}
@@ -280,8 +283,69 @@ function Overview({
   );
 }
 
-function SourceDocuments({ engagement }: { engagement: any }): ReactNode {
+const UPLOAD_KINDS: { value: string; label: string }[] = [
+  { value: 'PRIOR_YEAR_ENGAGEMENT_LETTER', label: "Last year's engagement letter" },
+  { value: 'PRIOR_YEAR_SIGNED_LETTER', label: "Last year's signed engagement letter" },
+  { value: 'FINAL_T2_RETURN', label: 'Final T2 return' },
+  { value: 'COMPILED_FINANCIAL_STATEMENTS', label: 'Compiled financial statements' },
+  { value: 'COMPILATION_ENGAGEMENT_REPORT', label: 'Compilation engagement report' },
+  { value: 'FEDERAL_FILING_AUTHORIZATION', label: 'Federal filing authorization' },
+  { value: 'PROVINCIAL_FILING_AUTHORIZATION', label: 'Provincial filing authorization' },
+  { value: 'T1_RETURN', label: 'T1 return' },
+  { value: 'T183', label: 'Form T183' },
+  { value: 'ADJUSTING_JOURNAL_ENTRIES', label: 'Adjusting journal entries' },
+  { value: 'TRIAL_BALANCE', label: 'Trial balance' },
+  { value: 'INSTALMENT_SCHEDULE', label: 'Instalment schedule' },
+  { value: 'PAYMENT_SUMMARY', label: 'Payment summary' },
+  { value: 'OTHER_SUPPORTING_SCHEDULE', label: 'Other supporting schedule' },
+];
+
+function SourceDocuments({ csrfToken, engagement }: { csrfToken: string; engagement: any }): ReactNode {
   return (
+    <>
+    <Card
+      title="Attach a document"
+      description="Karbon supplies these automatically once it is connected. Until then — and whenever a document is missing — attach it here. Its contents are scored against this client, engagement type and year exactly as a located one would be."
+    >
+      <ActionForm action={uploadSourceDocument} csrfToken={csrfToken} submitLabel="Attach and read">
+        <input type="hidden" name="engagementId" value={engagement.id} />
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="label" htmlFor="upload-kind">
+              What is this document?
+            </label>
+            <select id="upload-kind" name="kind" className="input" required defaultValue="PRIOR_YEAR_ENGAGEMENT_LETTER">
+              {UPLOAD_KINDS.map((kind) => (
+                <option key={kind.value} value={kind.value}>
+                  {kind.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label" htmlFor="upload-file">
+              File
+            </label>
+            <input
+              id="upload-file"
+              name="file"
+              type="file"
+              className="input"
+              accept=".docx,.pdf,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+              required
+            />
+            <p className="field-note">
+              Word or PDF. The bytes are checked against the type they claim to be, not the file extension.
+            </p>
+          </div>
+        </div>
+        <p className="text-sm text-slate-600">
+          Reading it is queued: the values found become proposals with their evidence, and nothing is applied without a
+          reviewer confirming it.
+        </p>
+      </ActionForm>
+    </Card>
+
     <Card
       title="Source documents"
       description="A document is never trusted because of its filename. Each candidate is scored against the client, engagement type and year."
@@ -324,6 +388,7 @@ function SourceDocuments({ engagement }: { engagement: any }): ReactNode {
         </table>
       )}
     </Card>
+    </>
   );
 }
 

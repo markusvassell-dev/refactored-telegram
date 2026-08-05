@@ -901,3 +901,97 @@ export async function createEngagement(formData: FormData): Promise<ActionResult
     return parts.join(' ');
   });
 }
+
+/** Kinds a person may attach by hand, in the order they are usually needed. */
+const UPLOADABLE_KINDS = [
+  'PRIOR_YEAR_ENGAGEMENT_LETTER',
+  'PRIOR_YEAR_SIGNED_LETTER',
+  'FINAL_T2_RETURN',
+  'COMPILED_FINANCIAL_STATEMENTS',
+  'COMPILATION_ENGAGEMENT_REPORT',
+  'FEDERAL_FILING_AUTHORIZATION',
+  'PROVINCIAL_FILING_AUTHORIZATION',
+  'T1_RETURN',
+  'T183',
+  'ADJUSTING_JOURNAL_ENTRIES',
+  'TRIAL_BALANCE',
+  'INSTALMENT_SCHEDULE',
+  'PAYMENT_SUMMARY',
+  'OTHER_SUPPORTING_SCHEDULE',
+] as const;
+
+export type UploadableKind = (typeof UPLOADABLE_KINDS)[number];
+
+const MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+};
+
+/**
+ * Attaches a source document by hand.
+ *
+ * Every automatic route to a prior-year letter runs through Karbon, so this is
+ * what lets an engagement get past a blocked fee before that connection is
+ * verified. The file goes through the same content checks as one Karbon
+ * supplied, and reading it is queued rather than done in the request.
+ */
+export async function uploadSourceDocument(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('source_document:select');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const kind = formData.get('kind')?.toString() as UploadableKind | undefined;
+    const file = formData.get('file');
+
+    if (!engagementId) throw new ValidationError('An engagement is required.');
+    if (!kind || !UPLOADABLE_KINDS.includes(kind)) throw new ValidationError('Choose what this document is.');
+    if (!(file instanceof File) || file.size === 0) throw new ValidationError('Choose a file to upload.');
+
+    // The browser's reported type is a hint; the extension decides what we
+    // claim, and `DocumentStore.put` then checks the bytes really are that.
+    const extension = file.name.split('.').pop()?.toLowerCase() ?? '';
+    const mimeType = MIME_BY_EXTENSION[extension];
+    if (!mimeType) throw new ValidationError('Only .docx and .pdf files are accepted.');
+
+    const result = await container.sourceDocuments.upload({
+      engagementId,
+      actorId: actor.id,
+      fileName: file.name,
+      mimeType,
+      content: new Uint8Array(await file.arrayBuffer()),
+      kind,
+    });
+
+    // Reading it is queued: extraction converts a PDF, runs the deterministic
+    // patterns and then hands over to preparation, which is too slow for a
+    // request and must survive a restart.
+    if (!result.duplicate) {
+      await container.queue.enqueue({
+        jobType: 'EXTRACT_DOCUMENT_TEXT',
+        idempotencyKey: `extract_${engagementId}_${result.sourceDocumentId}`,
+        payload: { engagementId, sourceDocumentId: result.sourceDocumentId, actorId: actor.id },
+        engagementId,
+        correlationId: newCorrelationId(),
+      });
+    }
+
+    revalidatePath(`/engagements/${engagementId}`);
+
+    if (result.duplicate) {
+      return 'This exact file is already attached to this engagement; nothing was changed.';
+    }
+
+    const score =
+      result.verificationScore === null
+        ? 'Its contents were not scored, because this kind is not an engagement letter.'
+        : // Not monetary arithmetic: this formats a confidence score for a message.
+          // eslint-disable-next-line no-restricted-syntax
+          `Content verification scored it ${Math.round(result.verificationScore * 100)}%.`;
+
+    const message = `Attached ${file.name}. ${score} Reading it has been queued.`;
+
+    const details = [...result.notes, ...result.disqualifiers];
+    return details.length > 0 ? { message, blockers: details } : message;
+  });
+}

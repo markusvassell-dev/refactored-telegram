@@ -57,7 +57,9 @@ LOCATE_PRIOR_YEAR_DOCUMENTS
   ▼
 EXTRACT_DOCUMENT_TEXT      deterministic patterns first; AI only for what
   │                        is left, and only when explicitly enabled;
-  │                        prior-year checkbox states read as suggestions
+  │                        prior-year checkbox states read as suggestions.
+  │                        Reads either a Karbon download or a file attached
+  │                        by hand — same checks, same evidence, either way
   ▼
 PREPARE_ENGAGEMENT
   │  records current Karbon information as its own source

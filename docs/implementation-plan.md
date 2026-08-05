@@ -48,6 +48,22 @@ Findings that shaped the design:
 | **5 — T3** | Generation and signing model complete; see gaps |
 | **6 — Bulk rollout and administration** | Preview and queueing complete; see gaps |
 
+### Working without Karbon
+
+Two paths exist for the work Karbon would otherwise do, so a firm can pilot
+before that connection is verified against a live tenant. Neither is a
+substitute for the integration — they are the manual equivalents, and each goes
+through exactly the same checks.
+
+**Attaching a source document.** The Source Documents tab accepts a `.docx` or
+`.pdf`. `DocumentStore.put` checks the bytes really are the type they claim to
+be, and the contents are then scored against this client, engagement type and
+year by the same verifier the automatic search uses. Reading it is queued, so
+extraction, evidence and preparation all run exactly as they would for a located
+document. Confirmation requires the contents to actually support it: another
+client's letter raises no disqualifier — it simply matches almost nothing — and
+is stored unconfirmed rather than accepted because someone picked it.
+
 ### Starting an engagement
 
 Until now an engagement existed only because the seed made one: the Karbon sync
@@ -187,19 +203,17 @@ stored manifest by migration and need nothing.
 
 ## Next implementation step
 
-**Locating and extracting a prior-year letter without Karbon.** Preparation,
-pricing and the whole review workspace assume a prior-year letter has been
-found and read. Every path to one runs through Karbon: `LOCATE_PRIOR_YEAR_DOCUMENTS`
-searches work items, and the extraction job reads what that found. In Test Mode
-with the mock adapter there is nothing real to find, so a pilot can create an
-engagement and then cannot get past a blocked fee.
+**The administration write UI.** Templates, Pricing Rules, Date Rules and Users
+are read-only views over live data. Every service behind them is complete and
+tested — `FeeRule` resolution across five levels, the date-rule engine with its
+facts and assumptions, role assignment with separation of duties — but changing
+any of it means editing the database or the seed.
 
-The work is an upload on the Source Documents tab: accept a `.docx` or `.pdf`,
-store it through `DocumentStore.put` (which already validates type, size and
-path), record it as a `SourceDocument` with its hash, and enqueue
-`EXTRACT_DOCUMENT_TEXT` against it. The extraction, verification scoring,
-evidence and staleness machinery all already exist and are tested — what is
-missing is the one way to hand them a file by hand.
+The date rules matter most of the four. They encode the firm's interpretation of
+statutory deadlines, they are explicitly meant to be editable, and every
+calculated date already records which rule produced it. A partner who disagrees
+with an assumption currently cannot change it.
 
-After that, in order: the administration write UI (templates, pricing rules,
-date rules, users), and the cover-letter narrative editor.
+After that: the cover-letter narrative editor, and pagination on the engagement
+and audit lists, which are capped at 200 and 100 rows with no way to see past
+them.

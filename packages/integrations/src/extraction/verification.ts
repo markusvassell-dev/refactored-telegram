@@ -94,6 +94,39 @@ function normalizeIdentifier(value: string): string {
   return value.replace(/[^a-z0-9]/gi, '').toLowerCase();
 }
 
+/** Phrases that mark the document itself as a draft, wherever they appear. */
+const DRAFT_MARKERS = [
+  'draft copy',
+  'draft - not for',
+  'draft — not for',
+  'not for signature',
+  'not for distribution',
+  'for discussion purposes only',
+  'draft for review',
+  'draft engagement letter',
+];
+
+/**
+ * Is *this document* a draft?
+ *
+ * The word alone is not evidence: the approved T2 letter's own wording offers
+ * "a draft return or filing summary for management review", and disqualifying
+ * every letter containing it would reject genuine prior-year documents. A draft
+ * is marked as one — by a standalone DRAFT line, a marker in the letterhead, or
+ * one of the stock phrases above.
+ */
+function isMarkedDraft(rawText: string): boolean {
+  const text = rawText.toLowerCase();
+
+  if (DRAFT_MARKERS.some((marker) => text.includes(marker))) return true;
+
+  // A line that is nothing but "draft", which is how a watermark or a stamp
+  // extracts.
+  if (rawText.split(/\r?\n/).some((line) => /^\s*[*_\-–—]*\s*draft\s*[*_\-–—.!]*\s*$/i.test(line))) return true;
+
+  return false;
+}
+
 export function verifyCandidate(
   candidate: VerificationCandidate,
   expectation: VerificationExpectation,
@@ -168,7 +201,7 @@ export function verifyCandidate(
   );
 
   // Disqualifiers.
-  if (/\bdraft\b/.test(text) && !/\bfinal\b/.test(text)) {
+  if (isMarkedDraft(candidate.text)) {
     disqualifiers.push('The document appears to be a draft.');
   }
   const currentYear = expectation.priorTaxYear + 1;

@@ -75,7 +75,9 @@ run a health check. `IntegrationConnection.rotatedAt` records when.
 
 ## File handling
 
-- Allowed types: `.docx` and `.pdf` only.
+- Allowed types: `.docx` and `.pdf` only. This applies equally to a file a user
+  uploads: the extension decides what the application *claims* the file is, and
+  the magic-number check then decides whether that claim is true.
 - **Content is checked against the declared type** by magic number; a mismatch
   is refused.
 - Size limited by `DOCUMENT_MAX_UPLOAD_BYTES` (default 25 MB).
@@ -89,6 +91,10 @@ run a health check. `IntegrationConnection.rotatedAt` records when.
   application. The link carries no session of its own: an expired link stops
   working even in an open tab, and a copied URL is useless to anyone who is not
   signed in.
+
+Server actions accept a body up to 26 MB so an ordinary scanned letter is not
+rejected with an opaque framework error. `DOCUMENT_MAX_UPLOAD_BYTES` is what
+actually enforces the limit, and it refuses with a message naming the size.
 
 **Malware scanning is not implemented.** The integration point is
 `DocumentStore.put`, which already validates type and size and is the single

@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { expect, test, type Page, type WorkerInfo } from '@playwright/test';
 import { PrismaClient } from '@element/database';
 import { createAuditLogger } from '@element/audit';
@@ -430,6 +432,67 @@ test.describe('starting an engagement', () => {
     // Hidden in the UI and refused on the server, not merely hidden.
     const response = await page.request.get('/engagements/new');
     expect(response.status()).toBeGreaterThanOrEqual(400);
+  });
+});
+
+test.describe('attaching a source document', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  // This test attaches to the seeded engagement, which every other suite also
+  // uses. Leaving the document and its queued extraction behind would change
+  // what the next run — and the integration suite — starts from.
+  test.afterAll(async ({}, worker) => {
+    const prisma = clientFor(environmentFor(worker));
+    try {
+      const attached = await prisma.sourceDocument.findMany({
+        where: { fileName: 'Prior Year Engagement Letter.docx', storagePath: { not: null } },
+        select: { id: true, engagementId: true },
+      });
+      await prisma.backgroundJob.deleteMany({
+        where: { engagementId: { in: attached.map((row) => row.engagementId) }, jobType: 'EXTRACT_DOCUMENT_TEXT' },
+      });
+      await prisma.sourceDocument.deleteMany({ where: { id: { in: attached.map((row) => row.id) } } });
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  test('accepts a Word letter, refuses a file that is not what it claims to be', async ({ page }) => {
+    await signIn(page, /Preparer/);
+    await page.goto('/engagements');
+
+    const firstEngagement = page.getByRole('table').getByRole('link').first();
+    if ((await firstEngagement.count()) === 0) test.skip(true, 'No engagements are seeded in this environment.');
+    await firstEngagement.click();
+
+    await page.getByRole('tab', { name: 'Source Documents' }).click();
+    const panel = page.getByRole('tabpanel');
+    await expect(panel.getByRole('heading', { name: 'Attach a document' })).toBeVisible();
+
+    // A .docx whose bytes are a PDF is refused: the extension is not the check.
+    await panel.getByLabel('File').setInputFiles({
+      name: 'Not Really A Letter.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      buffer: Buffer.from('%PDF-1.4 pretending to be Word', 'latin1'),
+    });
+    await panel.getByRole('button', { name: 'Attach and read' }).click();
+    await expect(page.getByText(/do not match the declared file type/i)).toBeVisible();
+
+    // A real Word file is accepted, scored, and queued for reading.
+    await panel.getByLabel('File').setInputFiles({
+      name: 'Prior Year Engagement Letter.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      buffer: await readFile(join(process.cwd(), 'templates', 'normalized', 'T2 Engagement Letter.docx')),
+    });
+    await panel.getByRole('button', { name: 'Attach and read' }).click();
+
+    await expect(page.getByText(/Attached Prior Year Engagement Letter\.docx/)).toBeVisible();
+    await expect(page.getByText(/Reading it has been queued/)).toBeVisible();
+
+    // It appears in the table with its verification result.
+    await page.reload();
+    await page.getByRole('tab', { name: 'Source Documents' }).click();
+    await expect(page.getByRole('cell', { name: 'Prior Year Engagement Letter.docx' })).toBeVisible();
   });
 });
 
