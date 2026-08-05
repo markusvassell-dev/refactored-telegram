@@ -10,6 +10,7 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@element/shared": "workspace:*"
+    "@element/shared": "workspace:*",
+    "zod": "4.4.3"
   }
 }

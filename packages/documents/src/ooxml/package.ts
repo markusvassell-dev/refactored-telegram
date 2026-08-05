@@ -73,18 +73,19 @@ export async function writeDocx(parts: DocxParts): Promise<Buffer> {
     return a.localeCompare(b);
   });
 
+  // A fixed timestamp keeps rendering deterministic, so the same inputs
+  // produce the same file hash. Regression tests depend on this.
+  const fixedDate = new Date('2020-01-01T00:00:00Z');
+
   for (const name of ordered) {
     const data = parts.files.get(name);
-    if (data) zip.file(name, data);
+    if (data) zip.file(name, data, { date: fixedDate });
   }
 
   return zip.generateAsync({
     type: 'nodebuffer',
     compression: 'DEFLATE',
     compressionOptions: { level: 6 },
-    // A fixed timestamp keeps rendering deterministic, so the same inputs
-    // produce the same file hash. Regression tests depend on this.
-    date: new Date('2020-01-01T00:00:00Z'),
   });
 }
 
