@@ -11,8 +11,10 @@ import {
   type DocumentType,
   type EngagementType,
   type FeeKind,
+  type FeeMethod,
 } from '@element/shared';
 import { factToken } from '@element/services';
+import type { FeeRuleLevel } from '@element/database';
 import { container } from '@/lib/container';
 import { assertCsrf, requirePermission, requestContext } from '@/lib/session';
 
@@ -1045,6 +1047,61 @@ export async function updateDateRule(formData: FormData): Promise<ActionResult> 
     }
     if (result.impact.confirmed > 0) {
       parts.push(`${result.impact.confirmed} already-confirmed date(s) are left as they are.`);
+    }
+
+    return parts.join(' ');
+  });
+}
+
+/**
+ * Creates or changes a pricing rule.
+ *
+ * The annual increase is the number a partner is most likely to revisit, so it
+ * belongs in the application rather than the database. Like a date rule this is
+ * an administrator action with a written reason, and it records the rule on both
+ * sides. A fee somebody already approved is never revisited — an approval is a
+ * decision about a specific number, not about the rule that produced it.
+ */
+export async function saveFeeRule(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('pricing_rule:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const text = (name: string): string | null => formData.get(name)?.toString().trim() || null;
+
+    const result = await container.feeRules.save({
+      id: text('id'),
+      actorId: actor.id,
+      reason: formData.get('reason')?.toString() ?? '',
+      level: (text('level') ?? 'GLOBAL') as FeeRuleLevel,
+      engagementType: text('engagementType') as EngagementType | null,
+      feeKind: text('feeKind') as FeeKind | null,
+      clientId: text('clientId'),
+      clientGroup: text('clientGroup'),
+      partnerUserId: text('partnerUserId'),
+      method: (text('method') ?? 'PERCENTAGE') as FeeMethod,
+      percentage: text('percentage'),
+      fixedAmount: text('fixedAmount'),
+      exactTarget: text('exactTarget'),
+      skipRounding: formData.get('skipRounding') === 'yes',
+      appliesToAncillaryCharges: formData.get('appliesToAncillaryCharges') === 'yes',
+      effectiveFrom: text('effectiveFrom'),
+      effectiveTo: text('effectiveTo'),
+      isActive: formData.get('isActive') === 'yes',
+      description: text('description'),
+    });
+
+    revalidatePath('/pricing-rules');
+    revalidatePath(`/pricing-rules/${result.id}`);
+
+    const parts = [result.created ? 'Pricing rule created.' : 'Pricing rule saved.'];
+    if (result.impact.pendingRecalculation > 0) {
+      parts.push(
+        `${result.impact.pendingRecalculation} unapproved fee(s) will be recalculated the next time their engagement is prepared.`,
+      );
+    }
+    if (result.impact.approved > 0) {
+      parts.push(`${result.impact.approved} already-approved fee(s) are left as they are.`);
     }
 
     return parts.join(' ');

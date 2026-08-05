@@ -7,6 +7,7 @@ import {
   DateRuleService,
   DocumentStore,
   EngagementService,
+  FeeRuleService,
   FieldFormService,
   GenerationService,
   JobQueue,
@@ -44,6 +45,7 @@ export interface WorkerContext {
   preparation: PreparationService;
   fields: FieldFormService;
   dateRules: DateRuleService;
+  feeRules: FeeRuleService;
   engagements: EngagementService;
   sourceDocuments: SourceDocumentService;
   generation: GenerationService;
@@ -81,6 +83,7 @@ export function buildWorkerContext(): WorkerContext {
   const preparation = new PreparationService({ prisma, audit, pricing, logger });
   const fields = new FieldFormService({ prisma, audit });
   const dateRules = new DateRuleService({ prisma, audit });
+  const feeRules = new FeeRuleService({ prisma, audit });
   const engagements = new EngagementService({ prisma, audit });
 
   const templateDirectory = resolve(process.cwd(), 'templates', 'normalized');
@@ -135,6 +138,7 @@ export function buildWorkerContext(): WorkerContext {
     fields,
     engagements,
     dateRules,
+    feeRules,
     sourceDocuments,
     generation,
     approvals,

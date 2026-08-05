@@ -1,15 +1,17 @@
+// Imported from the specific modules rather than the package barrel: the
+// barrel re-exports crypto and id helpers that need `node:crypto`, and the
+// pricing engine is pure arithmetic that the review UI runs in the browser to
+// preview a rule. Pulling the barrel in would drag Node built-ins with it.
+import { ValidationError } from '@element/shared/errors';
 import {
   Decimal,
-  ValidationError,
   formatMoney,
   money,
   percentageChange,
   roundUpToNearest5,
-  type FeeKind,
-  type FeeMethod,
   type MoneyInput,
-  type ValueSource,
-} from '@element/shared';
+} from '@element/shared/money';
+import type { FeeKind, FeeMethod, ValueSource } from '@element/shared/domain';
 
 /**
  * The pricing engine.

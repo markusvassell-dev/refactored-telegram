@@ -435,6 +435,70 @@ test.describe('starting an engagement', () => {
   });
 });
 
+test.describe('editing a pricing rule', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  const DESCRIPTION = 'End to end percentage rule';
+
+  test.afterAll(async ({}, worker) => {
+    const prisma = clientFor(environmentFor(worker));
+    try {
+      await prisma.feeRule.deleteMany({ where: { description: DESCRIPTION } });
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  test('previews the fee the rule would produce, including the round-up', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/pricing-rules');
+
+    await page.getByRole('link', { name: 'New pricing rule' }).click();
+    await expect(page.getByRole('heading', { name: 'New pricing rule' })).toBeVisible();
+
+    const preview = page.getByRole('heading', { name: 'Preview' }).locator('..').locator('..');
+
+    // $2,000 + 3% = $2,060, already a multiple of five.
+    await page.getByLabel('If last year’s fee was').fill('2000');
+    await expect(preview).toContainText('$2060.00');
+
+    // $1,234 + 3% = $1,271.02, which rounds up to $1,275 — never down.
+    await page.getByLabel('If last year’s fee was').fill('1234');
+    await expect(preview).toContainText('$1275.00');
+    await expect(preview).toContainText('$1271.02 before rounding');
+
+    // A large increase is flagged as needing partner approval before saving.
+    await page.getByLabel('Increase', { exact: true }).fill('25');
+    await expect(preview).toContainText(/Needs partner approval/i);
+
+    // A rule scoped to nothing is refused by the server.
+    await page.getByLabel('Increase', { exact: true }).fill('4');
+    await page.getByLabel('Description').fill(DESCRIPTION);
+    await page.getByLabel('Why are you changing this?').fill('Setting this year’s standard T2 increase.');
+    await page.getByRole('button', { name: 'Create this rule' }).click();
+    await expect(page.getByText(/needs an engagement type/i)).toBeVisible();
+
+    await page.getByLabel('Engagement type').selectOption('T2');
+    await page.getByRole('button', { name: 'Create this rule' }).click();
+    await expect(page.getByText(/Pricing rule created/)).toBeVisible();
+
+    // And it is listed afterwards.
+    await page.goto('/pricing-rules');
+    await expect(page.getByRole('cell', { name: DESCRIPTION })).toHaveCount(0);
+    await expect(page.getByRole('table')).toContainText('4%');
+  });
+
+  test('is not offered to a role that cannot manage pricing', async ({ page }) => {
+    await signIn(page, /Reviewer/);
+    await page.goto('/pricing-rules');
+
+    await expect(page.getByRole('link', { name: 'New pricing rule' })).toHaveCount(0);
+
+    const response = await page.request.get('/pricing-rules/new');
+    expect(response.status()).toBeGreaterThanOrEqual(400);
+  });
+});
+
 test.describe('editing a date rule', () => {
   test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
 

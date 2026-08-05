@@ -83,6 +83,23 @@ editable. A fact needs a question a reviewer can answer, and those live in the
 catalogue in code — a free-text fact name would create a deadline that could
 never be unblocked. The steps and the wording of every branch are editable.
 
+### Editing a pricing rule
+
+`/pricing-rules/<id>` — and `/pricing-rules/new` — edit a rule against a live
+preview computed by `calculateFee`, the same function the pricing service calls,
+so the number shown includes the round-up to the next $5 and says whether the
+result would need partner approval before anything is saved.
+
+It refuses a rule that could never do anything, because both failures are silent
+in production: a rule scoped to nothing never matches, and a method with no value
+produces no fee — the engagement simply stays blocked. Narrowing a rule's level
+clears the scope it no longer uses, and switching its method clears the old
+value, so neither can keep matching on a leftover.
+
+An approved fee is never revisited. Approval is a decision about a specific
+number, not about the rule that produced it, and the count is stated before the
+change alongside the unapproved fees that will be recalculated.
+
 ### Starting an engagement
 
 Until now an engagement existed only because the seed made one: the Karbon sync
@@ -188,10 +205,10 @@ Stated plainly.
 against a live tenant from this codebase. Both are implemented against
 published documentation and clearly reported as `unverified`.
 
-**Most administration screens are read-only.** Date Rules is now editable;
-Templates, Pricing Rules and Users show live data but have no create or edit
-forms. The services behind them exist and are tested; the write UI does not.
-Changes to those three are made through the database or the seed today.
+**Some administration screens are read-only.** Date Rules and Pricing Rules are
+editable; Templates and Users show live data but have no create or edit forms.
+The services behind them exist and are tested; the write UI does not. Changes to
+those two are made through the database or the seed today.
 
 **Cover-letter editing is partial.** Extracted values, evidence, enclosures,
 approval and staleness all work. The in-place editor for cover-letter narrative
@@ -222,20 +239,15 @@ stored manifest by migration and need nothing.
 
 ## Next implementation step
 
-**The pricing-rule editor.** `FeeRule` resolution across its five levels —
-global, engagement type, client group, client, partner — is complete and covered
-by 29 unit tests, and every calculated fee already records which rule produced
-it. But the rule itself can only be changed in the database, which means the one
-number a partner is most likely to want to change each year, the annual increase
-percentage, is the one they cannot touch.
+**Pagination on the engagement and audit lists.** Both are capped — 200
+engagements and 100 audit events — with no way to see past the cap and nothing
+saying a cap was applied. For a firm with a few hundred engagements the list
+silently stops being the list, and an audit trail you cannot page through is not
+one you can answer a question with.
 
-It follows the same shape as the date-rule editor: a live preview showing what a
-given prior-year fee becomes under the edited rule (including the round-up to
-the next $5), a written reason, the whole rule recorded before and after, and a
-count of the fees it would affect. Unlike a date, a fee that has been approved
-must be left alone as well as one that is merely calculated — `FeeCalculation`
-already records `approvedAt`.
+The work is a cursor on both, plus a count so the page can say what it is
+showing; the audit list also wants filtering by event type and date range, since
+the reason to open it is usually a specific question.
 
-After that: the cover-letter narrative editor, and pagination on the engagement
-and audit lists, which are capped at 200 and 100 rows with no way to see past
-them.
+After that: the cover-letter narrative editor, and write UI for templates and
+users.

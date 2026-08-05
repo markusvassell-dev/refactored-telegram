@@ -3,10 +3,10 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (314 tests)
+pnpm test               # unit + integration  (328 tests)
 pnpm test:unit          # 171 — no external dependencies
-pnpm test:integration   # 143 — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 25  — needs a browser
+pnpm test:integration   # 157 — needs Postgres and LibreOffice Writer
+pnpm test:e2e           # 27  — needs a browser
 pnpm build              # production build
 ```
 
@@ -102,7 +102,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (143)
+## Integration tests (157)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -146,6 +146,20 @@ for "yes"; a confirmed date never rewritten; last year's ticks carried forward
 as `priorYearSelected` with `confirmed` still false; three consecutive runs
 producing exactly the same row counts; and a resolved conflict re-opened once a
 source changes, because a decision only covers the values it was made about.
+
+**Editing a pricing rule (14)** — two failure modes drive these, and both are
+silent in production: a rule scoped to nothing never matches, and a method with
+no value produces no fee — the engagement simply stays blocked and nobody knows
+why. So an engagement-type rule with no type, a client rule with no client, a
+partner rule with neither partner nor group, and a percentage rule with no
+percentage are all refused; `NO_INCREASE` is accepted without one, because it
+needs none. A negative or unreadable amount is refused, as is a rule that stops
+applying before it starts. Narrowing a rule's level clears the scope it no
+longer uses and switching its method clears the old value, so neither can keep
+matching on a leftover. A created rule is then resolved by `resolveRule` ahead
+of the seeded global one and priced by `calculateFee`, which is what proves the
+saved row is the one the engine reads. And an approved fee is counted separately
+and left exactly as it was.
 
 **Editing a date rule (12)** — a date rule is the firm's interpretation of a
 statutory deadline, so these are about restraint and traceability. A change
@@ -204,7 +218,7 @@ text, records the edit without copying the value into the audit trail, reports
 an unchanged value instead of rewriting it, and treats an emptied box as
 clearing the value rather than storing `""`.
 
-## Browser tests (25)
+## Browser tests (27)
 
 Playwright, Test Mode on.
 
@@ -216,7 +230,10 @@ unsupplied templates shown as awaiting approval; a read-only user refused the
 audit log; skip link, landmarks and ARIA tab wiring; health and readiness
 endpoints; webhook signature rejection and the Adobe verification handshake.
 
-Two cover editing a date rule: the preview recomputes live as a step is changed
+Two cover editing a pricing rule: the preview shows $2,000 + 3% as $2,060 and
+$1,234 + 3% as $1,275 — rounded up from $1,271.02, never down — flags a 25%
+increase as needing partner approval before anything is saved, and the server
+refuses a rule scoped to nothing. Two cover editing a date rule: the preview recomputes live as a step is changed
 and shows the new deadline before anything is saved, a change with only
 whitespace for a reason is refused by the server, a real one saves and survives
 a reload — and a reviewer sees the list without links and is refused the editor

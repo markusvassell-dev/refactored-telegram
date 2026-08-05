@@ -1,3 +1,5 @@
+import Link from 'next/link';
+import { can } from '@element/shared';
 import { container } from '@/lib/container';
 import { requireUser } from '@/lib/session';
 import { EmptyState, PageHeader } from '@/components/shell';
@@ -5,18 +7,27 @@ import { EmptyState, PageHeader } from '@/components/shell';
 export const dynamic = 'force-dynamic';
 
 export default async function PricingRulesPage() {
-  await requireUser();
+  const user = await requireUser();
 
   const [rules, threshold] = await Promise.all([
-    container.prisma.feeRule.findMany({ orderBy: [{ level: 'asc' }, { createdAt: 'desc' }] }),
+    container.feeRules.list(),
     container.settings.highIncreaseThresholdPercent(container.env.HIGH_FEE_INCREASE_THRESHOLD_PERCENT),
   ]);
+
+  const editable = can(user, 'pricing_rule:manage');
 
   return (
     <>
       <PageHeader
         title="Pricing Rules"
         description="Rules apply most-specific-first: one-time override, client, partner or group, engagement type, then global."
+        actions={
+          editable ? (
+            <Link className="btn-primary" href="/pricing-rules/new">
+              New pricing rule
+            </Link>
+          ) : undefined
+        }
       />
 
       <div className="card mb-4">
@@ -44,6 +55,7 @@ export default async function PricingRulesPage() {
             <thead>
               <tr>
                 <th scope="col">Level</th>
+                <th scope="col">Applies to</th>
                 <th scope="col">Engagement type</th>
                 <th scope="col">Fee kind</th>
                 <th scope="col">Method</th>
@@ -55,7 +67,18 @@ export default async function PricingRulesPage() {
             <tbody>
               {rules.map((rule) => (
                 <tr key={rule.id}>
-                  <td>{rule.level.replace(/_/g, ' ').toLowerCase()}</td>
+                  <td>
+                    {editable ? (
+                      <Link className="text-brand-700 underline" href={`/pricing-rules/${rule.id}`}>
+                        {rule.level.replace(/_/g, ' ').toLowerCase()}
+                      </Link>
+                    ) : (
+                      rule.level.replace(/_/g, ' ').toLowerCase()
+                    )}
+                  </td>
+                  <td className="text-xs">
+                    {rule.clientName ?? rule.partnerName ?? rule.clientGroup ?? '—'}
+                  </td>
                   <td>{rule.engagementType ?? 'any'}</td>
                   <td>{rule.feeKind?.replace(/_/g, ' ').toLowerCase() ?? 'any'}</td>
                   <td>{rule.method.replace(/_/g, ' ').toLowerCase()}</td>

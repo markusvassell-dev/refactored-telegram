@@ -1,4 +1,4 @@
-import type { EngagementType, FeeKind } from '@element/shared';
+import type { EngagementType, FeeKind } from '@element/shared/domain';
 import type { PriceRule } from './engine.js';
 
 /**
