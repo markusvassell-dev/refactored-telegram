@@ -1,0 +1,70 @@
+# Karbon capability matrix
+
+## How to read this
+
+| Level | Meaning |
+| --- | --- |
+| **Supported** | Implemented against a documented operation **and** exercised against a live tenant from this codebase. |
+| **Unverified** | Implemented against Karbon's published documentation, but **not yet run against a live tenant from this project**. |
+| **Unsupported** | No officially supported API operation exists. The application uses the documented fallback and keeps the step visible in its own UI. |
+
+**Everything below is currently `unverified` or `unsupported`.** Nothing has
+been exercised against a real Karbon tenant from this repository. The
+Integrations screen shows the same levels, and a connection stays unverified
+until a health check succeeds with real credentials.
+
+Browser automation and scraping are not used anywhere, and will not be added.
+
+## Matrix
+
+| Operation | Support | Official method | Fallback | Known limitation |
+| --- | --- | --- | --- | --- |
+| Search work items | Unverified | `GET /v3/WorkItems` with OData `$filter` / `$top` | Broader query, then filter client-side | Filter support varies by field. The provider re-filters every result locally, so a tenant that ignores an unsupported `$filter` produces a smaller result set, never a wrong one. |
+| Read work item | Unverified | `GET /v3/WorkItems/{WorkItemKey}` | — | — |
+| Read client | Unverified | `GET /v3/Organizations/{EntityKey}`, `GET /v3/Contacts/{EntityKey}` | Tries organisation, then contact | The entity type must be known in advance; it is stored on the client record. |
+| Read contacts | Unverified | `GET /v3/Contacts` and the organisation contact collection | — | — |
+| List documents | Unverified | `GET /v3/WorkItems/{WorkItemKey}/Documents` | — | Returns names and identifiers. **File names are never trusted on their own** — every prior-year candidate is verified against its contents. |
+| Download document | Unverified | `GET /v3/Documents/{DocumentId}/Content` | — | — |
+| Upload document | Unverified | `POST /v3/WorkItems/{WorkItemKey}/Documents` | — | Approved, signed and certificate files are uploaded with `neverOverwrite`. On a name collision the upload is skipped, the collision is recorded, and the reviewer is told. |
+| Add comment or note | Unverified | `POST /v3/Notes` | — | Comments are **notifications only**. They are never parsed as automation commands. |
+| Create task | Unverified | `POST /v3/WorkItems/{WorkItemKey}/Tasks` — availability varies by tenant and plan | Posts a note carrying the review title and deep link; the authoritative task stays in the app's Review Queue | The client catches a non-retryable failure, falls back, and returns `SKIPPED_UNSUPPORTED` so the outcome is visible rather than silent. |
+| Update task | Unverified | `PUT /v3/WorkItems/{WorkItemKey}/Tasks/{TaskId}` | Follow-up note; the app-side task is updated | — |
+| Complete task | Unverified | `PUT` with a completed state | Completion note; the app-side review assignment is closed | — |
+| Update work item status | Unverified | `PUT /v3/WorkItems/{WorkItemKey}` | Skipped when unmapped | Status values are tenant-specific. The mapping is configuration (`karbon_status_map`), not code. An unmapped status is skipped, never guessed. |
+| Receive webhooks | Unverified | Karbon webhook subscriptions | Scheduled reconciliation poll | Event coverage varies, so **correctness never depends on a webhook arriving**. |
+| Document upload events | **Unsupported** | — | The worker polls the work item document list on a schedule | This is what drives stale-cover-letter detection. A cover letter is never generated merely because a PDF appeared — all three trigger conditions still apply. |
+
+## Authentication
+
+The client sends the documented pair of headers:
+
+```
+Authorization: Bearer <KARBON_BEARER_TOKEN>
+AccessKey: <KARBON_ACCESS_KEY>
+```
+
+Confirm both against current Karbon documentation before production use; the
+variable names in `.env.example` are what this application reads, not a claim
+about what Karbon issues.
+
+## Behaviour when an operation is unavailable
+
+1. Use the safest supported fallback.
+2. Record a `KarbonActivity` row with outcome `SKIPPED_UNSUPPORTED`.
+3. Surface the limitation to the user — the action result carries the message,
+   and the Karbon Activity tab shows it.
+4. Keep the authoritative workflow in this application, so nothing is lost.
+
+Failing loudly or falling back visibly is always preferred to appearing to
+succeed.
+
+## Verification checklist
+
+Before relying on any row above:
+
+1. Configure a **sandbox** connection on the Integrations screen.
+2. Run the health check; confirm it succeeds.
+3. Exercise each operation against the sandbox with a test work item.
+4. Update the level in `packages/integrations/src/karbon/capabilities.ts` from
+   `UNVERIFIED` to `SUPPORTED` or `UNSUPPORTED`, with the fallback recorded.
+5. Update this table to match.
