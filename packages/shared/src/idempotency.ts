@@ -107,6 +107,21 @@ export function sourceDocumentFingerprint(documents: readonly { id: string; file
   return digest(sorted.flatMap((doc) => [doc.id, doc.fileHash]));
 }
 
-export function bulkRolloutIdempotencyKey(input: { batchId: string; clientId: string; documentType: DocumentType }): string {
-  return prefixed('bulk', [input.batchId, input.clientId, input.documentType]);
+/**
+ * Stops one batch queueing the same work twice — a double-submitted preview.
+ *
+ * Includes the tax year: a rollout is scoped to one year, but `run` accepts a
+ * list of ids, and without the year two engagements of the same client and type
+ * from different years would collide and one would be silently dropped.
+ *
+ * Cross-batch protection is separate, and comes from the per-engagement
+ * generation key the bulk item re-enqueues under.
+ */
+export function bulkRolloutIdempotencyKey(input: {
+  batchId: string;
+  clientId: string;
+  taxYear: number;
+  documentType: DocumentType;
+}): string {
+  return prefixed('bulk', [input.batchId, input.clientId, input.taxYear, input.documentType]);
 }

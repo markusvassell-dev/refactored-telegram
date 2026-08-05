@@ -767,17 +767,22 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
     },
 
     // ------------------------------------------------------------ Bulk / ops
+    // The second stage of a bulk rollout. Splitting it in two is what makes a
+    // repeated rollout safe: the batch key stops the same batch being queued
+    // twice, and this step re-enqueues under the deterministic per-engagement
+    // generation key, so a *different* batch covering the same engagement does
+    // not produce a second draft.
     BULK_ROLLOUT_ITEM: async ({ job }) => {
       const engagementId = requireString(job.payload, 'engagementId');
       const documentType = requireString(job.payload, 'documentType');
-      await context.queue.enqueue({
+      const result = await context.queue.enqueue({
         jobType: 'GENERATE_ENGAGEMENT_LETTER',
         idempotencyKey: requireString(job.payload, 'generationKey'),
         payload: { engagementId, documentType, actorId: job.payload.actorId ?? systemActorId },
         engagementId,
         correlationId: job.correlationId,
       });
-      return { queued: true };
+      return { queued: !result.deduplicated, deduplicated: result.deduplicated };
     },
 
     PURGE_TEMPORARY_FILES: async () => {

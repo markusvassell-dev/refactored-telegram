@@ -173,9 +173,16 @@ describe('idempotency keys', () => {
   });
 
   it('changes the bulk key per batch so a new rollout is not deduplicated', () => {
-    const base = { clientId: 'c1', documentType: 'T2_ENGAGEMENT_LETTER' as const };
+    const base = { clientId: 'c1', taxYear: 2026, documentType: 'T2_ENGAGEMENT_LETTER' as const };
     expect(bulkRolloutIdempotencyKey({ ...base, batchId: 'b1' })).not.toBe(
       bulkRolloutIdempotencyKey({ ...base, batchId: 'b2' }),
+    );
+  });
+
+  it('separates two years of the same client, which a batch could otherwise collide', () => {
+    const base = { batchId: 'b1', clientId: 'c1', documentType: 'T2_ENGAGEMENT_LETTER' as const };
+    expect(bulkRolloutIdempotencyKey({ ...base, taxYear: 2025 })).not.toBe(
+      bulkRolloutIdempotencyKey({ ...base, taxYear: 2026 }),
     );
   });
 });

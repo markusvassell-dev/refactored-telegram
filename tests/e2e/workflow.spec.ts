@@ -1,6 +1,7 @@
 import { expect, test, type Page, type WorkerInfo } from '@playwright/test';
 import { PrismaClient } from '@element/database';
-import { DocumentStore } from '@element/services';
+import { createAuditLogger } from '@element/audit';
+import { DocumentStore, PricingService } from '@element/services';
 import type { E2EEnvironment } from '../../playwright.config';
 
 /**
@@ -132,6 +133,73 @@ async function resetPreparation(environment: E2EEnvironment, engagementId: strin
     await prisma.calculatedDate.deleteMany({ where: { engagementId } });
     await prisma.serviceSelection.deleteMany({ where: { engagementId } });
     await prisma.feeCalculation.deleteMany({ where: { engagementId } });
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+/**
+ * Two engagements for a rollout year of its own: one ready to generate, one
+ * blocked for want of a prior-year letter. The rollout screen's whole job is
+ * telling those two apart, so both have to exist for the test to mean anything.
+ */
+async function seedRolloutFixture(environment: E2EEnvironment, taxYear: number): Promise<void> {
+  const prisma = clientFor(environment);
+  try {
+    const audit = createAuditLogger(prisma);
+    const pricing = new PricingService(prisma, audit);
+    const actor = await prisma.user.findFirstOrThrow({ where: { email: 'preparer@example.test' } });
+
+    for (const [name, ready] of [
+      ['Rollout Ready Co', true],
+      ['Rollout Blocked Co', false],
+    ] as const) {
+      const client = await prisma.client.create({ data: { legalName: name, isTestFixture: true } });
+
+      const engagement = await prisma.engagement.create({
+        data: {
+          clientId: client.id,
+          engagementType: 'T2',
+          taxYear,
+          yearEnd: new Date(Date.UTC(taxYear, 2, 31)),
+          status: 'NOT_STARTED',
+          compilationSelected: false,
+          isTestMode: true,
+        },
+      });
+
+      if (!ready) continue;
+
+      await prisma.sourceDocument.create({
+        data: {
+          engagementId: engagement.id,
+          kind: 'PRIOR_YEAR_ENGAGEMENT_LETTER',
+          fileName: 'Prior Year Engagement Letter.pdf',
+          fileHash: 'e2e-rollout-fixture-hash',
+          confirmedAt: new Date(),
+        },
+      });
+
+      await pricing.calculate({
+        engagementId: engagement.id,
+        feeKinds: ['T2_PREPARATION'],
+        previousFees: { T2_PREPARATION: { amount: '2000', source: 'PRIOR_YEAR_DOCUMENT' } },
+        highIncreaseThresholdPercent: 10,
+        actorId: actor.id,
+      });
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+async function clearRolloutFixture(environment: E2EEnvironment, taxYear: number): Promise<void> {
+  const prisma = clientFor(environment);
+  try {
+    const engagements = await prisma.engagement.findMany({ where: { taxYear }, select: { id: true, clientId: true } });
+    await prisma.backgroundJob.deleteMany({ where: { engagementId: { in: engagements.map((row) => row.id) } } });
+    await prisma.engagement.deleteMany({ where: { taxYear } });
+    await prisma.client.deleteMany({ where: { id: { in: engagements.map((row) => row.clientId) } } });
   } finally {
     await prisma.$disconnect();
   }
@@ -302,6 +370,55 @@ test.describe('preparing an engagement', () => {
     } else {
       await expect(panel).toContainText(/No document has been generated yet|cannot read/i);
     }
+  });
+});
+
+test.describe('the annual rollout', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  // A year of its own, so the fixture cannot collide with the seeded sample.
+  const ROLLOUT_YEAR = 2912;
+
+  test.beforeAll(async ({}, worker) => {
+    await seedRolloutFixture(environmentFor(worker), ROLLOUT_YEAR);
+  });
+
+  test.afterAll(async ({}, worker) => {
+    await clearRolloutFixture(environmentFor(worker), ROLLOUT_YEAR);
+  });
+
+  test('says how many drafts it will produce, dry-runs first, and only then queues', async ({ page }) => {
+    await signIn(page, /Preparer/);
+    await page.goto(`/bulk-rollout?taxYear=${ROLLOUT_YEAR}`);
+
+    // One ready, one blocked for want of a prior-year letter.
+    await expect(page.getByText('2 engagement(s) · 1 ready · 1 blocked')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Generate 1 draft' })).toBeEnabled();
+
+    const blocked = page.getByRole('checkbox', { name: /Include Rollout Blocked/ });
+    await expect(blocked).toBeDisabled();
+    await expect(page.getByText(/Missing: Prior-year engagement letter/)).toBeVisible();
+
+    // A dry run reports what would happen and queues nothing.
+    await page.getByRole('button', { name: 'Dry run for 1 engagement' }).click();
+    await expect(page.getByText(/would be queued/)).toBeVisible();
+    await expect(page.getByText(/this was a dry run/)).toBeVisible();
+
+    // Then the real thing, which asks before touching many clients at once.
+    page.once('dialog', (dialog) => {
+      expect(dialog.message()).toContain('Generate 1 draft?');
+      void dialog.accept();
+    });
+    await page.getByRole('button', { name: 'Generate 1 draft' }).click();
+
+    await expect(page.getByText(/1 draft\(s\) queued/)).toBeVisible();
+    await expect(page.getByText(/still needs individual review and approval/)).toBeVisible();
+  });
+
+  test('says plainly when a year has nothing in it', async ({ page }) => {
+    await signIn(page, /Preparer/);
+    await page.goto('/bulk-rollout?taxYear=1999');
+    await expect(page.getByText('No engagements match these filters.')).toBeVisible();
   });
 });
 

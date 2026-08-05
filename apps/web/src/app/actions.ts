@@ -30,10 +30,18 @@ export interface ActionResult {
   blockers?: string[];
 }
 
-async function run(action: () => Promise<string>): Promise<ActionResult> {
+/**
+ * A successful action may still have something to report — a rollout that
+ * queued most of its selection and refused the rest succeeded, and saying so
+ * is more useful than calling the whole thing a failure.
+ */
+type ActionOutcome = string | { message: string; blockers?: string[] };
+
+async function run(action: () => Promise<ActionOutcome>): Promise<ActionResult> {
   try {
-    const message = await action();
-    return { ok: true, message };
+    const outcome = await action();
+    if (typeof outcome === 'string') return { ok: true, message: outcome };
+    return { ok: true, message: outcome.message, ...(outcome.blockers?.length ? { blockers: outcome.blockers } : {}) };
   } catch (error) {
     // Any error may carry the specific reasons a reviewer can act on — a
     // blocked precondition and a field that failed validation are both things
@@ -774,5 +782,67 @@ export async function confirmServiceSelection(formData: FormData): Promise<Actio
 
     revalidatePath(`/engagements/${engagementId}`);
     return selected ? 'Service included.' : 'Service not included.';
+  });
+}
+
+/**
+ * Queues an annual rollout for the selected engagements.
+ *
+ * This is the one action that touches many clients at once, so it does not
+ * trust the submitted list: every selected engagement is re-evaluated by the
+ * service, and one that is still blocked is refused and named rather than
+ * quietly skipped. Nothing reaches Adobe Sign — each draft still goes through
+ * individual review and approval.
+ */
+export async function runBulkRollout(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('generation:start');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const batchId = formData.get('batchId')?.toString();
+    if (!batchId) throw new ValidationError('This preview has expired. Refresh and select again.');
+
+    const engagementIds = formData
+      .getAll('engagementId')
+      .map((value) => value.toString())
+      .filter(Boolean);
+
+    if (engagementIds.length === 0) {
+      throw new ValidationError('Select at least one engagement to generate.');
+    }
+
+    const threshold = await container.settings.highIncreaseThresholdPercent(
+      container.env.HIGH_FEE_INCREASE_THRESHOLD_PERCENT,
+    );
+
+    const result = await container.bulk.run({
+      batchId,
+      engagementIds,
+      actor,
+      dryRun: formData.get('dryRun') === 'yes',
+      highIncreaseThresholdPercent: threshold,
+    });
+
+    revalidatePath('/bulk-rollout');
+
+    const verb = result.dryRun ? 'would be queued' : 'queued';
+    const parts = [`${result.queued} draft(s) ${verb}`];
+    if (result.deduplicated > 0) {
+      parts.push(`${result.deduplicated} already queued and left alone`);
+    }
+
+    const message = result.dryRun
+      ? `${parts.join(', ')}. Nothing was queued — this was a dry run.`
+      : `${parts.join(', ')}. Each draft still needs individual review and approval.`;
+
+    // Partial success is still success, and the refusals are the useful part.
+    if (result.refused.length > 0) {
+      return {
+        message: `${message} ${result.refused.length} were refused:`,
+        blockers: result.refused.map((entry) => `${entry.clientName}: ${entry.reason}`),
+      };
+    }
+
+    return message;
   });
 }

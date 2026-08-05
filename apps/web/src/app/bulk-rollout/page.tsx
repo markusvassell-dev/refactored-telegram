@@ -1,6 +1,8 @@
+import { can } from '@element/shared';
 import { container } from '@/lib/container';
-import { requireUser } from '@/lib/session';
+import { requireUser, sessionCsrfToken } from '@/lib/session';
 import { EmptyState, PageHeader } from '@/components/shell';
+import { RolloutSelection } from './selection';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,7 +11,8 @@ export default async function BulkRolloutPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requireUser();
+  const user = await requireUser();
+  const csrfToken = (await sessionCsrfToken()) ?? '';
   const params = await searchParams;
 
   const taxYear = Number(params.taxYear ?? new Date().getUTCFullYear());
@@ -88,47 +91,12 @@ export default async function BulkRolloutPage({
       {preview.rows.length === 0 ? (
         <EmptyState message="No engagements match these filters." />
       ) : (
-        <div className="card overflow-x-auto">
-          <table className="table">
-            <caption className="sr-only">Bulk rollout preview</caption>
-            <thead>
-              <tr>
-                <th scope="col">Include</th>
-                <th scope="col">Client</th>
-                <th scope="col">Type</th>
-                <th scope="col">Prior-year document</th>
-                <th scope="col">Prior fee</th>
-                <th scope="col">Method</th>
-                <th scope="col">Unrounded</th>
-                <th scope="col">Rounded</th>
-                <th scope="col">Compilation</th>
-                <th scope="col">Missing / warnings</th>
-                <th scope="col">Reviewer</th>
-              </tr>
-            </thead>
-            <tbody>
-              {preview.rows.map((row) => (
-                <tr key={row.engagementId}>
-                  <td><input type="checkbox" defaultChecked={row.included} disabled={row.blocked} aria-label={`Include ${row.clientName}`} /></td>
-                  <td className="font-medium">{row.clientName}</td>
-                  <td>{row.engagementType}</td>
-                  <td className="text-xs">{row.priorYearDocument ?? '—'}</td>
-                  <td>{row.priorYearFee ? `$${Number(row.priorYearFee).toFixed(2)}` : '—'}</td>
-                  <td className="text-xs">{row.increaseMethod.replace(/_/g, ' ').toLowerCase()}</td>
-                  <td>{row.proposedUnroundedFee ? `$${row.proposedUnroundedFee}` : '—'}</td>
-                  <td className="font-semibold">{row.proposedRoundedFee ? `$${row.proposedRoundedFee}` : '—'}</td>
-                  <td>{row.compilationSelected === null ? 'unconfirmed' : row.compilationSelected ? 'yes' : 'no'}</td>
-                  <td className="max-w-sm text-xs">
-                    {row.blockedReason ? <p className="text-red-700">{row.blockedReason}</p> : null}
-                    {row.missingFields.length > 0 ? <p className="text-red-700">Missing: {row.missingFields.join(', ')}</p> : null}
-                    {row.warnings.map((warning) => <p key={warning} className="text-amber-700">{warning}</p>)}
-                  </td>
-                  <td className="text-xs">{row.assignedReviewer ?? 'Unassigned'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <RolloutSelection
+          csrfToken={csrfToken}
+          batchId={preview.batchId}
+          rows={preview.rows}
+          canGenerate={can(user, 'generation:start')}
+        />
       )}
     </>
   );
