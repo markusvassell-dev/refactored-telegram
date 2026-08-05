@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
+import type { FieldForm, FormField } from '@element/services';
 import { ActionForm } from '@/components/action-form';
 import type { DocumentVersionLinks } from '@/lib/document-links';
 import {
@@ -18,11 +19,11 @@ import {
   prepareEngagement,
   requestChanges,
   resolveConflict,
+  saveFieldGroup,
   sendForSignature,
   startGeneration,
   startReview,
   submitWordingException,
-  updateStructuredField,
 } from '@/app/actions';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -70,6 +71,7 @@ export function ReviewWorkspace({
   templateVersion,
   documentLinks,
   dateFacts,
+  fieldForm,
   generationGate,
 }: {
   csrfToken: string;
@@ -78,6 +80,7 @@ export function ReviewWorkspace({
   templateVersion: any;
   documentLinks: Record<string, DocumentVersionLinks>;
   dateFacts: DateFactPrompt[];
+  fieldForm: FieldForm;
   generationGate: { ok: boolean; blockers: string[]; warnings: string[] };
 }): ReactNode {
   const [tab, setTab] = useState<Tab>('Overview');
@@ -114,7 +117,9 @@ export function ReviewWorkspace({
           <Overview csrfToken={csrfToken} engagement={engagement} generationGate={generationGate} />
         ) : null}
         {tab === 'Source Documents' ? <SourceDocuments engagement={engagement} /> : null}
-        {tab === 'Client Information' ? <ClientInformation csrfToken={csrfToken} engagement={engagement} /> : null}
+        {tab === 'Client Information' ? (
+          <ClientInformation csrfToken={csrfToken} engagement={engagement} fieldForm={fieldForm} />
+        ) : null}
         {tab === 'Dates and Deadlines' ? (
           <Dates csrfToken={csrfToken} engagement={engagement} dateFacts={dateFacts} />
         ) : null}
@@ -322,7 +327,15 @@ function SourceDocuments({ engagement }: { engagement: any }): ReactNode {
   );
 }
 
-function ClientInformation({ csrfToken, engagement }: { csrfToken: string; engagement: any }): ReactNode {
+function ClientInformation({
+  csrfToken,
+  engagement,
+  fieldForm,
+}: {
+  csrfToken: string;
+  engagement: any;
+  fieldForm: FieldForm;
+}): ReactNode {
   const unresolved = engagement.fieldConflicts.filter((conflict: any) => conflict.status === 'UNRESOLVED');
 
   return (
@@ -362,80 +375,197 @@ function ClientInformation({ csrfToken, engagement }: { csrfToken: string; engag
         </Card>
       ) : null}
 
-      <Card
-        title="Extracted values"
-        description="Each value shows where it came from, how it was extracted and how confident that extraction was."
-      >
-        {engagement.extractedFields.length === 0 ? (
-          <Empty message="No values have been extracted yet." />
-        ) : (
-          <table className="table">
-            <thead>
-              <tr>
-                <th scope="col">Field</th>
-                <th scope="col">Value</th>
-                <th scope="col">Source</th>
-                <th scope="col">Method</th>
-                <th scope="col">Confidence</th>
-                <th scope="col">Evidence</th>
-                <th scope="col">Confirmed</th>
-              </tr>
-            </thead>
-            <tbody>
-              {engagement.extractedFields.map((field: any) => (
-                <tr key={field.id}>
-                  <td className="font-mono text-xs">{field.token}</td>
-                  <td>{field.manualOverrideValue ?? field.value ?? '—'}</td>
-                  <td>{field.source.replace(/_/g, ' ').toLowerCase()}</td>
-                  <td>{field.extractionMethod.replace(/_/g, ' ').toLowerCase()}</td>
-                  <td>{field.confidence === null ? '—' : `${Math.round(field.confidence * 100)}%`}</td>
-                  <td className="max-w-xs">
-                    {field.evidence?.length ? (
-                      <details>
-                        <summary className="cursor-pointer text-xs text-brand-700">
-                          {field.evidence.length} source citation(s)
-                        </summary>
-                        <ul className="mt-1 space-y-1 text-xs text-slate-600">
-                          {field.evidence.map((item: any) => (
-                            <li key={item.id}>
-                              {item.pageNumber ? `Page ${item.pageNumber}: ` : ''}
-                              {item.supportingText ?? 'No excerpt recorded'}
-                            </li>
-                          ))}
-                        </ul>
-                      </details>
-                    ) : (
-                      '—'
-                    )}
-                  </td>
-                  <td>{field.manuallyConfirmed ? (field.confirmedBy?.displayName ?? 'Yes') : 'No'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </Card>
+      {fieldForm.groups.length === 0 ? (
+        <Card title="Fields">
+          <Empty message="No approved template is active for this engagement type, so there are no fields to fill in." />
+        </Card>
+      ) : (
+        <>
+          <Card
+            title="Outstanding required fields"
+            description="What still stands between this engagement and a draft. Every field below comes from the approved template itself."
+          >
+            {fieldForm.outstandingRequired.length === 0 ? (
+              <p className="text-sm text-emerald-700">
+                All {fieldForm.totalRequired} required field(s) have a value.
+              </p>
+            ) : (
+              <>
+                <p className="text-sm text-slate-700">
+                  {fieldForm.outstandingRequired.length} of {fieldForm.totalRequired} required field(s) have no value
+                  yet.
+                </p>
+                <ul className="mt-2 flex flex-wrap gap-2">
+                  {fieldForm.outstandingRequired.map((token) => (
+                    <li key={token} className="badge bg-amber-100 text-amber-800">
+                      {labelFor(fieldForm, token)}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </Card>
 
-      <Card title="Edit a structured field" description="Structured editing is available to any reviewer.">
-        <ActionForm action={updateStructuredField} csrfToken={csrfToken} submitLabel="Save value">
-          <input type="hidden" name="engagementId" value={engagement.id} />
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="label" htmlFor="field-token">
-                Field token
-              </label>
-              <input id="field-token" name="token" className="input" required placeholder="corporation.legal_name" />
-            </div>
-            <div>
-              <label className="label" htmlFor="field-value">
-                Value
-              </label>
-              <input id="field-value" name="value" className="input" />
-            </div>
-          </div>
-        </ActionForm>
-      </Card>
+          {fieldForm.groups.map((group) => (
+            <Card key={group.key} title={group.label}>
+              <ActionForm action={saveFieldGroup} csrfToken={csrfToken} submitLabel={`Save ${group.label.toLowerCase()}`}>
+                <input type="hidden" name="engagementId" value={engagement.id} />
+                <div className="grid gap-5 lg:grid-cols-2">
+                  {group.fields.map((field) => (
+                    <FieldInput key={field.token} field={field} />
+                  ))}
+                </div>
+              </ActionForm>
+            </Card>
+          ))}
+        </>
+      )}
     </>
+  );
+}
+
+function labelFor(form: FieldForm, token: string): string {
+  for (const group of form.groups) {
+    const field = group.fields.find((candidate) => candidate.token === token);
+    if (field) return field.label;
+  }
+  return token;
+}
+
+const SOURCE_LABELS: Record<string, string> = {
+  KARBON_CLIENT: 'current Karbon client record',
+  KARBON_WORK_ITEM: 'current Karbon work item',
+  PRIOR_YEAR_DOCUMENT: "last year's letter",
+  TEMPLATE_DEFAULT: 'the template default',
+  MANUAL_ENTRY: 'entered by hand',
+  CALCULATED: 'calculated',
+};
+
+/**
+ * One field, rendered from its own definition.
+ *
+ * The provenance line matters as much as the input: a reviewer confirming a
+ * value needs to know where it came from and how sure the extraction was.
+ */
+function FieldInput({ field }: { field: FormField }): ReactNode {
+  const inputId = `field-${field.token.replace(/\./g, '-')}`;
+  const describedBy = `${inputId}-note`;
+  const name = `field:${field.token}`;
+  const readOnly = field.ownership !== 'EDITABLE';
+  const missing = field.required && !field.value;
+
+  // A date picker silently shows nothing for a value it cannot parse, which
+  // would hide a prior-year value like "March 31, 2026" instead of letting the
+  // reviewer correct it. Fall back to a text box whenever that would happen.
+  const isIsoDate = field.value === null || /^\d{4}-\d{2}-\d{2}$/.test(field.value);
+  const inputType =
+    field.dataType === 'DATE' && isIsoDate ? 'date' : field.dataType === 'EMAIL' ? 'email' : 'text';
+
+  return (
+    <div>
+      <label className="label" htmlFor={inputId}>
+        {field.label}
+        {field.required ? <span className="ml-1 text-red-700" aria-hidden="true">*</span> : null}
+        {field.required ? <span className="sr-only"> (required)</span> : null}
+      </label>
+
+      {readOnly ? (
+        // Read-only rather than disabled: the value still matters, it is just
+        // decided elsewhere, and a disabled control is skipped by a screen
+        // reader moving through the form. Unnamed, so it submits nothing.
+        <input
+          id={inputId}
+          className="input bg-slate-50 text-slate-700"
+          value={field.value ?? 'Not set'}
+          readOnly
+          aria-describedby={describedBy}
+        />
+      ) : field.dataType === 'ENUM' && field.enumValues.length > 0 ? (
+        <select id={inputId} name={name} className="input" defaultValue={field.value ?? ''} aria-describedby={describedBy}>
+          <option value="">Not set</option>
+          {field.enumValues.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      ) : field.dataType === 'MULTILINE' ? (
+        <textarea
+          id={inputId}
+          name={name}
+          className="input"
+          rows={3}
+          defaultValue={field.value ?? ''}
+          maxLength={field.maxLength ?? undefined}
+          aria-describedby={describedBy}
+        />
+      ) : (
+        <input
+          id={inputId}
+          name={name}
+          className="input"
+          type={inputType}
+          inputMode={field.dataType === 'MONEY' ? 'decimal' : undefined}
+          defaultValue={field.value ?? ''}
+          maxLength={field.maxLength ?? undefined}
+          aria-describedby={describedBy}
+        />
+      )}
+
+      <div id={describedBy} className="field-note space-y-0.5">
+        {field.helpText ? <p>{field.helpText}</p> : null}
+
+        {readOnly ? (
+          <p className="text-slate-600">
+            {field.ownership === 'CALCULATED_DATE'
+              ? 'Set by the date rules — confirm it on the Dates and Deadlines tab.'
+              : 'Set by the pricing engine — change it on the Pricing tab.'}
+          </p>
+        ) : null}
+
+        {!field.autoPopulatable ? (
+          <p className="text-amber-700">Never proposed automatically. A reviewer must supply this.</p>
+        ) : null}
+
+        {field.value ? (
+          <p>
+            From {SOURCE_LABELS[field.valueSource ?? ''] ?? 'an unknown source'}
+            {field.valueBasis === 'CONFLICT_RESOLUTION' ? ', chosen when the conflict was resolved' : ''}
+            {field.valueBasis === 'MANUAL_OVERRIDE' ? ', overridden with a written reason' : ''}
+            {field.confidence !== null && field.confidence < 1
+              ? ` · ${Math.round(field.confidence * 100)}% confidence`
+              : ''}
+            {field.confirmed ? ' · confirmed' : ''}
+          </p>
+        ) : null}
+
+        {missing ? <p className="text-amber-700">Required, and not supplied yet.</p> : null}
+
+        {field.conflictUnresolved ? (
+          <p className="text-red-700">Sources disagree about this value. Resolve the conflict above.</p>
+        ) : null}
+
+        {field.evidence.length > 0 ? (
+          <details>
+            <summary className="cursor-pointer text-brand-700">
+              {field.evidence.length} source citation(s)
+            </summary>
+            <ul className="mt-1 space-y-1">
+              {field.evidence.map((item, index) => (
+                <li key={`${field.token}-evidence-${index}`}>
+                  {item.pageNumber ? `Page ${item.pageNumber}: ` : ''}
+                  {item.supportingText ?? 'No excerpt recorded'}
+                </li>
+              ))}
+            </ul>
+          </details>
+        ) : null}
+
+        {field.sourcePlaceholder ? (
+          <p className="text-slate-400">Fills {field.sourcePlaceholder} in the approved letter.</p>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

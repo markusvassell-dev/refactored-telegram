@@ -37,7 +37,7 @@ a default, because "we don't know" is a real and important state.
 | --- | --- |
 | `DocumentTemplate` | One per document type. `isProductionSupported` is false for types with no approved template. |
 | `TemplateVersion` | Immutable once published: source hash, normalised hash, manifest, lifecycle timestamps. |
-| `TemplateFieldDefinition` | Flattened manifest fields, for the review UI. |
+| `TemplateFieldDefinition` | The manifest's fields, flattened. This is what the review UI renders the structured form from — label, data type, help text, permitted enum values, length limit, and the conditional section that makes a field mandatory. |
 
 ### Documents
 

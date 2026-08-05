@@ -4,13 +4,14 @@
   "templateVersion": 1,
   "sourceFileName": "T1 Joint Taxpayer Engagement Letter.docx",
   "sourceFileHash": "d4c93ea2c582526d5465d2cadac4d0fe7c7873d0057a0f5810c9cf8566e37010",
-  "normalizedFileHash": "0e43c5edb524750cd9a7cdab6510d32d54e72cc4729820199335c1dc1156d656",
+  "normalizedFileHash": "f69d2dc112cec4546bf75ab9c1b63f908f972b0929b900dde4393cb2a675fb3c",
   "fields": [
     {
       "token": "taxpayer1.full_legal_name",
       "label": "Taxpayer 1 full legal name",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[TAXPAYER 1 FULL LEGAL NAME]",
       "autoPopulatable": true,
       "displayGroup": "CLIENT",
       "displayOrder": 1
@@ -20,6 +21,7 @@
       "label": "Taxpayer 1 first name",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[TAXPAYER 1 FIRST NAME]",
       "autoPopulatable": true,
       "displayGroup": "CLIENT",
       "displayOrder": 2
@@ -47,6 +49,7 @@
       "label": "Taxpayer 2 full legal name",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[TAXPAYER 2 FULL LEGAL NAME]",
       "autoPopulatable": true,
       "displayGroup": "CLIENT",
       "displayOrder": 3
@@ -56,6 +59,7 @@
       "label": "Taxpayer 2 first name",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[TAXPAYER 2 FIRST NAME]",
       "autoPopulatable": true,
       "displayGroup": "CLIENT",
       "displayOrder": 4
@@ -83,6 +87,7 @@
       "label": "Address",
       "dataType": "MULTILINE",
       "required": true,
+      "sourcePlaceholder": "[CLIENT ADDRESS]",
       "autoPopulatable": true,
       "displayGroup": "CLIENT",
       "displayOrder": 5
@@ -92,6 +97,7 @@
       "label": "Taxation year",
       "dataType": "YEAR",
       "required": true,
+      "sourcePlaceholder": "[YEAR]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 1
@@ -101,6 +107,7 @@
       "label": "Date sent",
       "dataType": "DATE",
       "required": true,
+      "sourcePlaceholder": "[DATE SENT]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 2
@@ -110,6 +117,7 @@
       "label": "Client information deadline",
       "dataType": "DATE",
       "required": true,
+      "sourcePlaceholder": "[CLIENT INFORMATION DEADLINE]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 3
@@ -119,6 +127,7 @@
       "label": "Other selected service",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[DESCRIBE]",
       "autoPopulatable": true,
       "displayGroup": "SERVICES",
       "displayOrder": 10
@@ -128,6 +137,7 @@
       "label": "Fee amount",
       "dataType": "MONEY",
       "required": true,
+      "sourcePlaceholder": "[AMOUNT]",
       "autoPopulatable": true,
       "displayGroup": "PRICING",
       "displayOrder": 1
@@ -137,6 +147,7 @@
       "label": "Payment terms",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[UPON RECEIPT / WITHIN __ DAYS]",
       "autoPopulatable": true,
       "displayGroup": "PRICING",
       "displayOrder": 2
@@ -146,6 +157,7 @@
       "label": "Separate proposal or pricing schedule date",
       "dataType": "DATE",
       "required": false,
+      "sourcePlaceholder": "[DATE]",
       "autoPopulatable": true,
       "displayGroup": "PRICING",
       "displayOrder": 3

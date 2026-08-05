@@ -408,11 +408,50 @@ export class PreparationService {
         where: { engagementId, token, status: 'UNRESOLVED' },
       });
 
-      // A conflict a person already resolved is left alone.
+      // A conflict a person already resolved is left alone — but their decision
+      // applies to the values it was made about. If a source has since changed,
+      // the decision no longer covers what is on the table, so the question is
+      // asked again rather than a stale answer being applied silently.
       const resolved = await this.deps.prisma.fieldConflict.findFirst({
         where: { engagementId, token, status: { in: ['RESOLVED', 'ACCEPTED_AS_IS'] } },
       });
-      if (resolved) continue;
+
+      if (resolved) {
+        const decidedAbout = new Set(
+          (Array.isArray(resolved.candidates) ? (resolved.candidates as { value?: unknown }[]) : [])
+            .map((candidate) => String(candidate.value ?? '')),
+        );
+        const onTheTable = new Set(payload.map((candidate) => String(candidate.value ?? '')));
+        const unchanged =
+          decidedAbout.size === onTheTable.size && [...onTheTable].every((value) => decidedAbout.has(value));
+
+        if (unchanged) continue;
+
+        await this.deps.prisma.fieldConflict.update({
+          where: { id: resolved.id },
+          data: {
+            status: 'UNRESOLVED',
+            candidates: payload as unknown as Prisma.InputJsonValue,
+            recommendedValue: this.displayValue(recommended),
+            recommendedSource: recommended.source,
+          },
+        });
+
+        await this.deps.audit.record({
+          eventType: 'CONFLICT_RESOLVED',
+          objectType: 'FieldConflict',
+          objectId: resolved.id,
+          engagementId,
+          userId: actorId,
+          correlationId,
+          reason: 'A source changed after this conflict was resolved, so the decision no longer applies.',
+          beforeValue: { resolvedValue: resolved.resolvedValue, resolvedSource: resolved.resolvedSource },
+          afterValue: { candidates: payload },
+        });
+
+        raised += 1;
+        continue;
+      }
 
       if (existing) {
         await this.deps.prisma.fieldConflict.update({

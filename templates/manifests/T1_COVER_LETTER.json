@@ -4,13 +4,14 @@
   "templateVersion": 1,
   "sourceFileName": "T1 Cover Letter.docx",
   "sourceFileHash": "a982fb6a0e7b970c17e50d5f0b12e6d301ba50cfbb692ea9af86a3cf61be87c6",
-  "normalizedFileHash": "615f7c46fe0d244b473171f31ebcbbe05bd007c1dc65978da4cb8993cf3c910a",
+  "normalizedFileHash": "1a8647b73446e5c36af708985dbdaa7d7b5d5959461801794b706c2b5f264eaa",
   "fields": [
     {
       "token": "taxpayer.full_legal_name",
       "label": "Taxpayer name",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[CLIENT NAME]",
       "autoPopulatable": true,
       "displayGroup": "CLIENT",
       "displayOrder": 1
@@ -20,6 +21,7 @@
       "label": "Address",
       "dataType": "MULTILINE",
       "required": true,
+      "sourcePlaceholder": "[CLIENT ADDRESS]",
       "autoPopulatable": true,
       "displayGroup": "CLIENT",
       "displayOrder": 2
@@ -29,6 +31,7 @@
       "label": "Taxation year",
       "dataType": "YEAR",
       "required": true,
+      "sourcePlaceholder": "[TAXATION YEAR]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 1
@@ -38,6 +41,7 @@
       "label": "Date sent",
       "dataType": "DATE",
       "required": true,
+      "sourcePlaceholder": "[DATE SENT]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 2
@@ -47,6 +51,7 @@
       "label": "Filing deadline",
       "dataType": "DATE",
       "required": true,
+      "sourcePlaceholder": "[FILING DEADLINE]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 3
@@ -56,6 +61,7 @@
       "label": "Payment deadline",
       "dataType": "DATE",
       "required": true,
+      "sourcePlaceholder": "[PAYMENT DEADLINE]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 4
@@ -65,6 +71,7 @@
       "label": "Signed Form T183 requested by",
       "dataType": "DATE",
       "required": true,
+      "sourcePlaceholder": "[DATE]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 5
@@ -74,6 +81,7 @@
       "label": "Balance payment / refund date",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[DATE / ESTIMATED]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 6
@@ -83,6 +91,7 @@
       "label": "Estimated balance owing / (refund)",
       "dataType": "MONEY",
       "required": true,
+      "sourcePlaceholder": "[AMOUNT]",
       "autoPopulatable": true,
       "displayGroup": "COVER_LETTER",
       "displayOrder": 1
@@ -92,6 +101,7 @@
       "label": "Prior instalments or tax withheld",
       "dataType": "MONEY",
       "required": true,
+      "sourcePlaceholder": "[AMOUNT]",
       "autoPopulatable": true,
       "displayGroup": "COVER_LETTER",
       "displayOrder": 2
@@ -101,6 +111,7 @@
       "label": "Net estimated balance / (refund)",
       "dataType": "MONEY",
       "required": true,
+      "sourcePlaceholder": "[AMOUNT]",
       "autoPopulatable": true,
       "displayGroup": "COVER_LETTER",
       "displayOrder": 3
@@ -110,6 +121,7 @@
       "label": "Instalment 1 date",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[DATE]",
       "autoPopulatable": true,
       "displayGroup": "COVER_LETTER",
       "displayOrder": 10
@@ -119,6 +131,7 @@
       "label": "Instalment 1 amount",
       "dataType": "MONEY",
       "required": false,
+      "sourcePlaceholder": "[AMOUNT]",
       "autoPopulatable": true,
       "displayGroup": "COVER_LETTER",
       "displayOrder": 11
@@ -128,6 +141,7 @@
       "label": "Instalment 1 notes",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[DETAILS]",
       "autoPopulatable": true,
       "displayGroup": "COVER_LETTER",
       "displayOrder": 12
@@ -137,6 +151,7 @@
       "label": "Instalment 2 date",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[DATE]",
       "autoPopulatable": true,
       "displayGroup": "COVER_LETTER",
       "displayOrder": 13
@@ -146,6 +161,7 @@
       "label": "Instalment 2 amount",
       "dataType": "MONEY",
       "required": false,
+      "sourcePlaceholder": "[AMOUNT]",
       "autoPopulatable": true,
       "displayGroup": "COVER_LETTER",
       "displayOrder": 14
@@ -155,6 +171,7 @@
       "label": "Instalment 2 notes",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[DETAILS]",
       "autoPopulatable": true,
       "displayGroup": "COVER_LETTER",
       "displayOrder": 15
@@ -164,6 +181,7 @@
       "label": "Foreign information returns prepared or required",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[DETAILS]",
       "autoPopulatable": true,
       "displayGroup": "COVER_LETTER",
       "displayOrder": 20
@@ -173,6 +191,7 @@
       "label": "Firm telephone number",
       "dataType": "PHONE",
       "required": true,
+      "sourcePlaceholder": "[TELEPHONE NUMBER]",
       "autoPopulatable": true,
       "displayGroup": "FIRM",
       "displayOrder": 1
@@ -182,6 +201,7 @@
       "label": "Firm email address",
       "dataType": "EMAIL",
       "required": true,
+      "sourcePlaceholder": "[EMAIL ADDRESS]",
       "autoPopulatable": true,
       "displayGroup": "FIRM",
       "displayOrder": 2

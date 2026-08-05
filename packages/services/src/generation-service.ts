@@ -21,6 +21,7 @@ import {
   type Logger,
 } from '@element/shared';
 import { evaluateGenerationGate, type GateResult } from '@element/workflows';
+import { resolveFieldValue } from './field-values.js';
 import type { DocumentStore } from './storage.js';
 import type { WorkflowService } from './workflow-service.js';
 
@@ -119,11 +120,12 @@ export class GenerationService {
     selections: Record<string, boolean>;
     includedSections: string[];
   }> {
-    const [fields, services, dates, fees, engagement] = await Promise.all([
+    const [fields, services, dates, fees, conflicts, engagement] = await Promise.all([
       this.deps.prisma.extractedField.findMany({ where: { engagementId, coverLetterPackageId: null } }),
       this.deps.prisma.serviceSelection.findMany({ where: { engagementId } }),
       this.deps.prisma.calculatedDate.findMany({ where: { engagementId } }),
       this.deps.prisma.feeCalculation.findMany({ where: { engagementId } }),
+      this.deps.prisma.fieldConflict.findMany({ where: { engagementId } }),
       this.deps.prisma.engagement.findUniqueOrThrow({
         where: { id: engagementId },
         select: { compilationSelected: true, taxYear: true },
@@ -133,19 +135,37 @@ export class GenerationService {
     const values: Record<string, string> = {};
     const byToken = new Map(manifest.fields.map((field) => [field.token, field]));
 
-    // 1. Confirmed / resolved field values. A manual override always wins.
+    // 1. Field values. A token often has several rows — Karbon's, last year's,
+    //    a reviewer's — so one shared rule decides which is effective, rather
+    //    than whichever row came back last. `resolveFieldValue` is the same
+    //    function the review UI uses, so the document gets what the reviewer saw.
+    const conflictByToken = new Map(conflicts.map((conflict) => [conflict.token, conflict]));
+    const rowsByToken = new Map<string, typeof fields>();
     for (const field of fields) {
-      const definition = byToken.get(field.token);
+      if (!byToken.has(field.token)) continue;
+      const bucket = rowsByToken.get(field.token) ?? [];
+      bucket.push(field);
+      rowsByToken.set(field.token, bucket);
+    }
+
+    for (const [token, rows] of rowsByToken) {
+      const definition = byToken.get(token);
       if (!definition) continue;
 
-      const raw =
-        field.manualOverrideValue ??
-        (field.valueDecimal ? field.valueDecimal.toString() : null) ??
-        (field.valueDate ? field.valueDate.toISOString().slice(0, 10) : null) ??
-        field.value;
+      const resolved = resolveFieldValue(
+        rows.map((row) => ({
+          value:
+            (row.valueDecimal ? row.valueDecimal.toString() : null) ??
+            (row.valueDate ? row.valueDate.toISOString().slice(0, 10) : null) ??
+            row.value,
+          source: row.source,
+          manualOverrideValue: row.manualOverrideValue,
+          manuallyConfirmed: row.manuallyConfirmed,
+        })),
+        conflictByToken.get(token) ?? null,
+      );
 
-      if (raw === null || raw === undefined) continue;
-      values[field.token] = formatFieldValue(raw, { dataType: definition.dataType });
+      if (resolved) values[token] = formatFieldValue(resolved.value, { dataType: definition.dataType });
     }
 
     // 2. Calculated dates.

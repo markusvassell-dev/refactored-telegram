@@ -74,12 +74,17 @@ export async function writeDocx(parts: DocxParts): Promise<Buffer> {
   });
 
   // A fixed timestamp keeps rendering deterministic, so the same inputs
-  // produce the same file hash. Regression tests depend on this.
+  // produce the same file hash. Regression tests depend on this, and so does
+  // treating a document hash as an identity in the audit trail.
   const fixedDate = new Date('2020-01-01T00:00:00Z');
 
   for (const name of ordered) {
     const data = parts.files.get(name);
-    if (data) zip.file(name, data, { date: fixedDate });
+    // `createFolders` defaults to true, and JSZip stamps the folder entries it
+    // invents with the wall clock rather than the date given here — which made
+    // two identical renders differ in their bytes. Word's own files carry no
+    // folder entries either, so there is nothing to preserve by keeping them.
+    if (data) zip.file(name, data, { date: fixedDate, createFolders: false });
   }
 
   return zip.generateAsync({
@@ -87,6 +92,29 @@ export async function writeDocx(parts: DocxParts): Promise<Buffer> {
     compression: 'DEFLATE',
     compressionOptions: { level: 6 },
   });
+}
+
+export interface ArchiveEntry {
+  name: string;
+  isDirectory: boolean;
+  /** The timestamp stored in the archive, which must never be the wall clock. */
+  date: Date;
+}
+
+/**
+ * The archive's own entry table, without decompressing anything.
+ *
+ * Exposed so the determinism of a produced file can be asserted directly: a
+ * document hash is only an identity if nothing in the container varies on its
+ * own.
+ */
+export async function listDocxEntries(data: Uint8Array | Buffer): Promise<ArchiveEntry[]> {
+  const zip = await JSZip.loadAsync(data);
+  return Object.values(zip.files).map((entry) => ({
+    name: entry.name,
+    isDirectory: entry.dir,
+    date: entry.date,
+  }));
 }
 
 export function hashBuffer(data: Uint8Array | Buffer): string {

@@ -134,6 +134,25 @@ crashed worker and drains in-flight work on shutdown.
 Both processes can run several replicas. `SELECT … FOR UPDATE SKIP LOCKED`
 means concurrent workers take different jobs rather than colliding.
 
+## Which value is effective
+
+A token routinely carries several rows: what Karbon says, what last year's letter
+said, what a reviewer typed. One rule decides which is used, in
+`resolveFieldValue`, and both the review UI and generation call it — so the
+document gets exactly what the reviewer was looking at.
+
+1. An explicit override, which carries a written reason.
+2. The decision recorded against a resolved conflict.
+3. A value a person typed and confirmed.
+4. Otherwise the highest-priority source, which is what reconciliation
+   recommends when it raises the conflict in the first place.
+
+Ties break on source priority and then on the value itself, so the outcome never
+depends on the order rows came back from the database.
+
+A resolved conflict covers the values it was decided about. If a source later
+changes, preparation re-opens it rather than applying a stale answer.
+
 ## Security boundaries
 
 1. **Session** — encrypted, authenticated cookie holding only a user id and

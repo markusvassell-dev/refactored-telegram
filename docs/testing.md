@@ -3,10 +3,10 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (213 tests)
-pnpm test:unit          # 140 — no external dependencies
-pnpm test:integration   # 73  — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 16  — needs a browser
+pnpm test               # unit + integration  (250 tests)
+pnpm test:unit          # 158 — no external dependencies
+pnpm test:integration   # 92  — needs Postgres and LibreOffice Writer
+pnpm test:e2e           # 18  — needs a browser
 pnpm build              # production build
 ```
 
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (140)
+## Unit tests (158)
 
 No database, no filesystem, no network.
 
@@ -81,7 +81,17 @@ path segment; a signature cannot be moved onto another document, cannot have its
 expiry extended, cannot be forged or malformed, does not survive a different
 deployment secret, and stops verifying once it expires.
 
-## Integration tests (73)
+**Effective values and field validation (18)** — which of a token's several rows
+reaches the client: an override first, then a resolved conflict, then a value
+someone confirmed, then the highest-priority source — and, the point of the
+suite, *the same answer whichever order the rows arrive in*, which is the defect
+that made the outcome depend on Postgres. Plus every data type a reviewer can
+type into: an email that is only nearly one, an incomplete telephone number,
+February 31 rejected rather than silently shifted into March, money kept exact
+and never negative, a four-digit year, yes/no stored as a boolean, and an enum
+value matched case-insensitively against the permitted list.
+
+## Integration tests (92)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -122,10 +132,24 @@ was found; the compilation fee priced only when compilation is selected for the
 new year; each date recording its rule, input and assumptions; the balance-due
 day blocked until eligibility is answered, then two months for "no" and three
 for "yes"; a confirmed date never rewritten; last year's ticks carried forward
-as `priorYearSelected` with `confirmed` still false; and three consecutive runs
-producing exactly the same row counts.
+as `priorYearSelected` with `confirmed` still false; three consecutive runs
+producing exactly the same row counts; and a resolved conflict re-opened once a
+source changes, because a decision only covers the values it was made about.
 
-## Browser tests (16)
+**Field editor (17)** — the form is built from the approved template's own field
+definitions: every field labelled and typed, carrying the bracketed placeholder
+it fills in the letter, grouped with the client first. The CSRS 4200 fields are
+mandatory only when compilation is selected, so required-ness matches the
+generation gate exactly. A value shows its source, confidence and evidence; a
+token whose sources still disagree is flagged. A calculated deadline and a
+calculated fee are read-only and a value typed into either is refused rather
+than stored where generation would discard it, as is a token the template does
+not declare. Saving confirms the value, writes its typed column as well as its
+text, records the edit without copying the value into the audit trail, reports
+an unchanged value instead of rewriting it, and treats an emptied box as
+clearing the value rather than storing `""`.
+
+## Browser tests (18)
 
 Playwright, Test Mode on.
 
@@ -137,7 +161,13 @@ unsupplied templates shown as awaiting approval; a read-only user refused the
 audit log; skip link, landmarks and ARIA tab wiring; health and readiness
 endpoints; webhook signature rejection and the Adobe verification handshake.
 
-Two of them cover the work a reviewer actually does. Preparing an engagement
+Four of them cover the work a reviewer actually does. The Client Information tab
+must offer a labelled form — not a box asking for a raw token — save a value that
+survives a reload, refuse one that fails its own definition (with a value the
+browser's own email check lets through, so the server rule is what is tested),
+and show a fee as read-only because the pricing engine decides it.
+
+Preparing an engagement
 from the Overview tab must leave the balance-due day blocked, ask the question
 that unblocks it, recalculate when it is answered, and leave every service
 unconfirmed. And a generated PDF must be readable in place: the test puts a real
@@ -180,6 +210,17 @@ Each was fixed in the code, not the test:
    panel. Narrowed to `SAMEORIGIN` / `frame-ancestors 'self'` on that one route.
 8. An uncatalogued date fact rendered as "has Non Resident Beneficiary" —
    readable, but not a sentence anyone would write.
+9. Generation had no precedence rule for a token with several rows, so which
+   value reached the client depended on the order Postgres returned them — and a
+   resolved conflict was recorded but never applied to anything.
+10. `writeDocx` let JSZip invent folder entries stamped with the wall clock, so
+    two identical renders produced different bytes. A document hash was not the
+    identity the audit trail treats it as. Rendering twice in a row could not
+    catch it; both calls land in the same second.
+11. The audit trail's own redaction stripped any payload key matching `token`,
+    which is right for a credential and wrong for `corporation.legal_name` — so
+    field edits, conflict resolutions and date confirmations recorded *that*
+    something changed without recording *what*.
 
 ## What is not covered
 

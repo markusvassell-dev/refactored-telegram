@@ -74,6 +74,23 @@ async function normalizeOne(spec: TemplateSpec): Promise<Outcome> {
   await mkdir(NORMALIZED_DIR, { recursive: true });
   await writeFile(join(NORMALIZED_DIR, spec.sourceFileName), normalized);
 
+  // A reviewer recognises a field by the bracketed text it replaced in the
+  // approved letter, not by its internal token. The mapping already records
+  // that relationship, so record it on the field rather than asking anyone to
+  // keep a second list in step.
+  const placeholdersByToken = new Map<string, string[]>();
+  for (const mapping of spec.mappings) {
+    const seen = placeholdersByToken.get(mapping.token) ?? [];
+    if (!seen.includes(mapping.placeholder)) seen.push(mapping.placeholder);
+    placeholdersByToken.set(mapping.token, seen);
+  }
+
+  const fields = spec.fields.map((definition) => {
+    const placeholders = placeholdersByToken.get(definition.token);
+    if (definition.sourcePlaceholder || !placeholders?.length) return definition;
+    return { ...definition, sourcePlaceholder: placeholders.join(' / ') };
+  });
+
   const manifest: TemplateManifest = templateManifestSchema.parse({
     manifestVersion: 1,
     documentType: spec.documentType,
@@ -81,7 +98,7 @@ async function normalizeOne(spec: TemplateSpec): Promise<Outcome> {
     sourceFileName: spec.sourceFileName,
     sourceFileHash: sourceHash,
     normalizedFileHash: normalizedHash,
-    fields: spec.fields,
+    fields,
     conditionalSections: spec.conditionalSections,
     checkboxes: spec.checkboxes,
     signatureAnchors: spec.signatureAnchors,

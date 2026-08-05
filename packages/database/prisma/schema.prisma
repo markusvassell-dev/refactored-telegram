@@ -569,6 +569,16 @@ model TemplateFieldDefinition {
   helpText          String?
   displayGroup      String?
   displayOrder      Int      @default(0)
+  /// The bracketed text in the approved template this token replaced. Shown to
+  /// a reviewer so a field can be recognised against the printed letter.
+  sourcePlaceholder String?
+  /// Permitted values for an ENUM field. Empty for every other data type.
+  enumValues        String[]
+  maxLength         Int?
+  /// Required exactly when this conditional section is included, whatever
+  /// `isRequired` says. This is what makes the CSRS 4200 fields mandatory only
+  /// when compilation is selected.
+  requiredWhenSection String?
 
   templateVersion TemplateVersion @relation(fields: [templateVersionId], references: [id], onDelete: Cascade)
 

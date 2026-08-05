@@ -4,13 +4,14 @@
   "templateVersion": 1,
   "sourceFileName": "T2 Engagement Letter.docx",
   "sourceFileHash": "01917c9e61eab58dfb8cb67c0376e42203fe99424da10187cddae8c1b8433870",
-  "normalizedFileHash": "e17f3bde0a14d774dcbb2d97a7aedd48a077a0ecfc9f0b72c76151e6c3eaeaf9",
+  "normalizedFileHash": "4eaf53c868dd5bdef8be0cad90a1b87c1618f009fc9623e9b78f4b8bfad448cb",
   "fields": [
     {
       "token": "corporation.legal_name",
       "label": "Corporation legal name",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[LEGAL NAME OF CORPORATION]",
       "autoPopulatable": true,
       "displayGroup": "CLIENT",
       "displayOrder": 1
@@ -20,6 +21,7 @@
       "label": "Business Number / RC account number",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[BN / RC ACCOUNT NUMBER]",
       "autoPopulatable": true,
       "displayGroup": "CLIENT",
       "displayOrder": 2
@@ -29,6 +31,7 @@
       "label": "Taxation year-end",
       "dataType": "DATE",
       "required": true,
+      "sourcePlaceholder": "[MONTH DAY, YEAR] / [TAXATION YEAR-END] / [YEAR-END DATE]",
       "autoPopulatable": true,
       "displayGroup": "CLIENT",
       "displayOrder": 3
@@ -38,6 +41,7 @@
       "label": "Authorized signing officer",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[AUTHORIZED SIGNING OFFICER] / [NAME]",
       "autoPopulatable": true,
       "displayGroup": "SIGNERS",
       "displayOrder": 1
@@ -47,6 +51,7 @@
       "label": "Signing officer title",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[TITLE]",
       "autoPopulatable": true,
       "displayGroup": "SIGNERS",
       "displayOrder": 2
@@ -56,6 +61,7 @@
       "label": "Signing officer email address",
       "dataType": "EMAIL",
       "required": true,
+      "sourcePlaceholder": "[EMAIL ADDRESS]",
       "autoPopulatable": true,
       "displayGroup": "SIGNERS",
       "displayOrder": 3
@@ -65,6 +71,7 @@
       "label": "Engagement partner / authorized representative",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[ENGAGEMENT PARTNER / AUTHORIZED REPRESENTATIVE]",
       "autoPopulatable": true,
       "displayGroup": "FIRM",
       "displayOrder": 1
@@ -74,6 +81,7 @@
       "label": "Engagement lead and contact information",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[NAME AND CONTACT INFORMATION]",
       "autoPopulatable": true,
       "displayGroup": "FIRM",
       "displayOrder": 2
@@ -83,6 +91,7 @@
       "label": "Date sent",
       "dataType": "DATE",
       "required": true,
+      "sourcePlaceholder": "[DATE]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 1
@@ -92,6 +101,7 @@
       "label": "Client information due date",
       "dataType": "DATE",
       "required": true,
+      "sourcePlaceholder": "[CLIENT INFORMATION DUE DATE] / [DATE]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 2
@@ -101,6 +111,7 @@
       "label": "Target completion date",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[DATE OR “SUBJECT TO COMPLETE INFORMATION”]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 3
@@ -110,6 +121,7 @@
       "label": "Filing due date",
       "dataType": "DATE",
       "required": true,
+      "sourcePlaceholder": "[DATE]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 4
@@ -119,6 +131,7 @@
       "label": "Estimated balance-due day",
       "dataType": "DATE",
       "required": true,
+      "sourcePlaceholder": "[DATE – CONFIRM ELIGIBILITY FOR 2- OR 3-MONTH RULE]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 5
@@ -128,6 +141,7 @@
       "label": "T2 preparation fee",
       "dataType": "MONEY",
       "required": true,
+      "sourcePlaceholder": "[AMOUNT]",
       "autoPopulatable": true,
       "displayGroup": "PRICING",
       "displayOrder": 1
@@ -137,6 +151,7 @@
       "label": "CSRS 4200 compilation fee",
       "dataType": "MONEY",
       "required": false,
+      "sourcePlaceholder": "[AMOUNT / NOT APPLICABLE]",
       "autoPopulatable": true,
       "displayGroup": "PRICING",
       "displayOrder": 2,
@@ -147,6 +162,7 @@
       "label": "Billing basis",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[FIXED FEE / HOURLY / VALUE-BASED]",
       "autoPopulatable": true,
       "displayGroup": "PRICING",
       "displayOrder": 3
@@ -156,6 +172,7 @@
       "label": "Retainer",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[AMOUNT / NOT APPLICABLE]",
       "autoPopulatable": true,
       "displayGroup": "PRICING",
       "displayOrder": 4
@@ -165,6 +182,7 @@
       "label": "Payment terms (letter body)",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[PAYMENT TERMS, E.G., UPON RECEIPT / 15 DAYS]",
       "autoPopulatable": true,
       "displayGroup": "PRICING",
       "displayOrder": 5
@@ -174,6 +192,7 @@
       "label": "Payment terms (Schedule A)",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[TERMS]",
       "autoPopulatable": true,
       "displayGroup": "PRICING",
       "displayOrder": 6
@@ -183,6 +202,7 @@
       "label": "Additional-work rates or separate quote",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[HOURLY RATES OR SEPARATE QUOTE]",
       "autoPopulatable": true,
       "displayGroup": "PRICING",
       "displayOrder": 7
@@ -192,6 +212,7 @@
       "label": "Intended use",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[E.G., CORPORATE TAX FILING, INTERNAL MANAGEMENT, SPECIFIED LENDER]",
       "autoPopulatable": true,
       "displayGroup": "SERVICES",
       "displayOrder": 10,
@@ -202,6 +223,7 @@
       "label": "Intended users",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[MANAGEMENT AND IDENTIFIED THIRD PARTIES]",
       "autoPopulatable": true,
       "displayGroup": "SERVICES",
       "displayOrder": 11,
@@ -212,6 +234,7 @@
       "label": "Basis of accounting",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[E.G., CASH BASIS WITH SELECTED ACCRUALS AND ACCOUNTING ESTIMATES]",
       "autoPopulatable": true,
       "displayGroup": "SERVICES",
       "displayOrder": 12,
@@ -222,6 +245,7 @@
       "label": "Other financial information included",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[OTHER]",
       "autoPopulatable": true,
       "displayGroup": "SERVICES",
       "displayOrder": 13
@@ -231,6 +255,7 @@
       "label": "Report delivery method",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[ELECTRONIC / PRINTED / CLIENT PORTAL]",
       "autoPopulatable": true,
       "displayGroup": "SERVICES",
       "displayOrder": 14,
@@ -241,6 +266,7 @@
       "label": "Expected compilation report date",
       "dataType": "DATE",
       "required": false,
+      "sourcePlaceholder": "[REPORT DATE]",
       "autoPopulatable": true,
       "displayGroup": "DATES",
       "displayOrder": 6,
@@ -251,6 +277,7 @@
       "label": "Other included service",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[OTHER INCLUDED SERVICE]",
       "autoPopulatable": true,
       "displayGroup": "SERVICES",
       "displayOrder": 5
@@ -260,6 +287,7 @@
       "label": "Other optional service",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[OTHER]",
       "autoPopulatable": true,
       "displayGroup": "SERVICES",
       "displayOrder": 20
@@ -269,6 +297,7 @@
       "label": "Special terms or assumptions",
       "dataType": "STRING",
       "required": true,
+      "sourcePlaceholder": "[LIST ANY SPECIFIC EXCLUSIONS, ASSUMPTIONS, LIABILITY CAP, OR SPECIAL DELIVERABLES]",
       "autoPopulatable": true,
       "displayGroup": "OTHER",
       "displayOrder": 1
@@ -278,6 +307,7 @@
       "label": "Special terms — second line",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[IF NONE, STATE “NONE”]",
       "autoPopulatable": true,
       "displayGroup": "OTHER",
       "displayOrder": 2
@@ -287,6 +317,7 @@
       "label": "Signature date (never prefilled)",
       "dataType": "STRING",
       "required": false,
+      "sourcePlaceholder": "[DATE]",
       "autoPopulatable": false,
       "displayGroup": "SIGNERS",
       "displayOrder": 10

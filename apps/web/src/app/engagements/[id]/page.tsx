@@ -1,6 +1,6 @@
 import { notFound } from 'next/navigation';
 import { dateFactQuestion, dateRuleDefinitionSchema } from '@element/dates';
-import { FACT_TOKEN_PREFIX } from '@element/services';
+import { FACT_TOKEN_PREFIX, type FieldForm } from '@element/services';
 import { formatMoney } from '@element/shared';
 import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
@@ -105,6 +105,18 @@ export default async function EngagementDetailPage({ params }: { params: Promise
     answer: factAnswers.get(key) ?? null,
   }));
 
+  // The editable form, built from the approved template's own field
+  // definitions rather than from a hand-maintained list in the UI.
+  // A broken manifest must not take the whole review workspace down with it —
+  // the reviewer still needs the conflicts, approvals and audit trail.
+  const fieldForm: FieldForm = await container.fields.formFor(id).catch(() => ({
+    templateVersionId: null,
+    documentType: documentTypeFor(engagement.engagementType),
+    groups: [],
+    outstandingRequired: [],
+    totalRequired: 0,
+  }));
+
   const primaryFee = engagement.feeCalculations.find((fee) => fee.feeKind !== 'CSRS_4200_COMPILATION');
 
   return (
@@ -139,6 +151,7 @@ export default async function EngagementDetailPage({ params }: { params: Promise
         templateVersion={JSON.parse(JSON.stringify(templateVersion))}
         documentLinks={documentLinks}
         dateFacts={dateFacts}
+        fieldForm={fieldForm}
         generationGate={gate}
       />
     </>

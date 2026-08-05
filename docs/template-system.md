@@ -26,7 +26,14 @@ read-only, with their SHA-256 hashes recorded in the manifest and on the
 | T3 Trust Engagement Letter.docx | `cfef8b783476fbc31089a8d6132ef4025f3214187af37be98ee257724851f639` |
 | Compilation Engagement Cover Letter.docx | `c42fc450956acd2a13a68892789cb23bacdc99c01fd990b340b529febbcdb26c` |
 
-`pnpm templates:verify` re-checks them.
+`pnpm templates:verify` re-checks them, and the normalised copies too.
+
+Normalisation is reproducible: running it twice on the same source produces
+byte-identical output, so a normalised hash is a real identity rather than a
+record of when the command last ran. That holds because every archive entry is
+written with a fixed timestamp and no folder entries — JSZip stamps folder
+entries it invents with the wall clock, which silently made two identical
+renders differ.
 
 ## Normalisation
 
@@ -37,6 +44,10 @@ only those — into stable internal tokens:
 ```
 [LEGAL NAME OF CORPORATION]  →  [[corporation.legal_name]]
 ```
+
+The mapping is also what gives each field its `sourcePlaceholder`, so the review
+form can tell a reviewer which bracketed text in the printed letter a field
+fills — rather than showing them an internal token.
 
 It writes `templates/normalized/<name>.docx` and
 `templates/manifests/<DOCUMENT_TYPE>.json`. The source is opened read-only.

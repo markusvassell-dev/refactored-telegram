@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import {
+  AppError,
   PreconditionError,
   ValidationError,
   generationIdempotencyKey,
@@ -34,8 +35,11 @@ async function run(action: () => Promise<string>): Promise<ActionResult> {
     const message = await action();
     return { ok: true, message };
   } catch (error) {
+    // Any error may carry the specific reasons a reviewer can act on — a
+    // blocked precondition and a field that failed validation are both things
+    // to list rather than summarise.
     const blockers =
-      error instanceof PreconditionError && Array.isArray(error.context.blockers)
+      error instanceof AppError && Array.isArray(error.context.blockers)
         ? (error.context.blockers as string[])
         : undefined;
     return { ok: false, message: toUserMessage(error), ...(blockers ? { blockers } : {}) };
@@ -145,52 +149,50 @@ export async function confirmCompilationSelection(formData: FormData): Promise<A
   });
 }
 
-export async function updateStructuredField(formData: FormData): Promise<ActionResult> {
+/** Field inputs are namespaced so they cannot collide with the form's own controls. */
+const FIELD_INPUT_PREFIX = 'field:';
+
+/**
+ * Saves one group of the structured field form.
+ *
+ * The form is built from the approved template's field definitions, so the
+ * submitted names are tokens that template really declares. Every value is
+ * validated against its own definition; a value that fails is reported and not
+ * stored, because a plausible-looking wrong value in a legal document is worse
+ * than an empty one.
+ */
+export async function saveFieldGroup(formData: FormData): Promise<ActionResult> {
   return run(async () => {
     const actor = await requirePermission('field:edit_structured');
     await assertCsrf(formData.get('csrf')?.toString());
 
     const engagementId = formData.get('engagementId')?.toString();
-    const token = formData.get('token')?.toString();
-    const value = formData.get('value')?.toString() ?? '';
-    if (!engagementId || !token) throw new ValidationError('A field and value are required.');
+    if (!engagementId) throw new ValidationError('An engagement is required.');
 
-    const existing = await container.prisma.extractedField.findFirst({
-      where: { engagementId, coverLetterPackageId: null, token, source: 'MANUAL_ENTRY' },
-    });
-
-    if (existing) {
-      await container.prisma.extractedField.update({
-        where: { id: existing.id },
-        data: { value, manuallyConfirmed: true, confirmedByUserId: actor.id, confirmedAt: new Date() },
-      });
-    } else {
-      await container.prisma.extractedField.create({
-        data: {
-          engagementId,
-          token,
-          value,
-          source: 'MANUAL_ENTRY',
-          extractionMethod: 'MANUAL_ENTRY',
-          confidence: 1,
-          manuallyConfirmed: true,
-          confirmedByUserId: actor.id,
-          confirmedAt: new Date(),
-        },
-      });
+    const values: Record<string, string> = {};
+    for (const [name, value] of formData.entries()) {
+      if (!name.startsWith(FIELD_INPUT_PREFIX) || typeof value !== 'string') continue;
+      values[name.slice(FIELD_INPUT_PREFIX.length)] = value;
     }
 
-    await container.audit.record({
-      eventType: 'FIELD_EDITED',
-      objectType: 'ExtractedField',
-      objectId: `${engagementId}:${token}`,
-      engagementId,
-      userId: actor.id,
-      afterValue: { token },
-    });
+    if (Object.keys(values).length === 0) throw new ValidationError('There was nothing to save.');
+
+    const result = await container.fields.save({ engagementId, actorId: actor.id, values });
 
     revalidatePath(`/engagements/${engagementId}`);
-    return 'Saved.';
+
+    if (result.errors.length > 0) {
+      throw new ValidationError(
+        `${result.errors.length} value(s) were not saved.`,
+        { blockers: result.errors.map((error) => error.message) },
+      );
+    }
+
+    const changed = result.saved.length + result.cleared.length;
+    if (changed === 0) return 'No changes to save.';
+
+    const cleared = result.cleared.length > 0 ? `, ${result.cleared.length} cleared` : '';
+    return `Saved ${result.saved.length} value(s)${cleared}.`;
   });
 }
 
@@ -223,7 +225,7 @@ export async function resolveConflict(formData: FormData): Promise<ActionResult>
       objectId: conflictId,
       engagementId: conflict.engagementId,
       userId: actor.id,
-      afterValue: { token: conflict.token, chosenValue, chosenSource },
+      afterValue: { templateField: conflict.token, chosenValue, chosenSource },
     });
 
     revalidatePath(`/engagements/${conflict.engagementId}`);
@@ -257,7 +259,7 @@ export async function confirmDate(formData: FormData): Promise<ActionResult> {
       objectId: calculatedDateId,
       engagementId: record.engagementId,
       userId: actor.id,
-      afterValue: { token: record.token, result: record.result?.toISOString() ?? null, ruleCode: record.ruleCode },
+      afterValue: { templateField: record.token, result: record.result?.toISOString() ?? null, ruleCode: record.ruleCode },
     });
 
     revalidatePath(`/engagements/${record.engagementId}`);

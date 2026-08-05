@@ -14,6 +14,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { sha256Hex, type DocumentType, type Role } from '@element/shared';
 import { DEFAULT_DATE_RULES } from '@element/dates';
+import { parseManifest } from '@element/documents';
 import { AWAITING_APPROVED_TEMPLATE, PRODUCTION_SUPPORTED_DOCUMENT_TYPES } from '@element/shared';
 import { prisma } from './client.js';
 
@@ -41,13 +42,9 @@ async function seedTemplates(): Promise<void> {
   }
 
   for (const fileName of manifestFiles) {
-    const manifest = JSON.parse(await readFile(join(MANIFEST_DIR, fileName), 'utf8')) as {
-      documentType: DocumentType;
-      sourceFileName: string;
-      sourceFileHash: string;
-      normalizedFileHash?: string;
-      fields: { token: string; label: string; dataType: string; required: boolean; autoPopulatable: boolean; displayGroup: string; displayOrder: number; helpText?: string }[];
-    };
+    // Parsed against the real schema rather than a hand-written structural
+    // type: a manifest property added later must not be silently dropped here.
+    const manifest = parseManifest(JSON.parse(await readFile(join(MANIFEST_DIR, fileName), 'utf8')));
 
     const normalizedPath = join(NORMALIZED_DIR, manifest.sourceFileName);
     const normalizedHash = await readFile(normalizedPath)
@@ -92,6 +89,9 @@ async function seedTemplates(): Promise<void> {
       },
     });
 
+    // The field definitions are the projection of the manifest the review UI
+    // reads. Everything the UI needs to render a correct input is written here
+    // so it never has to re-parse the manifest JSON.
     await prisma.templateFieldDefinition.createMany({
       data: manifest.fields.map((field) => ({
         templateVersionId: version.id,
@@ -104,6 +104,10 @@ async function seedTemplates(): Promise<void> {
         helpText: field.helpText ?? null,
         displayGroup: field.displayGroup,
         displayOrder: field.displayOrder,
+        sourcePlaceholder: field.sourcePlaceholder ?? null,
+        enumValues: field.enumValues ?? [],
+        maxLength: field.maxLength ?? null,
+        requiredWhenSection: field.requiredWhenSection ?? null,
       })),
       skipDuplicates: true,
     });

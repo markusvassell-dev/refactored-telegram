@@ -162,30 +162,28 @@ live directory. Browser tests use the development login.
 bulk rollout service or the seed. There is no form for starting one by hand, so
 a pilot depends on one of those three paths.
 
-**Structured field editing asks for the raw token.** The Client Information tab
-edits any field, but the reviewer types `corporation.legal_name` rather than
-picking from a list. `TemplateFieldDefinition` — label, help text, data type,
-required-when rules — is written at template publication and not yet read by
-the editor.
+**`sourcePlaceholder` needs a new template version to appear.** The bracketed
+text a token replaced is derived during normalisation and written into the
+manifest. A published template version is immutable, and rightly so, which means
+a deployment seeded before this change shows the placeholder only once a new
+version is published. The other three field properties are backfilled from the
+stored manifest by migration and need nothing.
 
 ## Next implementation step
 
-**A field editor driven by the template definitions.** Every field in the
-active template is already recorded with its label, help text, data type,
-whether it may be auto-populated and when it is required. The Client
-Information tab ignores all of it and offers a free-text token box instead,
-which makes a typo indistinguishable from a real value and gives the reviewer
-no list of what is still outstanding.
+**The bulk rollout selection form.** `BulkRolloutService.run` is complete,
+idempotent, and never sends to Adobe Sign; the preview already resolves the
+price rule per engagement, computes both fees and reports missing fields,
+warnings and blockers per row. The checkboxes render. Submitting them is not
+wired to anything.
 
-The work is to read `TemplateFieldDefinition` for the engagement's active
-template version and render a real form from it: grouped by section, labelled,
-typed, marked required where `requiredFieldTokens` says so, showing the current
-value with its source, confidence and evidence beside each input. The service
-layer, the audit trail and the validation gate all already exist.
+The work is a server action that takes the selected engagement ids, calls
+`BulkRolloutService.run`, and reports what was queued and what was skipped and
+why — plus a confirmation step, because a rollout is the one action in this
+application that touches many clients at once.
 
-It is the highest-value remaining gap because it is where a reviewer spends
-most of their time, and the only place where a mistyped token silently produces
-nothing at all.
+It is the highest-value remaining gap because the annual rollout is the reason
+the application exists, and it is currently a one-engagement-at-a-time tool.
 
-After that, in order: the bulk rollout selection form, an engagement-creation
-form, the administration write UI, and the cover-letter narrative editor.
+After that, in order: an engagement-creation form, the administration write UI,
+and the cover-letter narrative editor.

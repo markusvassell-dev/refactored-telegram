@@ -305,6 +305,69 @@ test.describe('preparing an engagement', () => {
   });
 });
 
+test.describe('filling in the structured fields', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  test.beforeAll(async ({}, worker) => {
+    const environment = environmentFor(worker);
+    const id = await firstEngagementId(environment);
+    if (id) await resetPreparation(environment, id);
+  });
+
+  test('offers a labelled form built from the template, and refuses a value that is not valid', async ({ page }) => {
+    await signIn(page, /Preparer/);
+    await page.goto('/engagements');
+
+    const firstEngagement = page.getByRole('table').getByRole('link').first();
+    if ((await firstEngagement.count()) === 0) test.skip(true, 'No engagements are seeded in this environment.');
+    await firstEngagement.click();
+
+    await page.getByRole('tab', { name: 'Client Information' }).click();
+    const panel = page.getByRole('tabpanel');
+
+    // Labelled and grouped, not a box asking for a raw token.
+    await expect(panel.getByRole('heading', { name: 'Client', exact: true })).toBeVisible();
+    await expect(panel.getByText(/required field\(s\) have no value yet/)).toBeVisible();
+
+    const legalName = panel.getByLabel('Corporation legal name');
+    await expect(legalName).toBeVisible();
+    // The bracketed text from the approved letter, so the field is recognisable.
+    await expect(panel.getByText('Fills [LEGAL NAME OF CORPORATION] in the approved letter.')).toBeVisible();
+
+    await legalName.fill('Northwind Sample Holdings Ltd.');
+    await panel.getByRole('button', { name: 'Save client' }).click();
+    await expect(page.getByText(/Saved 1 value/)).toBeVisible();
+
+    // Reloading proves it was stored rather than only shown.
+    await page.reload();
+    await page.getByRole('tab', { name: 'Client Information' }).click();
+    await expect(page.getByLabel('Corporation legal name')).toHaveValue('Northwind Sample Holdings Ltd.');
+
+    // A value that fails its own definition is reported, not stored. This one
+    // gets past the browser's own email check, so it exercises the server rule
+    // rather than the input type.
+    const signers = page.getByRole('tabpanel');
+    await signers.getByLabel('Signing officer email address').fill('officer@example');
+    await signers.getByRole('button', { name: 'Save signers' }).click();
+    await expect(page.getByText(/must be an email address/)).toBeVisible();
+  });
+
+  test('shows a fee as read-only, because the pricing engine decides it', async ({ page }) => {
+    await signIn(page, /Preparer/);
+    await page.goto('/engagements');
+
+    const firstEngagement = page.getByRole('table').getByRole('link').first();
+    if ((await firstEngagement.count()) === 0) test.skip(true, 'No engagements are seeded in this environment.');
+    await firstEngagement.click();
+
+    await page.getByRole('tab', { name: 'Client Information' }).click();
+    const fee = page.getByRole('tabpanel').getByLabel('T2 preparation fee');
+
+    await expect(fee).toHaveAttribute('readonly', '');
+    await expect(page.getByRole('tabpanel').getByText(/Set by the pricing engine/).first()).toBeVisible();
+  });
+});
+
 test.describe('reading the document under review', () => {
   // Skipped against an external server, where this process cannot put a file
   // where that server would look for it.

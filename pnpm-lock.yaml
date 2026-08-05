@@ -158,6 +158,12 @@ importers:
 
   packages/database:
     dependencies:
+      '@element/dates':
+        specifier: workspace:*
+        version: link:../dates
+      '@element/documents':
+        specifier: workspace:*
+        version: link:../documents
       '@element/shared':
         specifier: workspace:*
         version: link:../shared

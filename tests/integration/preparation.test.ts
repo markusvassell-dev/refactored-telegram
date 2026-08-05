@@ -217,6 +217,45 @@ describe('reconciling disagreeing sources', () => {
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0]?.status).toBe('RESOLVED');
   });
+
+  it('asks again when a source changes after the decision was made', async () => {
+    const engagement = await newT2();
+    const priorYear = await priorYearField(engagement.id, 'corporation.legal_name', 'Last Year Name Ltd.');
+
+    await prepare(engagement.id);
+    await prisma.fieldConflict.updateMany({
+      where: { engagementId: engagement.id, token: 'corporation.legal_name' },
+      data: {
+        status: 'RESOLVED',
+        resolvedValue: 'Last Year Name Ltd.',
+        resolvedSource: 'PRIOR_YEAR_DOCUMENT',
+        resolvedAt: new Date(),
+      },
+    });
+
+    // Re-running changes nothing while the values are the ones decided about.
+    await prepare(engagement.id);
+    expect(
+      (await prisma.fieldConflict.findFirstOrThrow({
+        where: { engagementId: engagement.id, token: 'corporation.legal_name' },
+      })).status,
+    ).toBe('RESOLVED');
+
+    // A source then changes: the decision no longer covers what is on the table.
+    await prisma.extractedField.update({
+      where: { id: priorYear.id },
+      data: { value: 'A Different Name Entirely Ltd.' },
+    });
+
+    const result = await prepare(engagement.id);
+    expect(result.conflictsRaised).toBe(1);
+
+    const reopened = await prisma.fieldConflict.findFirstOrThrow({
+      where: { engagementId: engagement.id, token: 'corporation.legal_name' },
+    });
+    expect(reopened.status).toBe('UNRESOLVED');
+    expect(JSON.stringify(reopened.candidates)).toContain('A Different Name Entirely Ltd.');
+  });
 });
 
 describe('calculating fees from the prior-year letter', () => {

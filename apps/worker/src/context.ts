@@ -5,6 +5,7 @@ import {
   ApprovalService,
   CoverLetterService,
   DocumentStore,
+  FieldFormService,
   GenerationService,
   JobQueue,
   KarbonNotificationService,
@@ -38,6 +39,7 @@ export interface WorkerContext {
   workflow: WorkflowService;
   pricing: PricingService;
   preparation: PreparationService;
+  fields: FieldFormService;
   generation: GenerationService;
   approvals: ApprovalService;
   signing: SigningService;
@@ -71,6 +73,7 @@ export function buildWorkerContext(): WorkerContext {
   const workflow = new WorkflowService(prisma, audit);
   const pricing = new PricingService(prisma, audit);
   const preparation = new PreparationService({ prisma, audit, pricing, logger });
+  const fields = new FieldFormService({ prisma, audit });
 
   const templateDirectory = resolve(process.cwd(), 'templates', 'normalized');
 
@@ -120,6 +123,7 @@ export function buildWorkerContext(): WorkerContext {
     workflow,
     pricing,
     preparation,
+    fields,
     generation,
     approvals,
     signing,

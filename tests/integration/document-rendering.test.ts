@@ -8,6 +8,7 @@ import {
   findPriorYearCustomWording,
   diffParagraphs,
   isPdf,
+  listDocxEntries,
   mediaParts,
   parseManifest,
   readDocx,
@@ -216,6 +217,28 @@ describe('T2 engagement letter rendering', () => {
 
     // Byte-identical output means a file hash is a meaningful identity.
     expect(first.docx.equals(second.docx)).toBe(true);
+  });
+
+  it('carries no wall-clock timestamp, so two renders minutes apart still match', async () => {
+    // Rendering twice in a row cannot catch a clock read: both calls land in
+    // the same second. JSZip used to invent folder entries stamped with the
+    // current time, which made a document hash change on its own. Assert on the
+    // archive itself rather than on a repeated call.
+    const rendered = await renderDocx(template.docx, {
+      manifest: template.manifest,
+      values: T2_VALUES,
+      selections: T2_SELECTIONS,
+      includedSections: [],
+      mode: 'DRAFT' as const,
+    });
+
+    const entries = await listDocxEntries(rendered.docx);
+
+    expect(entries.length).toBeGreaterThan(0);
+    expect(entries.filter((entry) => entry.isDirectory)).toHaveLength(0);
+    for (const entry of entries) {
+      expect(entry.date.toISOString()).toBe('2020-01-01T00:00:00.000Z');
+    }
   });
 
   it('writes Adobe Sign text tags only when sending for signature', async () => {
