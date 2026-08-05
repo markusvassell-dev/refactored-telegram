@@ -3,8 +3,8 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (368 tests)
-pnpm test:unit          # 200 — no external dependencies
+pnpm test               # unit + integration  (377 tests)
+pnpm test:unit          # 209 — no external dependencies
 pnpm test:integration   # 168 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 27  — needs a browser
 pnpm build              # production build
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (200)
+## Unit tests (209)
 
 No database, no filesystem, no network.
 
@@ -55,6 +55,15 @@ machine exactly; all five gates.
 **Permissions (21)** — each role's boundaries; that an **administrator cannot
 approve or send** client-facing documents; separation of duties; idempotency
 key determinism and sensitivity; source fingerprint stability.
+
+**Queue polling failure (9)** — the worker backs off geometrically and settles
+at a minute rather than growing without bound, and never returns a delay a sleep
+cannot use however absurd the failure count, because sleeping forever is how a
+worker stops being a worker with nothing reporting it. A missing table is
+reported as "the web service has not migrated yet" rather than
+`relation "background_job" does not exist`, an unreachable database is
+distinguished from a missing schema because the fix differs, and an
+unrecognised failure says nothing rather than guessing.
 
 **Deployment configuration (29)** — the properties that decide whether a
 misconfigured deployment is legible or opaque. The image exposes exactly one
@@ -392,6 +401,17 @@ Each was fixed in the code, not the test:
     different faults with different fixes — an empty value means a platform
     reference that did not resolve, and telling someone to add a variable they
     can plainly see is already there sends them in a circle.
+27. The worker wrote the same Prisma error every two seconds, indefinitely,
+    whenever the queue was unreachable — which on a first deployment is every
+    deployment, until the web service finishes migrating. Hundreds of identical
+    lines buried the one that mattered, and log ingestion is not free. It now
+    backs off to a minute, says the reason once with what to do about it, and
+    reports recovery.
+28. "Invalid URL" was true and useless. `APP_BASE_URL` set to `https://` — a
+    scheme with no host — means a platform variable resolved to nothing, and the
+    fix is to create the thing it points at, not to correct the variable. A
+    placeholder value was worse still: valid, accepted, and silently wrong until
+    someone tried to sign in.
 
 ## What is not covered
 

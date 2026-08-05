@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import type { JobType } from '@element/services';
 import { buildWorkerContext } from './context.js';
 import { buildHandlers } from './handlers.js';
+import { backoffDelay, diagnosePollingFailure, REPEAT_FAILURE_LOG_AFTER_MS } from './polling-failure.js';
 
 /**
  * Worker entry point.
@@ -97,9 +98,17 @@ async function runOne(): Promise<boolean> {
   return true;
 }
 
+/**
+ * Back off geometrically when the queue cannot be reached, say the reason once,
+ * repeat it at most every five minutes while it persists, and say so again when
+ * it recovers. See polling-failure.ts for why.
+ */
 async function loop(): Promise<void> {
   const concurrency = context.env.WORKER_CONCURRENCY;
   const idleDelay = context.env.WORKER_POLL_INTERVAL_MS;
+
+  let consecutiveFailures = 0;
+  let lastFailureLoggedAt = 0;
 
   while (running) {
     if (inFlight >= concurrency) {
@@ -107,14 +116,40 @@ async function loop(): Promise<void> {
       continue;
     }
 
+    let failed = false;
+
     const claimed = await runOne().catch((error: unknown) => {
-      logger.error('Queue polling failed', {
-        message: error instanceof Error ? error.message : String(error),
-      });
+      failed = true;
+      consecutiveFailures += 1;
+
+      const now = Date.now();
+      const isFirst = consecutiveFailures === 1;
+      if (isFirst || now - lastFailureLoggedAt >= REPEAT_FAILURE_LOG_AFTER_MS) {
+        lastFailureLoggedAt = now;
+        logger.error('Queue polling failed', {
+          message: error instanceof Error ? error.message : String(error),
+          consecutiveFailures,
+          diagnosis: diagnosePollingFailure(error) ?? undefined,
+          // Said once, so nobody reads the silence that follows as the problem
+          // having gone away.
+          note: isFirst ? 'Backing off; this will be repeated at most every five minutes while it persists.' : undefined,
+        });
+      }
+
       return false;
     });
 
-    if (!claimed) await sleep(idleDelay);
+    if (!failed && consecutiveFailures > 0) {
+      logger.info('Queue polling recovered', { afterFailures: consecutiveFailures });
+      consecutiveFailures = 0;
+      lastFailureLoggedAt = 0;
+    }
+
+    if (failed) {
+      await sleep(backoffDelay(idleDelay, consecutiveFailures));
+    } else if (!claimed) {
+      await sleep(idleDelay);
+    }
   }
 }
 
