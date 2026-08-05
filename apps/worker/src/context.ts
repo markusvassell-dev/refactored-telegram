@@ -4,6 +4,7 @@ import { libreOfficeConverter, type PdfConverter } from '@element/documents';
 import {
   ApprovalService,
   CoverLetterService,
+  DateRuleService,
   DocumentStore,
   EngagementService,
   FieldFormService,
@@ -42,6 +43,7 @@ export interface WorkerContext {
   pricing: PricingService;
   preparation: PreparationService;
   fields: FieldFormService;
+  dateRules: DateRuleService;
   engagements: EngagementService;
   sourceDocuments: SourceDocumentService;
   generation: GenerationService;
@@ -78,6 +80,7 @@ export function buildWorkerContext(): WorkerContext {
   const pricing = new PricingService(prisma, audit);
   const preparation = new PreparationService({ prisma, audit, pricing, logger });
   const fields = new FieldFormService({ prisma, audit });
+  const dateRules = new DateRuleService({ prisma, audit });
   const engagements = new EngagementService({ prisma, audit });
 
   const templateDirectory = resolve(process.cwd(), 'templates', 'normalized');
@@ -131,6 +134,7 @@ export function buildWorkerContext(): WorkerContext {
     preparation,
     fields,
     engagements,
+    dateRules,
     sourceDocuments,
     generation,
     approvals,

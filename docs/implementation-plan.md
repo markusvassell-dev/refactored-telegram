@@ -64,6 +64,25 @@ document. Confirmation requires the contents to actually support it: another
 client's letter raises no disqualifier — it simply matches almost nothing — and
 is stored unconfirmed rather than accepted because someone picked it.
 
+### Editing a date rule
+
+Date rules encode the firm's interpretation of statutory deadlines and were
+always meant to be editable. `/date-rules/<code>` edits one against a live
+preview computed by `evaluateDateRule` — the same function the worker calls — so
+what an administrator sees before saving cannot disagree with what the
+application will then produce.
+
+A change needs the administrator role and a written reason, and the whole
+definition is recorded on both sides so a previous interpretation can be
+reconstructed. Before the change, the page states what it will and will not
+affect: unconfirmed dates are recalculated the next time their engagement is
+prepared; dates a reviewer already confirmed are left exactly as they are.
+
+Which facts a rule depends on, and the conditions its branches test, are not
+editable. A fact needs a question a reviewer can answer, and those live in the
+catalogue in code — a free-text fact name would create a deadline that could
+never be unblocked. The steps and the wording of every branch are editable.
+
 ### Starting an engagement
 
 Until now an engagement existed only because the seed made one: the Karbon sync
@@ -169,10 +188,10 @@ Stated plainly.
 against a live tenant from this codebase. Both are implemented against
 published documentation and clearly reported as `unverified`.
 
-**Administration screens are read-only.** Templates, Pricing Rules, Date Rules
-and Users show live data but have no create or edit forms. The services behind
-them exist and are tested; the write UI does not. Changes are made through the
-database or the seed today.
+**Most administration screens are read-only.** Date Rules is now editable;
+Templates, Pricing Rules and Users show live data but have no create or edit
+forms. The services behind them exist and are tested; the write UI does not.
+Changes to those three are made through the database or the seed today.
 
 **Cover-letter editing is partial.** Extracted values, evidence, enclosures,
 approval and staleness all work. The in-place editor for cover-letter narrative
@@ -203,16 +222,19 @@ stored manifest by migration and need nothing.
 
 ## Next implementation step
 
-**The administration write UI.** Templates, Pricing Rules, Date Rules and Users
-are read-only views over live data. Every service behind them is complete and
-tested — `FeeRule` resolution across five levels, the date-rule engine with its
-facts and assumptions, role assignment with separation of duties — but changing
-any of it means editing the database or the seed.
+**The pricing-rule editor.** `FeeRule` resolution across its five levels —
+global, engagement type, client group, client, partner — is complete and covered
+by 29 unit tests, and every calculated fee already records which rule produced
+it. But the rule itself can only be changed in the database, which means the one
+number a partner is most likely to want to change each year, the annual increase
+percentage, is the one they cannot touch.
 
-The date rules matter most of the four. They encode the firm's interpretation of
-statutory deadlines, they are explicitly meant to be editable, and every
-calculated date already records which rule produced it. A partner who disagrees
-with an assumption currently cannot change it.
+It follows the same shape as the date-rule editor: a live preview showing what a
+given prior-year fee becomes under the edited rule (including the round-up to
+the next $5), a written reason, the whole rule recorded before and after, and a
+count of the fees it would affect. Unlike a date, a fee that has been approved
+must be left alone as well as one that is merely calculated — `FeeCalculation`
+already records `approvedAt`.
 
 After that: the cover-letter narrative editor, and pagination on the engagement
 and audit lists, which are capped at 200 and 100 rows with no way to see past

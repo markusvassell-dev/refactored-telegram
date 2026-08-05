@@ -3,10 +3,10 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (302 tests)
+pnpm test               # unit + integration  (314 tests)
 pnpm test:unit          # 171 — no external dependencies
-pnpm test:integration   # 131 — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 23  — needs a browser
+pnpm test:integration   # 143 — needs Postgres and LibreOffice Writer
+pnpm test:e2e           # 25  — needs a browser
 pnpm build              # production build
 ```
 
@@ -102,7 +102,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (131)
+## Integration tests (143)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -146,6 +146,18 @@ for "yes"; a confirmed date never rewritten; last year's ticks carried forward
 as `priorYearSelected` with `confirmed` still false; three consecutive runs
 producing exactly the same row counts; and a resolved conflict re-opened once a
 source changes, because a decision only covers the values it was made about.
+
+**Editing a date rule (12)** — a date rule is the firm's interpretation of a
+statutory deadline, so these are about restraint and traceability. A change
+carries a written reason and records the whole definition on both sides, so a
+previous interpretation can be reconstructed. A definition that does not parse
+is refused with what is wrong and the stored rule is left untouched; so is a
+rule with no steps, which would return its own starting date. The saved rule is
+then re-evaluated to confirm it really produces the new deadline. A stored
+definition that has gone bad is reported rather than silently producing nothing.
+And the impact is counted before the change: unconfirmed dates will be
+recalculated, dates a reviewer already confirmed are left exactly as they were —
+asserted by reading the row back after an edit.
 
 **Attaching a source document (10)** — an uploaded file goes through the same
 checks as one Karbon located: bytes that are not the type they claim to be are
@@ -192,7 +204,7 @@ text, records the edit without copying the value into the audit trail, reports
 an unchanged value instead of rewriting it, and treats an emptied box as
 clearing the value rather than storing `""`.
 
-## Browser tests (23)
+## Browser tests (25)
 
 Playwright, Test Mode on.
 
@@ -204,7 +216,11 @@ unsupplied templates shown as awaiting approval; a read-only user refused the
 audit log; skip link, landmarks and ARIA tab wiring; health and readiness
 endpoints; webhook signature rejection and the Adobe verification handshake.
 
-One covers attaching a source document: a `.docx` whose bytes are a PDF is
+Two cover editing a date rule: the preview recomputes live as a step is changed
+and shows the new deadline before anything is saved, a change with only
+whitespace for a reason is refused by the server, a real one saves and survives
+a reload — and a reviewer sees the list without links and is refused the editor
+outright. One covers attaching a source document: a `.docx` whose bytes are a PDF is
 refused, a real Word letter is accepted, scored and queued for reading, and it
 appears in the table afterwards. Two cover starting an engagement: the form is reached from the engagements list,
 refuses a corporate engagement with no year-end, creates one from a new client,

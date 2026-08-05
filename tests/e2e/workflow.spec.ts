@@ -435,6 +435,85 @@ test.describe('starting an engagement', () => {
   });
 });
 
+test.describe('editing a date rule', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  // Restored afterwards: the seeded rules are what every other suite computes
+  // its deadlines from.
+  const RULE = 't2.information_due_date';
+  let originalDefinition: unknown = null;
+
+  test.beforeAll(async ({}, worker) => {
+    const prisma = clientFor(environmentFor(worker));
+    try {
+      const rule = await prisma.dateRule.findUniqueOrThrow({ where: { code: RULE } });
+      originalDefinition = rule.definition;
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  test.afterAll(async ({}, worker) => {
+    const prisma = clientFor(environmentFor(worker));
+    try {
+      if (originalDefinition) {
+        await prisma.dateRule.update({
+          where: { code: RULE },
+          data: { definition: originalDefinition as never, label: 'T2 client information due date' },
+        });
+      }
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  test('previews the new deadline before saving, and refuses a change with no reason', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/date-rules');
+
+    await page.getByRole('link', { name: RULE }).click();
+    await expect(page.getByRole('heading', { name: /client information/i })).toBeVisible();
+
+    // What the change will and will not touch is stated before it is made.
+    await expect(page.getByText(/already confirmed are left exactly as they are/)).toBeVisible();
+
+    // The preview is computed live by the same engine the worker uses.
+    await page.getByLabel('Sample year-end').fill('2026-03-31');
+    const preview = page.getByRole('heading', { name: 'Preview' }).locator('..').locator('..');
+    const before = await preview.textContent();
+
+    await page.getByLabel('Step 1 amount').fill('4');
+    await expect(preview).not.toHaveText(before ?? '');
+    await expect(preview).toContainText('2026-07-31');
+
+    // A change to a deadline interpretation needs a written reason. Whitespace
+    // satisfies the browser's own check, so this exercises the server's.
+    await page.getByLabel('Why are you changing this?').fill('          ');
+    await page.getByRole('button', { name: 'Save this rule' }).click();
+    await expect(page.getByText(/Give a reason/)).toBeVisible();
+
+    await page.getByLabel('Why are you changing this?').fill('Piloting a four-month information deadline this year.');
+    await page.getByRole('button', { name: 'Save this rule' }).click();
+    await expect(page.getByText(new RegExp(`Saved ${RULE}`))).toBeVisible();
+
+    // And it survives a reload, because it was actually stored.
+    await page.reload();
+    await expect(page.getByLabel('Step 1 amount')).toHaveValue('4');
+  });
+
+  test('is not offered to a role that cannot manage rules', async ({ page }) => {
+    await signIn(page, /Reviewer/);
+    await page.goto('/date-rules');
+
+    // The list is readable; the codes are not links.
+    await expect(page.getByRole('cell', { name: RULE })).toBeVisible();
+    await expect(page.getByRole('link', { name: RULE })).toHaveCount(0);
+
+    const response = await page.request.get(`/date-rules/${RULE}`);
+    expect(response.status()).toBeGreaterThanOrEqual(400);
+  });
+});
+
 test.describe('attaching a source document', () => {
   test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
 

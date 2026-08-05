@@ -198,6 +198,20 @@ changes, preparation re-opens it rather than applying a stale answer.
 7. **Logs** — redacted at the logger. Secrets are dropped, client identifiers
    masked, and no document body is ever written to a log.
 
+## Editable rules
+
+Date rules are configuration, not code, and the editor computes its preview with
+`evaluateDateRule` — the same function the worker calls. A preview that used a
+separate implementation could disagree with what the application then produces,
+which for a legal deadline is the whole risk.
+
+Two boundaries are deliberate. A rule's `requiredFacts` and its branch
+conditions are not editable, because a fact needs a matching question in the
+catalogue for a reviewer to answer; inventing a fact name would create a deadline
+nothing could unblock. And a change never rewrites a date a reviewer confirmed —
+the impact is counted and stated before saving, and the new rule governs only
+what has not been decided yet.
+
 ## Deliberate decisions
 
 **Prisma errors are matched by code, not by `instanceof`.** Next bundles server

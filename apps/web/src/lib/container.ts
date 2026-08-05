@@ -6,6 +6,7 @@ import {
   ApprovalService,
   BulkRolloutService,
   CoverLetterService,
+  DateRuleService,
   DocumentStore,
   EngagementService,
   FieldFormService,
@@ -38,6 +39,7 @@ const workflow = new WorkflowService(prisma, audit);
 const pricing = new PricingService(prisma, audit);
 const preparation = new PreparationService({ prisma, audit, pricing, logger });
 const fields = new FieldFormService({ prisma, audit });
+const dateRules = new DateRuleService({ prisma, audit });
 const engagements = new EngagementService({ prisma, audit });
 
 const store = new DocumentStore({
@@ -98,6 +100,7 @@ export const container = {
   preparation,
   fields,
   engagements,
+  dateRules,
   sourceDocuments,
   store,
   generation,

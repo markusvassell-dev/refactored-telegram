@@ -995,3 +995,58 @@ export async function uploadSourceDocument(formData: FormData): Promise<ActionRe
     return details.length > 0 ? { message, blockers: details } : message;
   });
 }
+
+/**
+ * Changes a date rule.
+ *
+ * A date rule is the firm's interpretation of a statutory deadline, so this is
+ * deliberately not a quiet settings toggle: it needs the administrator role, a
+ * written reason, and it records the whole definition before and after. Dates a
+ * reviewer has already confirmed are never rewritten; the rest are recalculated
+ * the next time their engagement is prepared.
+ */
+export async function updateDateRule(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('date_rule:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const code = formData.get('code')?.toString();
+    const definitionJson = formData.get('definition')?.toString();
+
+    if (!code) throw new ValidationError('A date rule is required.');
+    if (!definitionJson) throw new ValidationError('The rule definition was not submitted.');
+
+    let definition: unknown;
+    try {
+      definition = JSON.parse(definitionJson);
+    } catch {
+      throw new ValidationError('The rule definition was not readable. Reload the page and try again.');
+    }
+
+    const result = await container.dateRules.update({
+      code,
+      actorId: actor.id,
+      reason: formData.get('reason')?.toString() ?? '',
+      label: formData.get('label')?.toString() ?? '',
+      notes: formData.get('notes')?.toString() ?? null,
+      isActive: formData.get('isActive') === 'yes',
+      requiresConfirmation: formData.get('requiresConfirmation') === 'yes',
+      definition,
+    });
+
+    revalidatePath('/date-rules');
+    revalidatePath(`/date-rules/${code}`);
+
+    const parts = [`Saved ${code}.`];
+    if (result.impact.pendingRecalculation > 0) {
+      parts.push(
+        `${result.impact.pendingRecalculation} unconfirmed date(s) will be recalculated the next time their engagement is prepared.`,
+      );
+    }
+    if (result.impact.confirmed > 0) {
+      parts.push(`${result.impact.confirmed} already-confirmed date(s) are left as they are.`);
+    }
+
+    return parts.join(' ');
+  });
+}
