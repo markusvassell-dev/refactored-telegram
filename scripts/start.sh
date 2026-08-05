@@ -18,6 +18,17 @@ set -eu
 
 ROLE="${SERVICE_ROLE:-web}"
 
+# Defaulting is right — an unset role should not be a broken deployment — but it
+# must be visible. A worker whose SERVICE_ROLE never got set starts a second web
+# service, which looks entirely healthy: it passes its health check, serves the
+# application, and drains no work at all. Nothing else in the log would say so.
+if [ -z "${SERVICE_ROLE:-}" ]; then
+  echo "NOTE: SERVICE_ROLE is not set; starting as the web service."
+  echo "      If this is meant to be the worker, set SERVICE_ROLE=worker in this"
+  echo "      service's variables. Two web services would leave the job queue"
+  echo "      running empty, with nothing reporting a problem."
+fi
+
 case "$ROLE" in
   web)
     exec ./scripts/start-web.sh

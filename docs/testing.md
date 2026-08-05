@@ -3,8 +3,8 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (364 tests)
-pnpm test:unit          # 196 — no external dependencies
+pnpm test               # unit + integration  (368 tests)
+pnpm test:unit          # 200 — no external dependencies
 pnpm test:integration   # 168 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 27  — needs a browser
 pnpm build              # production build
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (196)
+## Unit tests (200)
 
 No database, no filesystem, no network.
 
@@ -56,7 +56,7 @@ machine exactly; all five gates.
 approve or send** client-facing documents; separation of duties; idempotency
 key determinism and sensitivity; source fingerprint stability.
 
-**Deployment configuration (25)** — the properties that decide whether a
+**Deployment configuration (29)** — the properties that decide whether a
 misconfigured deployment is legible or opaque. The image exposes exactly one
 port, because two make the health-check target a coin toss. The start scripts
 take the port the platform assigns, check configuration before touching the
@@ -388,6 +388,10 @@ Each was fixed in the code, not the test:
     was probed on the web service's health path, then failed with a health-check
     error about neither. One config file now, and the role travels with the
     service's own variables as `SERVICE_ROLE`.
+26. `DATABASE_URL` reported as "not set" when it was set and empty. Those are
+    different faults with different fixes — an empty value means a platform
+    reference that did not resolve, and telling someone to add a variable they
+    can plainly see is already there sends them in a circle.
 
 ## What is not covered
 

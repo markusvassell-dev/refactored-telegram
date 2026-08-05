@@ -11,6 +11,8 @@
 
 set -eu
 
+. ./scripts/preflight.sh
+
 # Railway probes the port it assigned, not the one the worker would pick for
 # itself. PORT wins when the platform sets it; WORKER_HEALTH_PORT remains the
 # local default.
@@ -21,17 +23,11 @@ echo "==> Element Engagements worker"
 echo "    APP_ENV=${APP_ENV:-unset}  TEST_MODE=${TEST_MODE:-unset}"
 echo "    health endpoint on port ${PORT}"
 
-if [ -z "${DATABASE_URL:-}" ]; then
-  echo "FATAL: DATABASE_URL is not set." >&2
-  echo "       On Railway, add a variable referencing the Postgres service:" >&2
-  echo '         DATABASE_URL = ${{Postgres.DATABASE_URL}}' >&2
-  exit 1
-fi
+require_database_url || exit 1
+check_document_storage
 
 echo "==> Checking configuration"
-if ! pnpm exec tsx --tsconfig tsconfig.json scripts/check-env.ts; then
-  exit 1
-fi
+check_environment || exit 1
 
 echo "==> Waiting for the schema the web service applies"
 attempt=0

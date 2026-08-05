@@ -138,6 +138,10 @@ describe('choosing which service a container becomes', () => {
     expect(entrypoint).toMatch(/FATAL: SERVICE_ROLE is/);
   });
 
+  it('says so when it defaults, because a worker started as a web service looks healthy', () => {
+    expect(entrypoint).toMatch(/NOTE: SERVICE_ROLE is not set/);
+  });
+
   it('lets the worker answer the same health path, so one config serves both', () => {
     const worker = read('apps/worker/src/index.ts');
     expect(worker).toMatch(/'\/api\/health'/);
@@ -160,9 +164,14 @@ describe('the start scripts', () => {
   });
 
   it('say which failure happened instead of letting it read as a health-check failure', () => {
-    expect(webScript).toMatch(/FATAL: DATABASE_URL is not set/);
+    expect(webScript).toMatch(/require_database_url/);
     expect(webScript).toMatch(/FATAL: database migrations failed/);
-    expect(workerScript).toMatch(/FATAL: DATABASE_URL is not set/);
+    expect(workerScript).toMatch(/require_database_url/);
+  });
+
+  it('share their checks, so the same fault reads the same way from either service', () => {
+    expect(webScript).toMatch(/\. \.\/scripts\/preflight\.sh/);
+    expect(workerScript).toMatch(/\. \.\/scripts\/preflight\.sh/);
   });
 
   it('leaves migrations to the web service alone, so two services cannot race', () => {
@@ -171,16 +180,35 @@ describe('the start scripts', () => {
   });
 
   it('check configuration before starting, so a missing key fails the deploy rather than every page', () => {
-    expect(webScript).toMatch(/scripts\/check-env\.ts/);
-    expect(workerScript).toMatch(/scripts\/check-env\.ts/);
+    expect(webScript).toMatch(/check_environment/);
+    expect(workerScript).toMatch(/check_environment/);
+    expect(read('scripts/preflight.sh')).toMatch(/scripts\/check-env\.ts/);
   });
 
   it('check configuration before touching the database, so the clearer error surfaces first', () => {
-    expect(webScript.indexOf('check-env.ts')).toBeLessThan(webScript.indexOf('pnpm db:migrate'));
+    expect(webScript.indexOf('check_environment')).toBeLessThan(webScript.indexOf('pnpm db:migrate'));
   });
 
   it('abort on an unset variable rather than starting with a blank one', () => {
     expect(webScript).toMatch(/^set -eu$/m);
     expect(workerScript).toMatch(/^set -eu$/m);
+  });
+});
+
+describe('telling an empty variable from a missing one', () => {
+  const preflight = read('scripts/preflight.sh');
+
+  it('distinguishes the two, because the fix is different', () => {
+    // A reference that did not resolve leaves the variable present and empty.
+    // Reporting that as "not set" sends someone to add a variable they can see
+    // is already there.
+    expect(preflight).toMatch(/DATABASE_URL is set but empty/);
+    expect(preflight).toMatch(/DATABASE_URL is not set/);
+    expect(preflight).toMatch(/\$\{DATABASE_URL\+isset\}/);
+  });
+
+  it('names what actually breaks a Railway reference', () => {
+    expect(preflight).toMatch(/same project and environment/);
+    expect(preflight).toMatch(/named exactly what the reference says/);
   });
 });

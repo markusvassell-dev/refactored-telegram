@@ -160,14 +160,25 @@ Ranked by how often it is the cause:
 
 | Cause | What you will see in the deploy log |
 | --- | --- |
-| `DATABASE_URL` unset or not referencing the Postgres service | `FATAL: DATABASE_URL is not set` |
+| `DATABASE_URL` never added | `FATAL: DATABASE_URL is not set` |
+| `DATABASE_URL` added as a reference that did not resolve | `FATAL: DATABASE_URL is set but empty` |
+| `SERVICE_ROLE` missing on the worker | `NOTE: SERVICE_ROLE is not set; starting as the web service` |
 | Migrations cannot reach the database | `FATAL: database migrations failed; the web server was not started` |
 | A required variable missing — `ENCRYPTION_KEY`, `SESSION_SECRET`, Entra in production | `Invalid environment configuration:` and the failing key |
 | Health check pointed at the wrong port | The server logs `Ready`, and the probe still fails |
 
-`DATABASE_URL` must be a reference, not a literal — `${{Postgres.DATABASE_URL}}`
-in the Railway variable editor. A pasted connection string goes stale the next
-time the database is redeployed.
+### A reference that resolves to nothing
+
+`DATABASE_URL` showing as `<empty string>` in the Railway variable editor means
+the reference was stored but never resolved. Pasting `${{Postgres.DATABASE_URL}}`
+as text into the raw editor does not reliably create a reference — add it with
+the variable picker (**New Variable → Add Reference**, or the **Variable
+Reference** link on the database's own Variables tab), which resolves it against
+a service that actually exists.
+
+Copying the connection string from the database's Variables tab works too, and
+is the quickest way to get moving. It is a literal, so it goes stale if the
+database is ever recreated; swap it for a reference once the deployment is up.
 
 ## Deploying
 
