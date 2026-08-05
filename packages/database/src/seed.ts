@@ -361,6 +361,82 @@ async function seedSampleClients(): Promise<void> {
   process.stdout.write(`  clients   ${samples.length} sample (test fixture) clients seeded\n`);
 }
 
+/**
+ * One sample engagement so Test Mode has something to demonstrate.
+ * It is deliberately left NOT_STARTED with the compilation selection
+ * unconfirmed, which is exactly the state a reviewer has to resolve.
+ */
+async function seedSampleEngagement(): Promise<void> {
+  if (process.env.APP_ENV === 'production') return;
+
+  const client = await prisma.client.findUnique({ where: { karbonEntityKey: 'SAMPLE-ORG-1' } });
+  if (!client) return;
+
+  const taxYear = new Date().getUTCFullYear();
+
+  const workItem = await prisma.karbonWorkItem.upsert({
+    where: { karbonKey: 'SAMPLE-WI-T2' },
+    create: {
+      karbonKey: 'SAMPLE-WI-T2',
+      clientId: client.id,
+      title: `${taxYear} Corporate Tax`,
+      workType: 'Corporate Tax',
+      status: 'In Progress',
+      taxYear,
+    },
+    update: {},
+  });
+
+  const existing = await prisma.engagement.findUnique({
+    where: { clientId_engagementType_taxYear: { clientId: client.id, engagementType: 'T2', taxYear } },
+  });
+  if (existing) return;
+
+  const reviewer = await prisma.user.findUnique({ where: { email: 'reviewer@example.test' } });
+  const preparer = await prisma.user.findUnique({ where: { email: 'preparer@example.test' } });
+
+  const engagement = await prisma.engagement.create({
+    data: {
+      clientId: client.id,
+      engagementType: 'T2',
+      taxYear,
+      yearEnd: new Date(Date.UTC(taxYear, 2, 31)),
+      karbonWorkItemId: workItem.id,
+      status: 'NOT_STARTED',
+      // Unconfirmed on purpose: a reviewer must decide before generation.
+      compilationSelected: null,
+      assignedPreparerId: preparer?.id ?? null,
+      assignedReviewerId: reviewer?.id ?? null,
+      isTestMode: true,
+    },
+  });
+
+  await prisma.engagementParticipant.createMany({
+    data: [
+      {
+        engagementId: engagement.id,
+        role: 'AUTHORIZED_SIGNING_OFFICER',
+        fullLegalName: 'Sample Signing Officer',
+        email: 'officer@example.test',
+        title: 'President',
+        signingOrder: 1,
+        isSigner: true,
+      },
+      {
+        engagementId: engagement.id,
+        role: 'ENGAGEMENT_LEAD',
+        fullLegalName: 'Sample Lead',
+        email: 'lead@example.test',
+        signingOrder: 99,
+        isSigner: false,
+      },
+    ],
+    skipDuplicates: true,
+  });
+
+  process.stdout.write('  sample    one T2 engagement seeded for Test Mode\n');
+}
+
 async function main(): Promise<void> {
   process.stdout.write('Seeding Element Engagements\n');
   await seedTemplates();
@@ -370,6 +446,7 @@ async function main(): Promise<void> {
   await seedIntegrationPlaceholders();
   await seedDevelopmentUsers();
   await seedSampleClients();
+  await seedSampleEngagement();
   process.stdout.write('Seed complete.\n');
 }
 

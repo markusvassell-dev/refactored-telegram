@@ -30,7 +30,17 @@ export default async function ReviewQueuePage() {
   );
 }
 
-function Queue({ title, engagements }: { title: string; engagements: any[] }) {
+interface QueueRow {
+  id: string;
+  engagementType: string;
+  taxYear: number;
+  status: string;
+  assignedReviewerId: string | null;
+  client: { legalName: string };
+  documentVersions: { versionNumber: number; validationReport: unknown }[];
+}
+
+function Queue({ title, engagements }: { title: string; engagements: QueueRow[] }) {
   return (
     <section className="mb-8">
       <h2 className="mb-3 text-lg font-semibold text-slate-900">{title}</h2>

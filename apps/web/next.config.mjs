@@ -33,6 +33,11 @@ const nextConfig = {
     return config;
   },
   async headers() {
+    // React Refresh in `next dev` evaluates code strings, so development needs
+    // 'unsafe-eval'. Production does not, and must not have it.
+    const isDevelopment = process.env.NODE_ENV !== 'production';
+    const scriptSrc = ["'self'", "'unsafe-inline'", ...(isDevelopment ? ["'unsafe-eval'"] : [])].join(' ');
+
     return [
       {
         source: '/:path*',
@@ -45,7 +50,7 @@ const nextConfig = {
             key: 'Content-Security-Policy',
             value: [
               "default-src 'self'",
-              "script-src 'self' 'unsafe-inline'",
+              `script-src ${scriptSrc}`,
               "style-src 'self' 'unsafe-inline'",
               "img-src 'self' data: blob:",
               "object-src 'none'",

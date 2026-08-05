@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Prisma, type PrismaClient } from '@element/database';
+import { type Prisma, type PrismaClient } from '@element/database';
 import type { AuditLogger } from '@element/audit';
 import {
   formatFieldValue,

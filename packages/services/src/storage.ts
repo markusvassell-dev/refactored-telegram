@@ -77,9 +77,10 @@ export class DocumentStore {
 
     if (data.byteLength === 0) throw new ValidationError('Refusing to store an empty file.');
     if (data.byteLength > this.options.maxBytes) {
-      throw new ValidationError(
-        `The file is larger than the ${Math.round(this.options.maxBytes / 1024 / 1024)} MB limit.`,
-      );
+      // Not monetary arithmetic: this formats a size limit for a message.
+      // eslint-disable-next-line no-restricted-syntax
+      const limitInMegabytes = Math.round(this.options.maxBytes / 1024 / 1024);
+      throw new ValidationError(`The file is larger than the ${limitInMegabytes} MB limit.`);
     }
     if (!ALLOWED_MIME_TYPES.has(input.mimeType)) {
       throw new ValidationError(`Files of type ${input.mimeType} are not accepted.`);

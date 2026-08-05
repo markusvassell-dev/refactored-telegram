@@ -23,9 +23,17 @@ export interface ParsedBody {
   blocks: BodyBlock[];
 }
 
+// Built from a character code rather than written literally, so this file
+// stays free of invisible characters.
+const NON_BREAKING_SPACE = new RegExp(String.fromCharCode(0xa0), 'g');
+
+/**
+ * Normalises the characters Word substitutes freely, so an anchor written with
+ * ordinary quotes and hyphens still matches the document.
+ */
 export function normalizeText(value: string): string {
   return value
-    .replace(/ /g, ' ')
+    .replace(NON_BREAKING_SPACE, ' ')
     .replace(/[‘’]/g, "'")
     .replace(/[“”]/g, '"')
     .replace(/[–—]/g, '-')

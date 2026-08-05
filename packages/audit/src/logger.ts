@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@element/database';
+import { type Prisma, type PrismaClient } from '@element/database';
 import { newCorrelationId, redact } from '@element/shared';
 
 /**
