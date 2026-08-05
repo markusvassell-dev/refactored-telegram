@@ -1,6 +1,8 @@
 import { container } from '@/lib/container';
 import { requirePermission } from '@/lib/session';
 import { EmptyState, PageHeader } from '@/components/shell';
+import { Pagination, PageOutOfRange } from '@/components/pagination';
+import { boundedCount, parsePageRequest, toPage, withStableOrder } from '@/lib/pagination';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,26 +13,40 @@ export default async function AuditLogPage({
 }) {
   await requirePermission('audit:view');
   const params = await searchParams;
+  const request = parsePageRequest(params, { defaultPageSize: 100 });
 
-  const events = await container.prisma.auditEvent.findMany({
-    where: {
-      ...(params.eventType ? { eventType: params.eventType } : {}),
-      ...(params.engagementId ? { engagementId: params.engagementId } : {}),
-      ...(params.userId ? { userId: params.userId } : {}),
-      ...(params.correlationId ? { correlationId: params.correlationId } : {}),
-      ...(params.objectType ? { objectType: params.objectType } : {}),
-      ...(params.from || params.to
-        ? {
-            createdAt: {
-              ...(params.from ? { gte: new Date(params.from) } : {}),
-              ...(params.to ? { lte: new Date(params.to) } : {}),
-            },
-          }
-        : {}),
-    },
-    orderBy: { createdAt: 'desc' },
-    take: 250,
-  });
+  const where = {
+    ...(params.eventType ? { eventType: params.eventType } : {}),
+    ...(params.engagementId ? { engagementId: params.engagementId } : {}),
+    ...(params.userId ? { userId: params.userId } : {}),
+    ...(params.correlationId ? { correlationId: params.correlationId } : {}),
+    ...(params.objectType ? { objectType: params.objectType } : {}),
+    ...(params.from || params.to
+      ? {
+          createdAt: {
+            ...(params.from ? { gte: new Date(params.from) } : {}),
+            ...(params.to ? { lte: new Date(params.to) } : {}),
+          },
+        }
+      : {}),
+  };
+
+  const [rows, total] = await Promise.all([
+    container.prisma.auditEvent.findMany({
+      where,
+      // Postgres `now()` is the transaction timestamp, so every event written by
+      // one bulk rollout carries an identical `createdAt`. Ordering by it alone
+      // leaves tied rows in no defined sequence, and paging over an undefined
+      // sequence loses events — which is not a cosmetic fault in an audit trail.
+      orderBy: withStableOrder([{ createdAt: 'desc' as const }]),
+      skip: request.skip,
+      take: request.take,
+    }),
+    boundedCount((limit) => container.prisma.auditEvent.count({ where, take: limit })),
+  ]);
+
+  const page = toPage(rows, request);
+  const events = page.items;
 
   // audit_event deliberately has no foreign keys, so that history survives the
   // deletion of what it describes. The display names are joined here instead.
@@ -76,7 +92,11 @@ export default async function AuditLogPage({
       </form>
 
       {events.length === 0 ? (
-        <EmptyState message="No audit events match these filters." />
+        page.page > 1 ? (
+          <PageOutOfRange pathname="/audit-log" params={params} pluralNoun="audit events" />
+        ) : (
+          <EmptyState message="No audit events match these filters." />
+        )
       ) : (
         <div className="card overflow-x-auto">
           <table className="table">
@@ -108,6 +128,18 @@ export default async function AuditLogPage({
               ))}
             </tbody>
           </table>
+
+          <div className="px-4 pb-3">
+            <Pagination
+              page={page}
+              total={total}
+              noun="audit event"
+              pluralNoun="audit events"
+              pathname="/audit-log"
+              params={params}
+              label="Audit log pagination"
+            />
+          </div>
         </div>
       )}
     </>

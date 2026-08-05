@@ -237,17 +237,37 @@ a deployment seeded before this change shows the placeholder only once a new
 version is published. The other three field properties are backfilled from the
 stored manifest by migration and need nothing.
 
+## Paged lists
+
+`/engagements` and `/audit-log` are paged rather than capped. Each states what it
+is showing out of what there is, carries its filters across pages, and says so
+when a page number has run off the end instead of showing an empty table.
+
+Both order by a total order. `withStableOrder` appends the primary key, because
+`ORDER BY created_at DESC` is not a defined order when timestamps tie and
+`OFFSET` over an undefined order loses rows — measured at 6 lost out of 300 audit
+events written in one transaction, which for an audit trail is not a cosmetic
+fault. See `docs/architecture.md` for why the ties are guaranteed rather than
+unlucky.
+
+Counting stops at 10,000 and reports a lower bound past it, so an append-only
+table stays cheap to page.
+
 ## Next implementation step
 
-**Pagination on the engagement and audit lists.** Both are capped — 200
-engagements and 100 audit events — with no way to see past the cap and nothing
-saying a cap was applied. For a firm with a few hundred engagements the list
-silently stops being the list, and an audit trail you cannot page through is not
-one you can answer a question with.
+**The cover-letter narrative editor.** Cover letters are generated, reviewed and
+approved, but the narrative body can only be regenerated, not edited. A reviewer
+who wants to change one sentence has to change the underlying data and generate
+again, which is the wrong shape for the one part of the document that is meant
+to be written rather than derived.
 
-The work is a cursor on both, plus a count so the page can say what it is
-showing; the audit list also wants filtering by event type and date range, since
-the reason to open it is usually a specific question.
+The work is a rich-enough editor over the narrative section only — the approved
+legal wording around it must stay untouchable, as it is today — with the same
+version-and-diff treatment the engagement letter fields already get, so an
+approver sees what changed since they last looked.
 
-After that: the cover-letter narrative editor, and write UI for templates and
-users.
+After that: write UI for templates and users, and pagination on the four
+remaining capped lists (`/system-jobs` at 100, `/needs-attention` at 50, the
+review queue, and the per-engagement activity lists at 20–100). The pagination
+helper now exists, so each is small; they are listed together because none of
+them is as load-bearing as the two just done.

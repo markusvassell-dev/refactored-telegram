@@ -1,5 +1,32 @@
 # Architecture
 
+## Paged lists
+
+Every list that can outgrow a screen states what it is showing out of what there
+is, and offers a way to the rest. A list that stops at a fixed number and says
+nothing leaves a reader unable to tell a short answer from a truncated one; on
+the audit log that ambiguity is the difference between a record and a suggestion.
+
+Two properties carry the weight, and neither is automatic:
+
+**The sort must be total.** `ORDER BY created_at DESC` is not a defined order
+when timestamps tie, and SQL may return tied rows in a different sequence for
+each query — so `OFFSET` over them drops some rows and repeats others. Ties are
+guaranteed here rather than unlucky: Postgres `now()` is the transaction
+timestamp, so every audit event written by one bulk rollout shares a `createdAt`
+to the microsecond. Measured on 300 such events, paging at 20 a page lost 6 and
+showed 6 twice. `withStableOrder` appends the primary key to every paged query,
+which makes the order total and the paging sound.
+
+**The count must not cost more than the answer.** An exact `COUNT(*)` over an
+append-only audit table grows without bound, and nobody needs to know there are
+exactly 41,882 events. Counting stops at 10,000 and reports a lower bound beyond
+it — cheap, and true.
+
+The page itself fetches one row more than it shows. That extra row is how a page
+knows there is a next one without a second query, and it stays correct when the
+total is only a lower bound.
+
 ## Shape
 
 A pnpm monorepo. Two runnable applications share one set of domain packages, so

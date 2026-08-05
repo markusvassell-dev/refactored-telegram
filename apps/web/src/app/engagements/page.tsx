@@ -3,6 +3,8 @@ import { can } from '@element/shared';
 import { container } from '@/lib/container';
 import { requireUser } from '@/lib/session';
 import { EmptyState, PageHeader, StatusBadge } from '@/components/shell';
+import { Pagination, PageOutOfRange } from '@/components/pagination';
+import { boundedCount, parsePageRequest, toPage, withStableOrder } from '@/lib/pagination';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,17 +15,31 @@ export default async function EngagementsPage({
 }) {
   const user = await requireUser();
   const params = await searchParams;
+  const request = parsePageRequest(params);
 
-  const engagements = await container.prisma.engagement.findMany({
-    where: {
-      ...(params.status ? { status: params.status as never } : {}),
-      ...(params.type ? { engagementType: params.type as never } : {}),
-      ...(params.year ? { taxYear: Number(params.year) } : {}),
-    },
-    include: { client: true, reviewer: true, feeCalculations: true },
-    orderBy: [{ taxYear: 'desc' }, { updatedAt: 'desc' }],
-    take: 200,
-  });
+  const where = {
+    ...(params.status ? { status: params.status as never } : {}),
+    ...(params.type ? { engagementType: params.type as never } : {}),
+    ...(params.year ? { taxYear: Number(params.year) } : {}),
+  };
+
+  const [rows, total] = await Promise.all([
+    container.prisma.engagement.findMany({
+      where,
+      include: { client: true, reviewer: true, feeCalculations: true },
+      // A bulk rollout creates hundreds of engagements in one transaction, so
+      // `updatedAt` ties are the normal case rather than a rarity. Without the
+      // tiebreaker the order between tied rows is undefined and paging over it
+      // would drop engagements from a list that reports itself complete.
+      orderBy: withStableOrder([{ taxYear: 'desc' as const }, { updatedAt: 'desc' as const }]),
+      skip: request.skip,
+      take: request.take,
+    }),
+    boundedCount((limit) => container.prisma.engagement.count({ where, take: limit })),
+  ]);
+
+  const page = toPage(rows, request);
+  const engagements = page.items;
 
   return (
     <>
@@ -74,7 +90,11 @@ export default async function EngagementsPage({
       </form>
 
       {engagements.length === 0 ? (
-        <EmptyState message="No engagements match these filters." />
+        page.page > 1 ? (
+          <PageOutOfRange pathname="/engagements" params={params} pluralNoun="engagements" />
+        ) : (
+          <EmptyState message="No engagements match these filters." />
+        )
       ) : (
         <div className="card overflow-x-auto">
           <table className="table">
@@ -117,6 +137,17 @@ export default async function EngagementsPage({
               })}
             </tbody>
           </table>
+
+          <div className="px-4 pb-3">
+            <Pagination
+              page={page}
+              total={total}
+              noun="engagement"
+              pathname="/engagements"
+              params={params}
+              label="Engagements pagination"
+            />
+          </div>
         </div>
       )}
     </>

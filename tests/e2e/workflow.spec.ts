@@ -311,6 +311,69 @@ test.describe('role permissions', () => {
   });
 });
 
+test.describe('paging a long list', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  test('the audit log says how much it is showing, and paging keeps the filters', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/audit-log?pageSize=5');
+
+    const pager = page.getByRole('navigation', { name: 'Audit log pagination' });
+    await expect(pager).toBeVisible();
+
+    // The whole point: a reader can tell a short list from a truncated one.
+    await expect(pager.getByText(/Showing 1–5 of/)).toBeVisible();
+
+    await pager.getByRole('link', { name: 'Next' }).click();
+    await expect(page).toHaveURL(/page=2/);
+    await expect(page).toHaveURL(/pageSize=5/);
+    await expect(pager.getByText(/Showing 6–10 of/)).toBeVisible();
+
+    // Previous returns to a first page that has no page parameter at all, so
+    // the plain URL stays the canonical one.
+    await pager.getByRole('link', { name: 'Previous' }).click();
+    await expect(page).not.toHaveURL(/page=2/);
+    await expect(pager.getByText(/Showing 1–5 of/)).toBeVisible();
+  });
+
+  test('a filtered list stays filtered on the second page', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/audit-log?eventType=STATUS_CHANGED&pageSize=2');
+
+    const filter = page.getByLabel('Event');
+    await expect(filter).toHaveValue('STATUS_CHANGED');
+
+    const pager = page.getByRole('navigation', { name: 'Audit log pagination' });
+    const next = pager.getByRole('link', { name: 'Next' });
+
+    if (await next.isVisible()) {
+      await next.click();
+      // The classic version of this bug: page two of a filtered list quietly
+      // becomes page two of an unfiltered one.
+      await expect(page).toHaveURL(/eventType=STATUS_CHANGED/);
+      await expect(page.getByLabel('Event')).toHaveValue('STATUS_CHANGED');
+    }
+  });
+
+  test('a page number past the end says so rather than showing an empty table', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/audit-log?page=9999');
+
+    await expect(page.getByText(/no audit events on this page/i)).toBeVisible();
+    await page.getByRole('link', { name: /first page/i }).click();
+    await expect(page.getByRole('navigation', { name: 'Audit log pagination' })).toBeVisible();
+  });
+
+  test('the engagement list counts what it is showing', async ({ page }) => {
+    await signIn(page, /Reviewer/);
+    await page.goto('/engagements');
+
+    const pager = page.getByRole('navigation', { name: 'Engagements pagination' });
+    await expect(pager).toBeVisible();
+    await expect(pager.getByText(/Showing 1–\d+ of \d+ engagement/)).toBeVisible();
+  });
+});
+
 test.describe('preparing an engagement', () => {
   test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
 

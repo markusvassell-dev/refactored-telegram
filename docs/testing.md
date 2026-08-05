@@ -3,10 +3,10 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (377 tests)
-pnpm test:unit          # 209 — no external dependencies
-pnpm test:integration   # 168 — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 27  — needs a browser
+pnpm test               # unit + integration  (415 tests)
+pnpm test:unit          # 237 — no external dependencies
+pnpm test:integration   # 178 — needs Postgres and LibreOffice Writer
+pnpm test:e2e           # 31  — needs a browser
 pnpm build              # production build
 ```
 
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (209)
+## Unit tests (237)
 
 No database, no filesystem, no network.
 
@@ -64,6 +64,17 @@ reported as "the web service has not migrated yet" rather than
 `relation "background_job" does not exist`, an unreachable database is
 distinguished from a missing schema because the fix differs, and an
 unrecognised failure says nothing rather than guessing.
+
+**Pagination (28)** — nonsense in the query string reads as the first page
+rather than an error or an empty one; the page size is capped so a hand-edited
+URL cannot ask for the whole table; `skip` stays a usable integer however large
+the page asked for. An empty page reports no range rather than a misleading
+"0–10". Counting stops at a ceiling and says "more than 10,000" rather than a
+number it did not finish computing, and exactly the ceiling is exact rather than
+a floor. A page link carries every filter across, replaces the page rather than
+accumulating them, escapes a value that would break the query string, and leaves
+`page` off the first page so the plain URL stays canonical. Both paged queries
+are asserted to order by a total order.
 
 **Deployment configuration (29)** — the properties that decide whether a
 misconfigured deployment is legible or opaque. The image exposes exactly one
@@ -123,7 +134,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (168)
+## Integration tests (178)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -167,6 +178,13 @@ for "yes"; a confirmed date never rewritten; last year's ticks carried forward
 as `priorYearSelected` with `confirmed` still false; three consecutive runs
 producing exactly the same row counts; and a resolved conflict re-opened once a
 source changes, because a decision only covers the values it was made about.
+
+**Paging real rows (10)** — written as one transaction, so every row carries an
+identical timestamp; the test asserts that premise before relying on it. Every
+row is then shown exactly once, the sequence is the same whatever page size it
+is read at, and no row appears on two consecutive pages. The bounded count is
+confirmed to be genuinely bounded rather than a limit the database ignores —
+a ceiling nothing enforces is a ceiling that does nothing.
 
 **The first administrator (11)** — the only path to a role that does not go
 through an existing administrator, so what it refuses is what matters. A listed
@@ -412,6 +430,19 @@ Each was fixed in the code, not the test:
     fix is to create the thing it points at, not to correct the variable. A
     placeholder value was worse still: valid, accepted, and silently wrong until
     someone tried to sign in.
+29. **Paging the audit log lost events.** Both lists ordered by a non-unique
+    column — `createdAt` for audit events, `updatedAt` for engagements — and SQL
+    leaves tied rows in no defined sequence, so `OFFSET` over them drops some and
+    repeats others. The ties are guaranteed rather than unlucky: Postgres `now()`
+    is the transaction timestamp, so every audit event written by one bulk
+    rollout shares a `createdAt` to the microsecond. Measured on 300 events
+    written in one transaction: paging at 20 a page **lost 6 and showed 6 twice**.
+    Every paged query now ends with a unique tiebreaker; the same measurement
+    then returns all 300 exactly once.
+30. Both lists stopped at a fixed number and said nothing — 200 engagements, 250
+    audit events. A reader had no way to tell a short answer from a truncated
+    one, which on an audit trail is the difference between a record and a
+    suggestion.
 
 ## What is not covered
 
