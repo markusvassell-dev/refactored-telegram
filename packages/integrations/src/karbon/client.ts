@@ -1,6 +1,6 @@
 import { IntegrationError, type Logger, createLogger } from '@element/shared';
 import { KARBON_CAPABILITY_MATRIX } from './capabilities.js';
-import { KARBON_DOCUMENTED_REQUESTS_PER_MINUTE, RateLimiter, retryAfterMs } from './throttle.js';
+import { KARBON_DOCUMENTED_REQUESTS_PER_MINUTE, RateLimiter, retryAfterMs } from '../http/throttle.js';
 import type {
   CapabilityReport,
   KarbonClient,

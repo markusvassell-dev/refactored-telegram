@@ -29,7 +29,8 @@
     "templates:verify": "tsx scripts/verify-template-hashes.ts",
     "verify:karbon": "tsx --env-file-if-exists=.env scripts/verify-karbon.ts",
     "admin:users": "tsx --env-file-if-exists=.env scripts/grant-role.ts",
-    "admin:grant": "tsx --env-file-if-exists=.env scripts/grant-role.ts"
+    "admin:grant": "tsx --env-file-if-exists=.env scripts/grant-role.ts",
+    "verify:adobe": "tsx --env-file-if-exists=.env scripts/verify-adobe-sign.ts"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",

@@ -1,29 +1,40 @@
 /**
- * Staying inside Karbon's documented request rate.
+ * Staying inside a vendor's documented request rate.
  *
- * Karbon asks for no more than 120 requests a minute per account per
- * application, and answers 429 with a `Retry-After` when that is exceeded. The
- * limit is easy to miss in ordinary use and impossible to miss during an annual
- * rollout: several hundred engagements, several calls each, drained by however
- * many workers are running.
+ * Both vendors this application talks to publish a limit and answer 429 with a
+ * `Retry-After` when it is exceeded. Karbon asks for no more than 120 requests
+ * a minute per account per application. Acrobat Sign's limit varies by service
+ * plan and is not published as a number, but it throttles the same way and its
+ * documentation is explicit that a client should retry only after the interval
+ * the header names.
  *
- * Exceeding it is not a slow request — it is a throttled account, shared with
- * whatever else the firm has connected to Karbon.
+ * The limit is easy to miss in ordinary use and impossible to miss during an
+ * annual rollout: several hundred engagements, several calls each, drained by
+ * however many workers are running. Exceeding it is not a slow request — it is
+ * a throttled account, shared with whatever else the firm has connected.
  *
  * A token bucket rather than a fixed window: a burst is fine as long as the
- * average holds, which is what "no more than 120 a minute" means and what a
+ * average holds, which is what "no more than N a minute" means and what a
  * per-second cap would needlessly forbid.
  */
 
 export interface ThrottleOptions {
-  /** Karbon's documented guidance. */
   requestsPerMinute?: number;
   /** Injected in tests so a limiter can be exercised without real time. */
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
 
+/** Karbon's published guidance. */
 export const KARBON_DOCUMENTED_REQUESTS_PER_MINUTE = 120;
+
+/**
+ * Acrobat Sign publishes no number — the rate depends on the service plan — so
+ * this is a deliberately conservative default rather than a documented one.
+ * Adobe's own guidance is to honour `Retry-After`, which the client does; this
+ * only keeps a bulk sync from arriving all at once.
+ */
+export const ADOBE_SIGN_DEFAULT_REQUESTS_PER_MINUTE = 60;
 
 export class RateLimiter {
   private readonly capacity: number;

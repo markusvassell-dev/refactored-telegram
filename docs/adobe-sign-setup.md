@@ -146,3 +146,53 @@ from inside the application.
 | Duplicate agreement suspected | Check `AdobeAgreement.idempotencyKey`. The database also enforces at most one live agreement per engagement, so a duplicate cannot exist. |
 | Webhook returns 400 | Signature verification failed. Confirm `ADOBE_SIGN_WEBHOOK_SECRET` matches. |
 | Signed PDF not in Karbon | Check `RETRIEVE_SIGNED_DOCUMENTS` on System Jobs. If the name collided, the upload was skipped rather than overwriting — the message says so. |
+
+## Verifying the connection
+
+```bash
+pnpm verify:adobe
+```
+
+**It never writes.** Karbon's writes are a note and a task on a work item —
+untidy at worst. Adobe's principal write is an agreement, and creating one
+emails a real person asking them to sign a document. There is no version of
+that which belongs in a verification script, so the write path is not offered
+at all, not even behind a flag.
+
+What it proves without sending anything:
+
+| Check | What a failure means |
+| --- | --- |
+| `OAUTH_AND_REACHABILITY` | The refresh token has expired or been revoked; the API base URL is for a different region than the account; or the integration lacks `agreement_read` |
+| `DUPLICATE_CHECK` | The agreement list cannot be read — which is worse than it sounds; see below |
+
+Signing itself is verified by running one engagement end to end with Test Mode
+on. That is the only way to see a real agreement without the risk of sending
+one to a client.
+
+## Rate limits
+
+Acrobat Sign publishes no fixed number — the rate depends on the service plan —
+but it throttles with `429` and a `Retry-After`, and Adobe's guidance is
+explicit that a client should retry only after the interval that header names.
+The client honours it, and paces itself with a token bucket so a bulk status
+sync does not arrive all at once.
+
+Polling is limited far more tightly than ordinary calls: **three identical
+calls per one-minute interval** on Global, Enterprise and Developer tiers, and
+per three-minute interval elsewhere. `SYNC_ADOBE_STATUS` walks every
+outstanding agreement in one pass, so on a large rollout the limiter is what
+keeps that from becoming a throttled account.
+
+## The duplicate check
+
+`findByExternalId` runs before every agreement creation and is the only thing
+standing between a retried job and a client receiving a second signature
+request for a letter already sent to them.
+
+It must therefore never answer "no existing agreement" unless it actually
+looked and found none. It used to: the client returned `null` on any 404, and
+`null?.userAgreementList` is `undefined`, so a missing endpoint, a revoked
+scope and a path typo all read as "nothing found" — and the caller then created
+a duplicate. A lookup that cannot complete now throws, so a retry fails loudly
+instead.

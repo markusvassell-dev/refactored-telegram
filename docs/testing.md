@@ -662,7 +662,22 @@ Each was fixed in the code, not the test:
     merely invisible. Reproduced in a browser before the fix and after it: the
     test fails with `Received: "false"` without the re-keying that remounts the
     select when the stored value changes.
-58. Activating a draft template was a decision made on a file name and a hash.
+58. **The Adobe Sign duplicate check failed open.** `findByExternalId` runs
+    before every agreement creation and is the only thing standing between a
+    retried job and a client receiving a second signature request for a letter
+    already sent to them. The client returned `null` on any 404, and
+    `null?.userAgreementList` is `undefined`, so a missing endpoint, a revoked
+    scope and a path typo all read as "no existing agreement" — and the caller
+    then created a duplicate. A lookup that cannot complete now throws.
+59. The Adobe Sign client computed `retryable` for every failure and **never
+    retried anything**. `SYNC_ADOBE_STATUS` walks every outstanding agreement
+    in a single job, so one transient 503 partway through abandoned the rest of
+    them, and the job then restarted from the beginning and re-requested the
+    ones it had already done.
+60. It also ignored `Retry-After` and had no pacing, against a vendor whose
+    documentation says in as many words to retry only after the interval the
+    header names, and which limits *polling* to three identical calls a minute.
+61. Activating a draft template was a decision made on a file name and a hash.
     The second administrator — required to be a different person precisely
     because a template version is a wording change to every future engagement
     at once — had no way to read the wording they were approving. Every version

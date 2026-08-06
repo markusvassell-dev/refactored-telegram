@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { ADOBE_SIGN_DEFAULT_REQUESTS_PER_MINUTE, RateLimiter, retryAfterMs } from '../http/throttle.js';
 import { IntegrationError, ValidationError, createLogger, type Logger } from '@element/shared';
 import type {
   AdobeSignProvider,
@@ -32,6 +33,15 @@ export interface AdobeSignClientConfig {
   logger?: Logger;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  maxRetries?: number;
+  /**
+   * Acrobat Sign publishes no fixed number — the rate depends on the service
+   * plan — so this paces a bulk sync rather than enforcing a documented limit.
+   * `Retry-After` is honoured regardless.
+   */
+  requestsPerMinute?: number;
+  /** Shared across clients when supplied, which is what a bulk sync needs. */
+  rateLimiter?: RateLimiter;
 }
 
 const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
@@ -74,11 +84,19 @@ export class AdobeSignRestClient implements AdobeSignProvider {
   private readonly logger: Logger;
   private readonly fetchImpl: typeof fetch;
   private readonly timeoutMs: number;
+  private readonly maxRetries: number;
+  private readonly limiter: RateLimiter;
 
   constructor(private readonly config: AdobeSignClientConfig) {
     this.logger = config.logger ?? createLogger({ base: { integration: 'adobe-sign' } });
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = config.timeoutMs ?? 45_000;
+    this.maxRetries = config.maxRetries ?? 3;
+    this.limiter =
+      config.rateLimiter ??
+      new RateLimiter({
+        requestsPerMinute: config.requestsPerMinute ?? ADOBE_SIGN_DEFAULT_REQUESTS_PER_MINUTE,
+      });
   }
 
   private get baseUrl(): string {
@@ -119,37 +137,70 @@ export class AdobeSignRestClient implements AdobeSignProvider {
   }
 
   private async request<T>(path: string, init: RequestInit & { binary?: boolean } = {}): Promise<T> {
-    const token = await this.token();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const method = (init.method ?? 'GET').toUpperCase();
+    let lastError: unknown;
 
-    try {
-      const response = await this.fetchImpl(`${this.baseUrl}/api/rest/v6${path}`, {
-        ...init,
-        signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${token}`,
-          ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
-          ...(init.headers as Record<string, string> | undefined),
-        },
-      });
+    for (let attempt = 1; attempt <= this.maxRetries; attempt += 1) {
+      // Every attempt spends a token, retries included: a retry is a request as
+      // far as the plan's allowance is concerned.
+      await this.limiter.acquire();
 
-      if (response.status === 404) return null as T;
+      const token = await this.token();
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
 
-      if (!response.ok) {
-        const detail = await response.text().catch(() => '');
-        throw new IntegrationError('Adobe Sign', `HTTP ${response.status} for ${path}`, {
-          retryable: RETRYABLE_STATUS.has(response.status),
-          context: { status: response.status, detail: detail.slice(0, 500) },
+      try {
+        const response = await this.fetchImpl(`${this.baseUrl}/api/rest/v6${path}`, {
+          ...init,
+          signal: controller.signal,
+          headers: {
+            Authorization: `Bearer ${token}`,
+            ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+            ...(init.headers as Record<string, string> | undefined),
+          },
         });
-      }
 
-      if (init.binary) return Buffer.from(await response.arrayBuffer()) as T;
-      const text = await response.text();
-      return (text ? JSON.parse(text) : null) as T;
-    } finally {
-      clearTimeout(timer);
+        // A read that found nothing is an answer. A write that 404s is not: it
+        // means the operation is not there, and returning null would let a
+        // caller read that as success.
+        if (response.status === 404 && method === 'GET') return null as T;
+
+        if (!response.ok) {
+          const detail = await response.text().catch(() => '');
+
+          if (RETRYABLE_STATUS.has(response.status) && attempt < this.maxRetries) {
+            // Adobe's guidance is explicit: on 429, retry only after the
+            // interval `Retry-After` names. Backing off on a shorter schedule
+            // of our own spends the allowance while the throttle is still in
+            // force, and the attempts themselves prolong it.
+            const requested = retryAfterMs(response.headers.get('retry-after'));
+            await delay(Math.max(requested ?? 0, backoffMs(attempt)));
+            continue;
+          }
+
+          throw new IntegrationError('Adobe Sign', `HTTP ${response.status} for ${path}`, {
+            retryable: RETRYABLE_STATUS.has(response.status),
+            context: { status: response.status, detail: detail.slice(0, 500) },
+          });
+        }
+
+        if (init.binary) return Buffer.from(await response.arrayBuffer()) as T;
+        const text = await response.text();
+        return (text ? JSON.parse(text) : null) as T;
+      } catch (error) {
+        lastError = error;
+        if (error instanceof IntegrationError && !error.retryable) throw error;
+        if (attempt >= this.maxRetries) break;
+        await delay(backoffMs(attempt));
+      } finally {
+        clearTimeout(timer);
+      }
     }
+
+    throw new IntegrationError('Adobe Sign', `Request to ${path} failed after ${this.maxRetries} attempts`, {
+      retryable: true,
+      cause: lastError,
+    });
   }
 
   async createAgreement(request: CreateAgreementRequest): Promise<CreateAgreementResult> {
@@ -217,12 +268,39 @@ export class AdobeSignRestClient implements AdobeSignProvider {
   /**
    * Finds an existing agreement created with the same deterministic key.
    * Called before `createAgreement` so a retry cannot produce a duplicate.
+   *
+   * This is the only thing standing between a retried job and a client
+   * receiving a second signature request for a letter they have already been
+   * sent. It must therefore never answer "no existing agreement" unless it
+   * actually looked and found none.
+   *
+   * It used to. `request` returns null on 404, `null?.userAgreementList` is
+   * undefined, and the whole thing became `null` — "nothing found" — for a
+   * missing endpoint, a revoked scope, or a path typo alike. The caller then
+   * created a duplicate. A failed lookup now throws, so a retry fails loudly
+   * rather than sending a second agreement to a client.
    */
   async findByExternalId(idempotencyKey: string): Promise<string | null> {
-    const response = await this.request<{ userAgreementList?: { id: string; externalId?: { id?: string } }[] }>(
-      `/agreements?externalId=${encodeURIComponent(idempotencyKey)}`,
+    const response = await this.request<{
+      userAgreementList?: { id: string; externalId?: { id?: string } }[];
+    } | null>(`/agreements?externalId=${encodeURIComponent(idempotencyKey)}`);
+
+    if (response === null || response === undefined) {
+      throw new IntegrationError(
+        'Adobe Sign',
+        'The duplicate check could not be completed: the agreement list could not be read.',
+        {
+          retryable: true,
+          context: { reason: 'agreement-list-unavailable' },
+        },
+      );
+    }
+
+    // An absent list is a genuine "none", but only once the request itself has
+    // been established as having succeeded.
+    const match = (response.userAgreementList ?? []).find(
+      (agreement) => agreement.externalId?.id === idempotencyKey,
     );
-    const match = response?.userAgreementList?.find((agreement) => agreement.externalId?.id === idempotencyKey);
     return match?.id ?? null;
   }
 
@@ -323,4 +401,15 @@ export class AdobeSignRestClient implements AdobeSignProvider {
       return { ok: false, detail: error instanceof Error ? error.message : 'Unknown error' };
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+
+function backoffMs(attempt: number): number {
+  const base = 2 ** attempt * 250;
+  return base + Math.floor(Math.random() * 250);
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
