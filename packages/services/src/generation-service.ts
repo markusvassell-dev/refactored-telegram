@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import { type Prisma, type PrismaClient } from '@element/database';
 import type { AuditLogger } from '@element/audit';
 import {
@@ -13,7 +11,6 @@ import {
   type ValidationReport,
 } from '@element/documents';
 import {
-  AppError,
   NotFoundError,
   PreconditionError,
   buildFileName,
@@ -22,6 +19,7 @@ import {
 } from '@element/shared';
 import { evaluateGenerationGate, type GateResult } from '@element/workflows';
 import { resolveFieldValue } from './field-values.js';
+import { readTemplateSource } from './template-source.js';
 import type { DocumentStore } from './storage.js';
 import type { WorkflowService } from './workflow-service.js';
 
@@ -97,16 +95,13 @@ export class GenerationService {
     }
 
     const manifest = parseManifest(version.manifest);
-    const path = version.normalizedPath
-      ? version.normalizedPath
-      : join(this.deps.templateDirectory, manifest.sourceFileName);
 
-    const docx = await readFile(path).catch(() => {
-      throw new AppError(`The normalised template file for ${documentType} could not be read.`, {
-        category: 'INTERNAL',
-        userMessage: 'The approved template file is missing on the server. An administrator has been notified.',
-      });
-    });
+    // `normalizedPath` is a filesystem path for a seeded version and a store
+    // reference for an uploaded one, so locating the bytes is not a `readFile`.
+    const docx = await readTemplateSource(
+      { normalizedPath: version.normalizedPath, sourceFileName: manifest.sourceFileName },
+      { store: this.deps.store, templateDirectory: this.deps.templateDirectory },
+    );
 
     return { templateVersionId: version.id, manifest, docx };
   }

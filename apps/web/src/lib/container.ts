@@ -9,6 +9,7 @@ import {
   CoverLetterNarrativeService,
   IntegrationConnectionService,
   TemplatePublishService,
+  TemplatePreviewService,
   UserAdminService,
   DateRuleService,
   DocumentStore,
@@ -102,6 +103,16 @@ const integrations = new IntegrationConnectionService({
 });
 
 const templatePublishing = new TemplatePublishService({ prisma, audit, store });
+const templatePreviews = new TemplatePreviewService({
+  prisma,
+  store,
+  pdfConverter,
+  templateDirectory,
+  // Disposable: it holds nothing that cannot be rebuilt from the template,
+  // so it lives with the other scratch space rather than in the document
+  // store, whose contents are subject to the retention purge.
+  cacheDirectory: resolve(configuration.DOCUMENT_TEMP_DIRECTORY, 'template-previews'),
+});
 const notifications = new KarbonNotificationService({
   prisma,
   audit,
@@ -135,6 +146,7 @@ export const container = {
   users,
   integrations,
   templatePublishing,
+  templatePreviews,
   notifications,
   bulk,
   async testModeState() {

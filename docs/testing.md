@@ -588,6 +588,26 @@ Each was fixed in the code, not the test:
 48. `db:seed` was `tsx --env-file=.env`, and `.dockerignore` excludes `.env`
     deliberately. The one command that had to work in the image was the one
     that required a file the image must not contain.
+49. **A template a firm uploaded itself could never be rendered.**
+    `TemplateVersion.normalizedPath` holds an absolute filesystem path for a
+    seeded version and a `DocumentStore` reference — relative, and meaningless
+    to the filesystem — for an uploaded one. The generator read the column as a
+    path in both cases, so every generation from an uploaded version failed
+    with "the approved template file is missing on the server". Revising a
+    template is the only way to produce that kind of version, so the failure
+    was reserved for the moment a firm changed its own legal wording and
+    activated it. No test had ever generated from an uploaded version; the
+    publishing suite stopped at activation.
+50. The same column made a deployment fragile in a second way: the seed records
+    the absolute path of whichever machine ran it, so a database restored onto
+    a different host points at a file that is not there. Locating a template is
+    now one function with an ordered list of candidates, ending at the copy
+    that ships in the image under the name the manifest records.
+51. Activating a draft template was a decision made on a file name and a hash.
+    The second administrator — required to be a different person precisely
+    because a template version is a wording change to every future engagement
+    at once — had no way to read the wording they were approving. Every version
+    now renders to a PDF in the application.
 
 ## What is not covered
 

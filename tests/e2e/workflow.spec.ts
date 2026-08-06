@@ -693,6 +693,54 @@ test.describe('managing roles', () => {
   });
 });
 
+test.describe('reading a template', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  test('shows the approved wording as a PDF, with the fields it fills in', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/templates');
+
+    await page.getByRole('link', { name: 'Read it' }).first().click();
+    await expect(page.getByRole('heading', { name: /engagement letter|cover letter/i }).first()).toBeVisible();
+
+    // The template itself, converted for reading. Previously the only way to
+    // know what the active wording said was to open the file on the server.
+    const frame = page.locator('iframe[title*="version"]');
+    await expect(frame).toBeVisible();
+
+    const source = await frame.getAttribute('src');
+    expect(source).toMatch(/^\/api\/templates\/[0-9a-f-]+\?format=pdf$/);
+
+    // Fetched directly: an iframe that fails to load looks identical to one
+    // that succeeds, so the bytes are checked rather than the element.
+    const response = await page.request.get(source ?? '');
+    expect(response.status()).toBe(200);
+    expect(response.headers()['content-type']).toContain('application/pdf');
+    expect((await response.body()).subarray(0, 5).toString('latin1')).toBe('%PDF-');
+
+    await expect(page.getByRole('heading', { name: /What gets filled in/ })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Download Word source' })).toBeVisible();
+  });
+
+  test('serves the Word source as a download, which is what a revision starts from', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/templates/T2_ENGAGEMENT_LETTER');
+
+    const href = await page.getByRole('link', { name: 'Download Word source' }).getAttribute('href');
+    const response = await page.request.get(href ?? '');
+
+    expect(response.status()).toBe(200);
+    expect(response.headers()['content-disposition']).toContain('attachment');
+    // A real OOXML package, not a PDF wearing the wrong extension.
+    expect((await response.body()).subarray(0, 2).toString('latin1')).toBe('PK');
+  });
+
+  test('refuses an anonymous reader, because a template is not public', async ({ page }) => {
+    const version = await page.request.get('/api/templates/00000000-0000-0000-0000-000000000000?format=pdf');
+    expect(version.status()).toBe(401);
+  });
+});
+
 test.describe('publishing a template', () => {
   test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
 

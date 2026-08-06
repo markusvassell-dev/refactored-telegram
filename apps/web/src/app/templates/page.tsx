@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { can } from '@element/shared';
 import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
@@ -65,12 +66,21 @@ export default async function TemplatesPage() {
           return (
             <section key={template.id} className="card mb-4">
               <div className="card-header flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-base font-semibold">{template.documentType.replace(/_/g, ' ').toLowerCase()}</h2>
-                {template.isProductionSupported ? (
-                  <span className="badge bg-emerald-100 text-emerald-800">available</span>
-                ) : (
-                  <span className="badge bg-slate-100 text-slate-700">awaiting approved template</span>
-                )}
+                <h2 className="text-base font-semibold">
+                  <Link href={`/templates/${template.documentType}`} className="text-brand-700 hover:underline">
+                    {template.documentType.replace(/_/g, ' ').toLowerCase()}
+                  </Link>
+                </h2>
+                <div className="flex items-center gap-2">
+                  {template.isProductionSupported ? (
+                    <span className="badge bg-emerald-100 text-emerald-800">available</span>
+                  ) : (
+                    <span className="badge bg-slate-100 text-slate-700">awaiting approved template</span>
+                  )}
+                  <Link href={`/templates/${template.documentType}`} className="btn-secondary">
+                    Read it
+                  </Link>
+                </div>
               </div>
 
               <div className="card-body space-y-4">

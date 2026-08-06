@@ -168,6 +168,41 @@ wording change is stored against that document version with its original
 wording, revised wording, reason, author and approver, and appears in the
 comparison report.
 
+### Reading a version
+
+`/templates/<DOCUMENT_TYPE>` renders any version — active, draft or retired —
+as a PDF, beside the merge fields it declares and the placeholder each one
+replaced in the printed letter. `/api/templates/<versionId>?format=docx`
+returns the normalised Word source, which is what a revision starts from.
+
+This exists because activating a draft was otherwise a decision made on a file
+name and a hash. Activation requires a *different* administrator than the
+uploader, precisely because a template version is a wording change to every
+future engagement at once — and that reviewer had no way to read the wording
+they were approving.
+
+Reading is read-only in the strict sense: the route cannot modify a template,
+and there is no in-place editor. Revising means downloading the source,
+changing it in Word, and uploading it as a new version.
+
+### Where a version's file lives
+
+`TemplateVersion.normalizedPath` records two different things:
+
+| Origin | What the column holds |
+| --- | --- |
+| Seeded | An absolute filesystem path, from the machine that ran the seed |
+| Uploaded | A `DocumentStore` reference — relative, and not a path |
+
+`readTemplateSource` is the only thing that resolves it. It tries an absolute
+path as a path, a relative one as a store reference, and finally
+`templates/normalized/<manifest sourceFileName>` — the copy that ships in the
+image, which is what makes a database restored onto a different host still
+render.
+
+Reading the column as a path, which is what the generator originally did, works
+for a seeded template and fails for every template a firm uploads itself.
+
 ## Adding a template
 
 1. Put the approved `.docx` in `templates/source/`.
