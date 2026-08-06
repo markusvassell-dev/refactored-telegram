@@ -100,7 +100,18 @@ async function main(): Promise<void> {
     process.stdout.write(`\nKarbon verification\n`);
     process.stdout.write(`  base URL     ${connection.baseUrl ?? env.KARBON_API_BASE_URL}\n`);
     process.stdout.write(`  environment  ${environment}\n`);
+    process.stdout.write(`  used by app  ${connection.isEnabled ? 'yes' : 'NO — the application is using the mock adapter'}\n`);
     process.stdout.write(`  writes       ${writeMode(connection.isSandbox)}\n\n`);
+
+    // This script reads the credentials directly, so it verifies a connection
+    // the application itself may not be using. Passing every check while the
+    // app quietly runs on a mock is exactly the kind of mismatch that makes an
+    // integration look finished when nothing is wired to it.
+    if (!connection.isEnabled) {
+      process.stdout.write('  NOTE: "Use this connection" is set to No on the Integrations screen, so\n');
+      process.stdout.write('        everything below tests credentials the application is not using.\n');
+      process.stdout.write('        Set it to Yes once these checks pass.\n\n');
+    }
 
     if (allowWrites && !connection.isSandbox) {
       fail(
