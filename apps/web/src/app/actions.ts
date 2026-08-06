@@ -14,7 +14,7 @@ import {
   type FeeMethod,
   type Role,
 } from '@element/shared';
-import { factToken } from '@element/services';
+import { factToken, type IntegrationProviderKey } from '@element/services';
 import type { FeeRuleLevel } from '@element/database';
 import { container } from '@/lib/container';
 import { assertCsrf, requirePermission, requestContext } from '@/lib/session';
@@ -986,6 +986,88 @@ const MIME_BY_EXTENSION: Record<string, string> = {
  * verified. The file goes through the same content checks as one Karbon
  * supplied, and reading it is queued rather than done in the request.
  */
+// ---- Integrations ----------------------------------------------------------
+
+export async function saveIntegrationConnection(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('integration:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const provider = formData.get('provider')?.toString() as IntegrationProviderKey | undefined;
+    if (provider !== 'KARBON' && provider !== 'ADOBE_SIGN') {
+      throw new ValidationError('An integration is required.');
+    }
+
+    // Every credential field, whether or not the form sent a value: a blank one
+    // means "leave what is stored", which the service handles.
+    const credentials: Record<string, string | undefined> = {};
+    for (const key of ['bearerToken', 'accessKey', 'clientId', 'clientSecret', 'refreshToken']) {
+      const value = formData.get(key);
+      if (typeof value === 'string') credentials[key] = value;
+    }
+
+    const state = await container.testModeState();
+
+    const outcome = await container.integrations.save({
+      provider,
+      baseUrl: formData.get('baseUrl')?.toString(),
+      isSandbox: formData.get('isSandbox')?.toString() === 'true',
+      isEnabled: formData.get('isEnabled')?.toString() === 'true',
+      credentials,
+      testModeActive: state.testMode,
+      actor,
+    });
+
+    revalidatePath('/integrations');
+    return outcome.rotated.length > 0
+      ? `Saved. Rotated: ${outcome.rotated.join(', ')}. Run the connection check to confirm the new credentials work.`
+      : 'Saved. No credential was changed.';
+  });
+}
+
+export async function checkIntegrationConnection(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('integration:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const provider = formData.get('provider')?.toString() as IntegrationProviderKey | undefined;
+    if (provider !== 'KARBON' && provider !== 'ADOBE_SIGN') {
+      throw new ValidationError('An integration is required.');
+    }
+
+    const result = await container.integrations.checkConnection({ provider, actor });
+
+    revalidatePath('/integrations');
+
+    // A failed check is a recorded answer, not an error: the detail is the
+    // whole point of running it.
+    return result.ok
+      ? 'The connection works. The vendor answered a read-only request successfully.'
+      : `The connection did not work: ${result.detail ?? 'the vendor gave no detail'}`;
+  });
+}
+
+export async function clearIntegrationCredentials(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('integration:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const provider = formData.get('provider')?.toString() as IntegrationProviderKey | undefined;
+    if (provider !== 'KARBON' && provider !== 'ADOBE_SIGN') {
+      throw new ValidationError('An integration is required.');
+    }
+
+    await container.integrations.clearCredentials({
+      provider,
+      reason: formData.get('reason')?.toString() ?? '',
+      actor,
+    });
+
+    revalidatePath('/integrations');
+    return 'Credentials removed and the connection disabled. It now falls back to the mock adapter.';
+  });
+}
+
 // ---- Users and roles -------------------------------------------------------
 
 export async function grantRole(formData: FormData): Promise<ActionResult> {

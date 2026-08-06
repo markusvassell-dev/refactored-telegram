@@ -39,13 +39,18 @@ Browser automation and scraping are not used anywhere, and will not be added.
 The client sends the documented pair of headers:
 
 ```
-Authorization: Bearer <KARBON_BEARER_TOKEN>
-AccessKey: <KARBON_ACCESS_KEY>
+Authorization: Bearer <bearer token>
+AccessKey: <access key>
 ```
 
-Confirm both against current Karbon documentation before production use; the
-variable names in `.env.example` are what this application reads, not a claim
-about what Karbon issues.
+Both are entered on the Integrations screen, where they are encrypted with
+`ENCRYPTION_KEY` and carry a sandbox-or-production flag. They are **not**
+environment variables: the flag is what Test Mode keys off, and a credential
+supplied through the environment would have no flag.
+
+Confirm what Karbon actually issues against their current documentation before
+production use. The field labels in this application are what it reads, not a
+claim about what Karbon calls them.
 
 ## Behaviour when an operation is unavailable
 
@@ -62,8 +67,11 @@ succeed.
 
 Before relying on any row above:
 
-1. Configure a **sandbox** connection on the Integrations screen.
-2. Run the health check; confirm it succeeds.
+1. Configure a **sandbox** connection on the Integrations screen: enter the
+   bearer token and access key, leave the environment set to Sandbox, set
+   "Use this connection" to Yes, and save.
+2. Press **Check connection**. It issues `GET /WorkItems?$top=1` and stores the
+   result — success or the vendor's own error — against the connection.
 3. Exercise each operation against the sandbox with a test work item.
 4. Update the level in `packages/integrations/src/karbon/capabilities.ts` from
    `UNVERIFIED` to `SUPPORTED` or `UNSUPPORTED`, with the fallback recorded.

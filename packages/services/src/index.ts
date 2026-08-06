@@ -1,5 +1,6 @@
 export * from './settings.js';
 export * from './providers.js';
+export * from './integration-connection-service.js';
 export * from './storage.js';
 export * from './workflow-service.js';
 export * from './pricing-service.js';

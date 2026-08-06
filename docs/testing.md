@@ -3,10 +3,10 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (477 tests)
+pnpm test               # unit + integration  (496 tests)
 pnpm test:unit          # 238 — no external dependencies
-pnpm test:integration   # 239 — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 43  — needs a browser
+pnpm test:integration   # 258 — needs Postgres and LibreOffice Writer
+pnpm test:e2e           # 47  — needs a browser
 pnpm build              # production build
 ```
 
@@ -134,7 +134,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (239)
+## Integration tests (258)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -178,6 +178,21 @@ for "yes"; a confirmed date never rewritten; last year's ticks carried forward
 as `priorYearSelected` with `confirmed` still false; three consecutive runs
 producing exactly the same row counts; and a resolved conflict re-opened once a
 source changes, because a decision only covers the values it was made about.
+
+**Integration connections (19)** — the only place a vendor credential enters
+the application, so the tests are about what it will not do. A stored secret is
+encrypted and never appears in what the screen is given, nor in the audit trail,
+which records a six-character fingerprint and the names of what was rotated. A
+blank field keeps the stored value, so rotating a bearer token does not clear
+the access key and re-saving the form does not wipe the connection; a credential
+change invalidates the last successful check, because that check proved a
+credential that is gone. Marking a connection production is refused while Test
+Mode is on, enabling one with a missing credential is refused, and a base URL
+that is not https is refused because a bearer token must not travel in clear
+text. A failed connection check is stored with the vendor's own words rather
+than thrown away, and a credential blob the current `ENCRYPTION_KEY` cannot
+decrypt is treated as absent rather than crashing the screen an operator needs
+in order to re-enter it.
 
 **Roles and access (15)** — what it refuses, mostly. A change with no real
 reason, a role already held, a role the person does not hold, and somebody
@@ -518,6 +533,16 @@ Each was fixed in the code, not the test:
 39. Adobe signing events were fetched the same way and also never shown, which
     left the provider's own account of a signing — including whether its webhook
     signature verified — invisible to the person reviewing it. Now rendered.
+40. `KARBON_BEARER_TOKEN`, `KARBON_ACCESS_KEY` and the three Adobe Sign
+    credential variables were declared in the environment schema and read by
+    nothing. Only the database connection was ever consulted, so a deployment
+    that set them saw no effect at all — and the deployment guide told people to
+    set them. Removed: a vendor credential now has exactly one home.
+41. The Integrations screen was read-only, while `docs/railway-deployment.md`
+    said credentials could be entered there and the capability matrix's
+    verification checklist opened with "configure a sandbox connection on the
+    Integrations screen". There was no way to configure either integration, from
+    the UI or the environment.
 
 ## What is not covered
 

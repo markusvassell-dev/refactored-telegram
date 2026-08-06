@@ -7,6 +7,7 @@ import {
   BulkRolloutService,
   CoverLetterService,
   CoverLetterNarrativeService,
+  IntegrationConnectionService,
   TemplatePublishService,
   UserAdminService,
   DateRuleService,
@@ -93,6 +94,13 @@ const coverLetterNarratives = new CoverLetterNarrativeService({
 
 const users = new UserAdminService({ prisma, audit });
 
+const integrations = new IntegrationConnectionService({
+  prisma,
+  audit,
+  logger,
+  encryptionKey: env().ENCRYPTION_KEY,
+});
+
 const templatePublishing = new TemplatePublishService({ prisma, audit, store });
 const notifications = new KarbonNotificationService({
   prisma,
@@ -125,6 +133,7 @@ export const container = {
   coverLetters,
   coverLetterNarratives,
   users,
+  integrations,
   templatePublishing,
   notifications,
   bulk,

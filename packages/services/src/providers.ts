@@ -144,7 +144,7 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
     adobeDescription = 'blocked (test mode, no sandbox configured)';
   } else if (adobeUsable) {
     adobeSign = new AdobeSignRestClient({
-      baseUrl: adobeConnection.baseUrl as string,
+      baseUrl: (adobeConnection.baseUrl ?? env.ADOBE_SIGN_API_BASE_URL) as string,
       clientId: adobeConnection.credentials.clientId as string,
       clientSecret: adobeConnection.credentials.clientSecret as string,
       refreshToken: adobeConnection.credentials.refreshToken as string,

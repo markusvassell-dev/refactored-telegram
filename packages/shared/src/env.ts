@@ -82,17 +82,23 @@ export const envSchema = z
       ),
 
     // ---- Karbon ----
+    //
+    // Vendor credentials are deliberately absent. They live in
+    // `IntegrationConnection`, encrypted, entered on the Integrations screen —
+    // which is also where the sandbox-or-production flag lives. That flag is
+    // what Test Mode keys off, and an environment variable has no such flag: a
+    // credential supplied that way could not be told apart from a sandbox one,
+    // and Test Mode's guarantee would quietly become a convention. Two sources
+    // for one secret would also mean a screen that says "not configured" while
+    // the application is happily writing to a live tenant.
     KARBON_API_BASE_URL: z.string().url().default('https://api.karbonhq.com/v3'),
-    KARBON_BEARER_TOKEN: optionalString,
-    KARBON_ACCESS_KEY: optionalString,
+    /** Shared secret this application chooses, for verifying inbound webhooks. */
     KARBON_WEBHOOK_SECRET: optionalString,
 
     // ---- Adobe Acrobat Sign ----
     ADOBE_SIGN_API_BASE_URL: optionalString,
-    ADOBE_SIGN_CLIENT_ID: optionalString,
-    ADOBE_SIGN_CLIENT_SECRET: optionalString,
     ADOBE_SIGN_REDIRECT_URI: optionalString,
-    ADOBE_SIGN_REFRESH_TOKEN: optionalString,
+    /** Shared secret this application chooses, for verifying inbound webhooks. */
     ADOBE_SIGN_WEBHOOK_SECRET: optionalString,
 
     // ---- AI-assisted extraction (opt-in only) ----

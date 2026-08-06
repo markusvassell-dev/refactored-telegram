@@ -293,15 +293,33 @@ wording, which are conditional and where a signature goes — a judgement about 
 document rather than a transformation of it — so adding a document type the
 application has never seen remains a reviewed code change.
 
+## Integration connections
+
+Karbon and Adobe Sign credentials are entered, rotated, checked and removed on
+the Integrations screen. A secret is written and never read back: the screen
+shows whether one is stored and a six-character fingerprint, which is enough to
+tell two tokens apart while rotating and useless to anybody who obtains it. A
+blank field keeps what is stored, so one credential can be rotated without
+re-entering the others.
+
+The connection check asks the vendor a read-only question and stores the answer,
+including the vendor's own error text on failure. It proves the credentials and
+the base URL; it does not promote any capability-matrix row, which only a real
+exercise against a sandbox work item can do.
+
+Marking a connection production is refused while Test Mode is on. Test Mode's
+guarantee is that no production integration is reachable, and a connection that
+could flip itself would make that a convention rather than a structural
+property.
+
 ## Next implementation step
 
-**No integration has been exercised against a real sandbox.** Karbon and Adobe
-Sign both run through mock adapters that are honest about being mocks, and
-`docs/karbon-capability-matrix.md` records what has been confirmed against vendor
-documentation rather than against a live account. Every workflow around them —
-generation, review, approval, the signing state machine, the return path into
-Karbon — is exercised end to end against those mocks, so what is unproven is the
-wire format and the credentials, not the logic.
+**Exercise Karbon against a sandbox tenant.** Everything needed to do it now
+exists: enter the credentials, run the connection check, then work through
+`docs/karbon-capability-matrix.md` row by row against a test work item and
+promote each from `unverified` as it is confirmed. That is the last thing
+standing between this application and an honest claim that its Karbon
+integration works, and it needs a tenant rather than code.
 
-Closing it needs a sandbox tenant for each vendor, not code. Until then no claim
-that an integration "works" should be made, and none is.
+The same is true of Adobe Acrobat Sign, whose setup is in
+`docs/adobe-sign-setup.md`.

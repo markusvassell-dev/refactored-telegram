@@ -22,13 +22,12 @@ try {
   process.stdout.write(`      ALLOW_PRODUCTION_SENDING ${env.ALLOW_PRODUCTION_SENDING}\n`);
 
   // Names only. The values are credentials and never belong in a deploy log.
-  const configured = [
-    env.ENTRA_CLIENT_ID ? 'entra-id' : null,
-    env.KARBON_BEARER_TOKEN ? 'karbon' : null,
-    env.ADOBE_SIGN_CLIENT_ID ? 'adobe-sign' : null,
-  ].filter((name): name is string => name !== null);
-
-  process.stdout.write(`      integrations configured  ${configured.length > 0 ? configured.join(', ') : 'none'}\n`);
+  //
+  // Only Entra appears here: vendor credentials are not environment variables.
+  // They live encrypted in the database and are entered on the Integrations
+  // screen, so whether Karbon or Adobe Sign is connected is a question for that
+  // screen rather than for a start-up log.
+  process.stdout.write(`      entra id configured      ${env.ENTRA_CLIENT_ID ? 'yes' : 'no'}\n`);
 
   if (env.BOOTSTRAP_ADMIN_EMAILS.length > 0) {
     process.stdout.write(

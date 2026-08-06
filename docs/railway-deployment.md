@@ -94,14 +94,18 @@ sending.
 
 ### Integrations
 
-`KARBON_API_BASE_URL`, `KARBON_BEARER_TOKEN`, `KARBON_ACCESS_KEY`,
-`KARBON_WEBHOOK_SECRET`, `ADOBE_SIGN_API_BASE_URL`, `ADOBE_SIGN_CLIENT_ID`,
-`ADOBE_SIGN_CLIENT_SECRET`, `ADOBE_SIGN_REDIRECT_URI`,
-`ADOBE_SIGN_REFRESH_TOKEN`, `ADOBE_SIGN_WEBHOOK_SECRET`.
+**Vendor credentials are not environment variables.** A Karbon bearer token and
+access key, and the Adobe Sign client id, secret and refresh token, are entered
+on the Integrations screen, where they are encrypted with `ENCRYPTION_KEY`,
+carry a sandbox-or-production flag, and every change is audited. That flag is
+what Test Mode keys off; a credential supplied through the environment would
+have no flag, and Test Mode's guarantee would become a convention.
 
-Credentials can be entered on the Integrations screen instead, where they are
-stored encrypted. That is preferable — it keeps them out of the platform
-environment and makes rotation auditable.
+What *is* environment configuration: `KARBON_API_BASE_URL`,
+`ADOBE_SIGN_API_BASE_URL` (region-specific), `ADOBE_SIGN_REDIRECT_URI`, and the
+two webhook secrets — `KARBON_WEBHOOK_SECRET` and `ADOBE_SIGN_WEBHOOK_SECRET` —
+which are values this application chooses and gives to the vendor, not
+credentials the vendor issues.
 
 See the full list in `.env.example`.
 

@@ -416,6 +416,80 @@ async function resetRoleFixtureUser(environment: E2EEnvironment): Promise<string
   }
 }
 
+test.describe('configuring an integration', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  test.afterAll(async ({}, testInfo) => {
+    const prisma = clientFor(environmentFor(testInfo));
+    try {
+      await prisma.integrationConnection.deleteMany({ where: { provider: 'KARBON' } });
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  test('stores a credential and never shows it back', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/integrations');
+
+    const secret = 'e2e-karbon-bearer-do-not-echo';
+
+    await page.getByLabel('Bearer token').fill(secret);
+    await page.getByLabel('Access key').fill('e2e-karbon-access-key');
+    await page.getByRole('button', { name: 'Save connection' }).first().click();
+
+    await expect(page.getByText(/Rotated: Bearer token, Access key/)).toBeVisible();
+
+    // The value must not survive anywhere in the rendered page — not in a
+    // field, not in a data attribute, not in the server-rendered payload.
+    await expect(page.getByText('stored').first()).toBeVisible();
+    expect(await page.content()).not.toContain(secret);
+
+    // And the field comes back empty rather than pre-filled with the secret.
+    await expect(page.getByLabel('Bearer token')).toHaveValue('');
+  });
+
+  test('refuses to mark a connection production while Test Mode is on', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/integrations');
+
+    await page.getByLabel('Environment').first().selectOption('false');
+    await page.getByRole('button', { name: 'Save connection' }).first().click();
+
+    // Matched on the refusal itself: "Test Mode is on" also appears in the
+    // page's own explanation of what Test Mode does.
+    await expect(page.getByText(/cannot be marked as production/i)).toBeVisible();
+  });
+
+  test('reports a failed connection check instead of hiding it', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/integrations');
+
+    await page.getByLabel('Bearer token').fill('e2e-token');
+    await page.getByLabel('Access key').fill('e2e-key');
+    await page.getByLabel('API base URL').first().fill('https://karbon.invalid/v3');
+    await page.getByRole('button', { name: 'Save connection' }).first().click();
+    await expect(page.getByText(/Rotated:/)).toBeVisible();
+
+    await page.getByRole('button', { name: 'Check connection' }).first().click();
+
+    // The vendor's own words, kept rather than swallowed: this is what an
+    // administrator needs in order to fix it.
+    await expect(page.getByText(/The connection did not work/i)).toBeVisible({ timeout: 60_000 });
+    await expect(page.getByText('Failed').first()).toBeVisible();
+  });
+
+  test('a reviewer sees what is connected but is given no way to change it', async ({ page }) => {
+    await signIn(page, /Reviewer/);
+    await page.goto('/integrations');
+
+    await expect(page.getByRole('heading', { name: 'Integrations' })).toBeVisible();
+    await expect(page.getByText('Active adapters')).toBeVisible();
+    await expect(page.getByLabel('Bearer token')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Save connection' })).toHaveCount(0);
+  });
+});
+
 test.describe('the smaller lists', () => {
   test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
 
