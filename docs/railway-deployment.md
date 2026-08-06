@@ -118,8 +118,15 @@ not exist yet. `BOOTSTRAP_ADMIN_EMAILS` breaks that deadlock: a listed address
 is granted `ADMINISTRATOR` **after** Entra ID authenticates it, never before,
 and the grant is written to the audit trail as `ROLE_GRANTED`.
 
-It is the only path to a role without an existing administrator. Sign in once,
-configure the directory role mapping under Settings, then clear the variable.
+Sign in once, configure the directory role mapping under Settings, then clear
+the variable.
+
+If the address does not match, the result is a dead end that cannot be escaped
+from inside the application: you are signed in, you hold no roles, every screen
+that matters is read-only, and granting a role needs an administrator who does
+not exist. `pnpm admin:grant <email> ADMINISTRATOR` in the deployment's console
+is the way out. It needs shell access to the deployment, which is already the
+most privileged thing a person can have here, and it is audited.
 
 ### Safety switches
 
@@ -251,8 +258,18 @@ database is ever recreated; swap it for a reference once the deployment is up.
 6. `GET /api/ready` — confirm `testMode: true` on a first deployment.
 7. Sign in via Entra ID as a `BOOTSTRAP_ADMIN_EMAILS` address. If the header
    reads **no roles assigned**, the address Entra authenticated is not the one
-   in the variable — the two must match exactly, ignoring case. Correct the
-   variable and sign in again.
+   in the variable — the two must match exactly, ignoring case. Either correct
+   the variable and sign in again, or grant the role from the console:
+
+   ```bash
+   pnpm admin:users                                # who exists, and what they hold
+   pnpm admin:grant you@yourfirm.ca ADMINISTRATOR  # grant
+   ```
+
+   `admin:users` also settles what the address actually is, which nothing in
+   the application displays. Every console grant is audited as `ROLE_GRANTED`
+   with `grantedBy: 'console'`, so it is distinguishable from one made by an
+   administrator in the application.
 8. Under Settings, configure the directory role mapping, then clear
    `BOOTSTRAP_ADMIN_EMAILS`.
 9. Configure integrations against **sandbox** credentials and health check.

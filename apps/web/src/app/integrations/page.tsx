@@ -214,7 +214,16 @@ function ConnectionCard({
           </div>
         </dl>
 
-        {!canManage ? null : (
+        {!canManage ? (
+          // Silence here reads as a missing feature. Somebody who arrives to
+          // connect Karbon and finds a page with no form has no way to tell
+          // "you may not do this" from "this was never built".
+          <p className="field-note" role="note">
+            You do not have permission to change this connection, so it is shown read-only. It needs{' '}
+            <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">integration:manage</code>, which the
+            ADMINISTRATOR role carries. An administrator can grant it under Users and Roles.
+          </p>
+        ) : (
           <>
             <ActionForm
               action={saveIntegrationConnection}
