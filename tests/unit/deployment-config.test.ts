@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, globSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadEnv } from '@element/shared';
@@ -85,6 +85,52 @@ describe('the image', () => {
 
   it('starts through the one entrypoint that decides its own role', () => {
     expect(dockerfile).toMatch(/CMD \["\.\/scripts\/start\.sh"\]/);
+  });
+});
+
+describe('what the application is allowed to frame', () => {
+  const config = read('apps/web/next.config.mjs');
+
+  /**
+   * Every place the application embeds something in an iframe.
+   *
+   * Discovered rather than listed, because a hand-maintained list is exactly
+   * what failed: a second viewer was added, the framing exception still named
+   * only the first, and the browser replaced a perfectly correct PDF with
+   * "refused to connect". A new entry here fails this test until whoever added
+   * it has decided what the framed response's headers should be.
+   */
+  const VIEWERS: Record<string, string> = {
+    // The src is built in lib/document-links.ts rather than written inline.
+    'apps/web/src/app/engagements/[id]/workspace.tsx': '/api/documents',
+    'apps/web/src/app/templates/[documentType]/page.tsx': '/api/templates',
+  };
+
+  const found = globSync('apps/web/src/**/*.tsx', { cwd: root })
+    .filter((file) => read(file).includes('<iframe'))
+    .sort();
+
+  it('knows about every viewer in the application', () => {
+    // Fails when an iframe appears somewhere new. That is the point: the
+    // framed route needs its own exception, and nothing else will say so.
+    expect(found).toEqual(Object.keys(VIEWERS).sort());
+  });
+
+  it('grants each framed route its own frame-ancestors exception', () => {
+    // The blanket policy is `X-Frame-Options: DENY` and `frame-ancestors
+    // 'none'`, which refuses even a same-origin parent. A framed route must
+    // opt out, and `frame-src 'self'` on the page is not enough on its own.
+    for (const [file, path] of Object.entries(VIEWERS)) {
+      expect(read(file), `${file} frames ${path}`).toBeTruthy();
+      expect(config, `${path} is framed but has no framing exception in next.config.mjs`).toContain(`${path}/:path*`);
+    }
+  });
+
+  it('narrows the exception to this origin rather than lifting it', () => {
+    expect(config).toMatch(/X-Frame-Options', value: 'SAMEORIGIN'/);
+    expect(config).toMatch(/frame-ancestors 'self'/);
+    // And the default stays closed.
+    expect(config).toMatch(/frame-ancestors 'none'/);
   });
 });
 

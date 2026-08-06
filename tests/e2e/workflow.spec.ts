@@ -697,26 +697,41 @@ test.describe('reading a template', () => {
   test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
 
   test('shows the approved wording as a PDF, with the fields it fills in', async ({ page }) => {
+    // The framing is the assertion. A previous version of this test fetched
+    // the PDF bytes and checked the iframe was "visible", both of which passed
+    // while the browser was replacing the frame with "refused to connect" —
+    // the security policy permitted framing for /api/documents and nothing
+    // else, so a correct PDF was produced and then blocked.
+    const violations: string[] = [];
+    page.on('console', (message) => {
+      if (/Content Security Policy|Refused to frame|X-Frame-Options/i.test(message.text())) {
+        violations.push(message.text());
+      }
+    });
+
     await signIn(page, /Administrator/);
     await page.goto('/templates');
 
     await page.getByRole('link', { name: 'Read it' }).first().click();
     await expect(page.getByRole('heading', { name: /engagement letter|cover letter/i }).first()).toBeVisible();
 
-    // The template itself, converted for reading. Previously the only way to
-    // know what the active wording said was to open the file on the server.
     const frame = page.locator('iframe[title*="version"]');
     await expect(frame).toBeVisible();
 
     const source = await frame.getAttribute('src');
     expect(source).toMatch(/^\/api\/templates\/[0-9a-f-]+\?format=pdf$/);
 
-    // Fetched directly: an iframe that fails to load looks identical to one
-    // that succeeds, so the bytes are checked rather than the element.
+    await page.waitForTimeout(2_000);
+    expect(violations, violations.join('\n')).toEqual([]);
+
     const response = await page.request.get(source ?? '');
     expect(response.status()).toBe(200);
     expect(response.headers()['content-type']).toContain('application/pdf');
     expect((await response.body()).subarray(0, 5).toString('latin1')).toBe('%PDF-');
+
+    // The headers a browser actually consults before rendering the frame.
+    expect(response.headers()['x-frame-options']).toBe('SAMEORIGIN');
+    expect(response.headers()['content-security-policy']).toContain("frame-ancestors 'self'");
 
     await expect(page.getByRole('heading', { name: /What gets filled in/ })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Download Word source' })).toBeVisible();

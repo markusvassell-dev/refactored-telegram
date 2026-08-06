@@ -603,7 +603,18 @@ Each was fixed in the code, not the test:
     a different host points at a file that is not there. Locating a template is
     now one function with an ordered list of candidates, ending at the copy
     that ships in the image under the name the manifest records.
-51. Activating a draft template was a decision made on a file name and a hash.
+51. **The template PDF was blocked by the security policy** — the third time in
+    this application, and the second in one session. The framing exception was
+    scoped to `/api/documents`, its comment said "the download route is the one
+    thing this application frames", and adding a second viewer made that
+    sentence false without anything saying so. The browser replaced a correct
+    PDF with "refused to connect". The browser test written for that feature
+    fetched the PDF bytes and asserted the iframe was *visible*, both of which
+    pass while the frame is blocked. It now asserts no policy violation fires
+    and that the served response carries `SAMEORIGIN` and
+    `frame-ancestors 'self'`; a unit test finds every file containing an
+    `<iframe>` and fails when one appears that has not been considered.
+52. Activating a draft template was a decision made on a file name and a hash.
     The second administrator — required to be a different person precisely
     because a template version is a wording change to every future engagement
     at once — had no way to read the wording they were approving. Every version

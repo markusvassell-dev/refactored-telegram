@@ -90,17 +90,23 @@ const nextConfig = {
           },
         ],
       },
-      {
-        // The download route is the one thing this application frames, and it
-        // frames it in its own review workspace. `frame-src 'self'` on the page
-        // is not enough on its own: the *framed* response must also permit it,
-        // and a blanket `DENY` / `frame-ancestors 'none'` would refuse even a
-        // same-origin parent. Narrowed to `self` here and nowhere else, so no
-        // other site can frame a document either.
-        //
-        // Listed after the catch-all deliberately: a later rule matching the
-        // same path wins for the headers it names.
-        source: '/api/documents/:path*',
+      // Routes this application embeds in its own pages.
+      //
+      // `frame-src 'self'` on the page is not enough on its own: the *framed*
+      // response must also permit it, and the blanket `DENY` /
+      // `frame-ancestors 'none'` above refuses even a same-origin parent.
+      // Narrowed to `self` here and nowhere else, so no other site can frame
+      // one of these either.
+      //
+      // A list rather than a single entry because it was a single entry, and
+      // adding a second embedded viewer without noticing this produced a
+      // perfectly correct PDF that the browser replaced with "refused to
+      // connect". Anything rendered in an iframe belongs here.
+      //
+      // Listed after the catch-all deliberately: a later rule matching the
+      // same path wins for the headers it names.
+      ...['/api/documents/:path*', '/api/templates/:path*'].map((source) => ({
+        source,
         headers: [
           { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           {
@@ -108,7 +114,7 @@ const nextConfig = {
             value: ["default-src 'none'", "frame-ancestors 'self'", "base-uri 'none'", "form-action 'none'"].join('; '),
           },
         ],
-      },
+      })),
     ];
   },
 };
