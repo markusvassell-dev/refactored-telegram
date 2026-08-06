@@ -3,10 +3,10 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (444 tests)
+pnpm test               # unit + integration  (476 tests)
 pnpm test:unit          # 237 — no external dependencies
-pnpm test:integration   # 207 — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 34  — needs a browser
+pnpm test:integration   # 239 — needs Postgres and LibreOffice Writer
+pnpm test:e2e           # 40  — needs a browser
 pnpm build              # production build
 ```
 
@@ -134,7 +134,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (207)
+## Integration tests (239)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -178,6 +178,27 @@ for "yes"; a confirmed date never rewritten; last year's ticks carried forward
 as `priorYearSelected` with `confirmed` still false; three consecutive runs
 producing exactly the same row counts; and a resolved conflict re-opened once a
 source changes, because a decision only covers the values it was made about.
+
+**Roles and access (15)** — what it refuses, mostly. A change with no real
+reason, a role already held, a role the person does not hold, and somebody
+without `user:manage` are all refused. Two refusals exist because the
+alternative cannot be undone from inside the application: removing your own
+administrator role, and removing or deactivating the last active one. A role the
+Entra ID directory granted is left alone, because revoking it here would undo
+itself at the next sign-in while the audit trail claimed otherwise. Deactivation
+is reversible, and every change records who made it and why.
+
+**Publishing a template (17)** — against the real approved T2 source and a
+genuinely revised copy of it. An upload is normalised and stored as a draft
+without activating anything; the hash of what was uploaded is recorded so the
+running system can be tied back to the file the firm approved. A PDF renamed
+`.docx` is refused by its magic number, an empty file is refused, a revision that
+removed a placeholder the manifest depends on is refused rather than rendering
+literal brackets to a client, and the identical bytes twice are refused so a
+double submit leaves one draft. Activating retires the version it replaces
+without deleting it, leaves exactly one active version, refuses the person who
+uploaded it, refuses a version already active, and refuses to bring a retired one
+back. Only a draft can be discarded.
 
 **The cover letter narrative (29)** — eleven against the real approved
 templates and eighteen through the service. The edit replaces the narrative and
@@ -476,6 +497,18 @@ Each was fixed in the code, not the test:
     with no roles at all — sorted first. Signing in succeeded and every
     permission check then failed, which surfaces much later as a button
     mysteriously missing from a page.
+35. The manifest-building half of template normalisation lived only in the
+    normalisation CLI. Publishing from the application would have needed a
+    second implementation, and two would eventually disagree — the symptom
+    being an uploaded template rendering differently from a committed one.
+    Extracted to `buildTemplateVersion`, and the CLI's output verified
+    byte-identical afterwards.
+36. Two tests written for this change mutated shared seeded data and did not put
+    it back: one deactivated every administrator in the database, including the
+    account the browser suite signs in with, and one granted a role to
+    `Sample Viewer` and failed before removing it. Both broke a later suite with
+    an error pointing nowhere near the cause. Fixture state is now restored in a
+    `finally`, and the browser test uses a user it owns.
 
 ## What is not covered
 

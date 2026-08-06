@@ -14,6 +14,8 @@ export * from './bulk-rollout.js';
 export * from './jobs/queue.js';
 export * from './field-values.js';
 export * from './field-form-service.js';
+export * from './user-admin-service.js';
+export * from './template-publish-service.js';
 export * from './engagement-service.js';
 export * from './source-document-service.js';
 export * from './date-rule-service.js';

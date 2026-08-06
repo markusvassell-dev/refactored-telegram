@@ -14,19 +14,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { sha256Hex } from '@element/shared';
-import {
-  MAIN_DOCUMENT_PART,
-  getPartText,
-  normalizeDocumentXml,
-  readDocx,
-  setPartText,
-  templateManifestSchema,
-  writeDocx,
-  TEMPLATE_SPECS,
-  type TemplateManifest,
-  type TemplateSpec,
-} from '@element/documents';
+import { buildTemplateVersion, TEMPLATE_SPECS, type TemplateSpec } from '@element/documents';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const SOURCE_DIR = join(ROOT, 'templates', 'source');
@@ -61,72 +49,26 @@ async function normalizeOne(spec: TemplateSpec): Promise<Outcome> {
     };
   }
 
-  const sourceHash = sha256Hex(source);
-  const parts = await readDocx(source);
-  const originalXml = getPartText(parts, MAIN_DOCUMENT_PART);
-
-  const result = normalizeDocumentXml(originalXml, spec.mappings);
-  setPartText(parts, MAIN_DOCUMENT_PART, result.documentXml);
-
-  const normalized = await writeDocx(parts);
-  const normalizedHash = sha256Hex(normalized);
+  const built = await buildTemplateVersion({ spec, sourceDocx: source });
 
   await mkdir(NORMALIZED_DIR, { recursive: true });
-  await writeFile(join(NORMALIZED_DIR, spec.sourceFileName), normalized);
-
-  // A reviewer recognises a field by the bracketed text it replaced in the
-  // approved letter, not by its internal token. The mapping already records
-  // that relationship, so record it on the field rather than asking anyone to
-  // keep a second list in step.
-  const placeholdersByToken = new Map<string, string[]>();
-  for (const mapping of spec.mappings) {
-    const seen = placeholdersByToken.get(mapping.token) ?? [];
-    if (!seen.includes(mapping.placeholder)) seen.push(mapping.placeholder);
-    placeholdersByToken.set(mapping.token, seen);
-  }
-
-  const fields = spec.fields.map((definition) => {
-    const placeholders = placeholdersByToken.get(definition.token);
-    if (definition.sourcePlaceholder || !placeholders?.length) return definition;
-    return { ...definition, sourcePlaceholder: placeholders.join(' / ') };
-  });
-
-  const manifest: TemplateManifest = templateManifestSchema.parse({
-    manifestVersion: 1,
-    documentType: spec.documentType,
-    templateVersion: 1,
-    sourceFileName: spec.sourceFileName,
-    sourceFileHash: sourceHash,
-    normalizedFileHash: normalizedHash,
-    fields,
-    conditionalSections: spec.conditionalSections,
-    checkboxes: spec.checkboxes,
-    signatureAnchors: spec.signatureAnchors,
-    internalOnlySections: spec.internalOnlySections,
-    editableSections: spec.editableSections,
-    sanitation: spec.sanitation,
-    lockedWordingByDefault: true,
-    notes: spec.notes,
-  });
+  await writeFile(join(NORMALIZED_DIR, spec.sourceFileName), built.normalizedDocx);
 
   await mkdir(MANIFEST_DIR, { recursive: true });
   await writeFile(
     join(MANIFEST_DIR, `${spec.documentType}.json`),
-    `${JSON.stringify(manifest, null, 2)}\n`,
+    `${JSON.stringify(built.manifest, null, 2)}\n`,
     'utf8',
   );
 
-  const errors = result.issues.filter((issue) => issue.severity === 'ERROR').map((issue) => issue.message);
-  const warnings = result.issues.filter((issue) => issue.severity === 'WARNING').map((issue) => issue.message);
-
   return {
     spec,
-    ok: errors.length === 0,
-    replacements: result.replacements,
-    errors,
-    warnings,
-    sourceHash,
-    normalizedHash,
+    ok: built.errors.length === 0,
+    replacements: built.replacements,
+    errors: built.errors,
+    warnings: built.warnings,
+    sourceHash: built.sourceFileHash,
+    normalizedHash: built.normalizedFileHash,
   };
 }
 

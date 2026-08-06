@@ -5,3 +5,4 @@ export * from './source-mappings.js';
 export * from './format.js';
 export * from './checkbox-detection.js';
 export * from './editable-sections.js';
+export * from './build-version.js';

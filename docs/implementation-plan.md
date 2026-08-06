@@ -267,18 +267,42 @@ whatever the last author wrote. Editing an approved letter sends it back for
 review, the same treatment a changed source document already gets; the document
 version that was approved is left exactly as it is.
 
+## Roles and templates
+
+Both screens are writable, and both write through a service that refuses the
+changes nobody could undo from inside the application.
+
+**Roles.** Granting and removing a role, and deactivating an account, each
+require a reason and are recorded against the person they affect. Removing your
+own administrator role is refused, as is removing or deactivating the last active
+one — with none, the only way back is a database edit. A role the Entra ID
+directory granted is left alone; revoking it here would undo itself at the next
+sign-in. Role combinations are *not* restricted: separation of duties in this
+application is per document — nobody approves their own draft — and is enforced
+where the author is actually known.
+
+**Templates.** An administrator uploads a revised approved source `.docx`; it is
+normalised against the placeholders that document type expects, checked, and
+stored as a draft. A *different* administrator activates it, the same rule the
+application applies to any wording change. Activating retires the version it
+replaces rather than overwriting it, and documents already generated keep their
+own reference to the version that produced them.
+
+Publishing does not author a manifest. A manifest says which paragraphs are legal
+wording, which are conditional and where a signature goes — a judgement about the
+document rather than a transformation of it — so adding a document type the
+application has never seen remains a reviewed code change.
+
 ## Next implementation step
 
-**Write UI for templates and users.** Both screens are read-only. Publishing a
-template version and granting a role are the two remaining operations that can
-only be done by editing the database, and both are exactly the kind of change
-that should leave a record — a template version is immutable once published, and
-a role grant decides who may approve a client-facing document.
+**Pagination on the remaining capped lists.** `/system-jobs` stops at 100,
+`/needs-attention` at 50, and the per-engagement activity lists at 20–100 — the
+same silent truncation the engagement and audit lists had. The helper and its
+tests exist, so each is a few lines; they are listed together because none is
+individually large.
 
-The work is a publish flow that normalises, hashes and validates a new version
-before it can be activated, and a role editor that enforces separation of duties
-at the point of granting rather than only at the point of use.
-
-After that: pagination on the remaining capped lists (`/system-jobs` at 100,
-`/needs-attention` at 50, and the per-engagement activity lists at 20–100). The
-helper exists, so each is small.
+After that, the largest remaining gap is that no integration has been exercised
+against a real sandbox. Karbon and Adobe Sign both run through mock adapters
+that are honest about being mocks, and the capability matrix records what has
+been confirmed against vendor documentation rather than against a live account.
+Closing that needs credentials, not code.

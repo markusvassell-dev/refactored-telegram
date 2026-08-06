@@ -12,6 +12,7 @@ import {
   type EngagementType,
   type FeeKind,
   type FeeMethod,
+  type Role,
 } from '@element/shared';
 import { factToken } from '@element/services';
 import type { FeeRuleLevel } from '@element/database';
@@ -985,6 +986,138 @@ const MIME_BY_EXTENSION: Record<string, string> = {
  * verified. The file goes through the same content checks as one Karbon
  * supplied, and reading it is queued rather than done in the request.
  */
+// ---- Users and roles -------------------------------------------------------
+
+export async function grantRole(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('user:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const userId = formData.get('userId')?.toString();
+    const role = formData.get('role')?.toString() as Role | undefined;
+    if (!userId || !role) throw new ValidationError('A person and a role are required.');
+
+    await container.users.grantRole({
+      userId,
+      role,
+      reason: formData.get('reason')?.toString() ?? '',
+      actor,
+    });
+
+    revalidatePath('/users');
+    return `Granted ${role}.`;
+  });
+}
+
+export async function revokeRole(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('user:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const userId = formData.get('userId')?.toString();
+    const role = formData.get('role')?.toString() as Role | undefined;
+    if (!userId || !role) throw new ValidationError('A person and a role are required.');
+
+    await container.users.revokeRole({
+      userId,
+      role,
+      reason: formData.get('reason')?.toString() ?? '',
+      actor,
+    });
+
+    revalidatePath('/users');
+    return `Removed ${role}.`;
+  });
+}
+
+export async function setUserActive(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('user:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const userId = formData.get('userId')?.toString();
+    if (!userId) throw new ValidationError('A person is required.');
+
+    const isActive = formData.get('isActive')?.toString() === 'true';
+
+    await container.users.setActive({
+      userId,
+      isActive,
+      reason: formData.get('reason')?.toString() ?? '',
+      actor,
+    });
+
+    revalidatePath('/users');
+    return isActive ? 'Account reactivated.' : 'Account deactivated. They can no longer sign in.';
+  });
+}
+
+// ---- Templates -------------------------------------------------------------
+
+export async function uploadTemplateVersion(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('template:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const documentType = formData.get('documentType')?.toString() as DocumentType | undefined;
+    const file = formData.get('file');
+
+    if (!documentType) throw new ValidationError('A document type is required.');
+    if (!(file instanceof File) || file.size === 0) throw new ValidationError('Choose a template file to upload.');
+
+    const outcome = await container.templatePublishing.uploadDraft({
+      documentType,
+      fileName: file.name,
+      content: Buffer.from(await file.arrayBuffer()),
+      notes: formData.get('notes')?.toString(),
+      actor,
+    });
+
+    revalidatePath('/templates');
+
+    const warning =
+      outcome.warnings.length > 0 ? ` ${outcome.warnings.length} warning(s) — review them before activating.` : '';
+
+    return `Uploaded as draft v${outcome.versionNumber}; ${outcome.replacements} placeholder(s) rewritten. Another administrator must activate it.${warning}`;
+  });
+}
+
+export async function activateTemplateVersion(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('template:publish');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const templateVersionId = formData.get('templateVersionId')?.toString();
+    if (!templateVersionId) throw new ValidationError('A template version is required.');
+
+    const outcome = await container.templatePublishing.activate({ templateVersionId, actor });
+
+    revalidatePath('/templates');
+    return outcome.retiredVersionNumber === null
+      ? 'Activated. This document type can now be generated.'
+      : `Activated. v${outcome.retiredVersionNumber} is retired; documents already generated from it are unchanged.`;
+  });
+}
+
+export async function discardTemplateDraft(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('template:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const templateVersionId = formData.get('templateVersionId')?.toString();
+    if (!templateVersionId) throw new ValidationError('A template version is required.');
+
+    await container.templatePublishing.discardDraft({
+      templateVersionId,
+      reason: formData.get('reason')?.toString() ?? '',
+      actor,
+    });
+
+    revalidatePath('/templates');
+    return 'Draft discarded.';
+  });
+}
+
 export async function uploadSourceDocument(formData: FormData): Promise<ActionResult> {
   return run(async () => {
     const actor = await requirePermission('source_document:select');

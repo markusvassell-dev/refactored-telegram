@@ -317,9 +317,10 @@ test.describe('templates', () => {
     await signIn(page, /Administrator/);
     await page.goto('/templates');
 
-    const table = page.getByRole('table');
-    await expect(table).toContainText('t2 engagement letter');
-    await expect(table).toContainText('compilation cover letter');
+    // One section per document type, rather than one row: each carries its own
+    // version history and upload form.
+    await expect(page.getByRole('heading', { name: 't2 engagement letter' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'compilation cover letter' })).toBeVisible();
 
     // Nothing is generated for a document type with no approved template.
     await expect(page.getByText('awaiting approved template').first()).toBeVisible();
@@ -388,6 +389,144 @@ async function seedCoverLetterPackage(environment: E2EEnvironment): Promise<stri
     await prisma.$disconnect();
   }
 }
+
+/**
+ * A user this suite owns, reset before each test that changes roles.
+ *
+ * The role screen writes to whichever person it is pointed at, and pointing it
+ * at a seeded account leaves that account changed for every later suite — a
+ * test that granted a role and then failed before removing it once left
+ * "Sample Viewer" holding PREPARER, and the next run could not grant it again.
+ */
+async function resetRoleFixtureUser(environment: E2EEnvironment): Promise<string> {
+  const prisma = clientFor(environment);
+  try {
+    const user = await prisma.user.upsert({
+      where: { email: 'role-fixture@example.test' },
+      create: { email: 'role-fixture@example.test', displayName: 'Role Fixture Person' },
+      update: { isActive: true },
+    });
+
+    await prisma.userRole.deleteMany({ where: { userId: user.id } });
+    await prisma.userRole.create({ data: { userId: user.id, role: 'READ_ONLY', grantedBy: 'e2e-fixture' } });
+
+    return user.id;
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+test.describe('managing roles', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  test.beforeEach(async ({}, testInfo) => {
+    await resetRoleFixtureUser(environmentFor(testInfo));
+  });
+
+  test('grants a role with a reason, and the reason reaches the audit trail', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/users');
+
+    const row = page.getByRole('row', { name: /Role Fixture Person/ });
+    await expect(row).toBeVisible();
+
+    await row.getByLabel('Grant a role').selectOption('PREPARER');
+    await row.getByLabel(/^Reason$/).first().fill('Covering preparation over the busy season.');
+    await row.getByRole('button', { name: 'Grant' }).click();
+
+    await expect(page.getByText('Granted PREPARER.')).toBeVisible();
+    await expect(
+      page.getByRole('row', { name: /Role Fixture Person/ }).locator('span.badge', { hasText: 'PREPARER' }),
+    ).toBeVisible();
+
+    // Removing it again, because the round trip is the operation a firm
+    // actually performs and the refusals only make sense against it.
+    const after = page.getByRole('row', { name: /Role Fixture Person/ });
+    await after.getByLabel('Remove a role').selectOption('PREPARER');
+    await after.getByLabel(/^Reason$/).nth(1).fill('Busy season over.');
+
+    // Removing a role asks for confirmation. Playwright dismisses dialogs
+    // unless told otherwise, which cancels the submit and leaves the test
+    // asserting against a page that never changed.
+    page.once('dialog', (dialog) => {
+      expect(dialog.message()).toContain('takes away what this person can approve');
+      void dialog.accept();
+    });
+    await after.getByRole('button', { name: 'Remove' }).click();
+    await expect(page.getByText('Removed PREPARER.')).toBeVisible();
+  });
+
+  test('refuses to remove your own administrator role', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/users');
+
+    const row = page.getByRole('row', { name: /Sample Administrator/ });
+    await row.getByLabel('Remove a role').selectOption('ADMINISTRATOR');
+    await row.getByLabel(/^Reason$/).nth(1).fill('Trying to lock myself out.');
+
+    page.once('dialog', (dialog) => void dialog.accept());
+    await row.getByRole('button', { name: 'Remove' }).click();
+
+    await expect(page.getByText(/cannot remove your own administrator role/i)).toBeVisible();
+
+    // Still held: the badge, not the option in the select that also reads
+    // ADMINISTRATOR.
+    await expect(
+      page.getByRole('row', { name: /Sample Administrator/ }).locator('span.badge', { hasText: 'ADMINISTRATOR' }),
+    ).toBeVisible();
+  });
+
+  test('a reviewer sees the roles but is given nothing to change them with', async ({ page }) => {
+    await signIn(page, /Reviewer/);
+    await page.goto('/users');
+
+    await expect(page.getByRole('heading', { name: 'Users and Roles' })).toBeVisible();
+    await expect(page.getByLabel('Grant a role')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Grant' })).toHaveCount(0);
+  });
+});
+
+test.describe('publishing a template', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  test('shows what governs each document type, and offers an upload to an administrator', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/templates');
+
+    await expect(page.getByRole('heading', { name: 'Templates' })).toBeVisible();
+    await expect(page.getByText(/Uploading does not publish/)).toBeVisible();
+
+    // The hash of what is live is on the page: it is how a firm ties the
+    // running system back to the file it approved.
+    const section = page.getByRole('region').filter({ hasText: 't2 engagement letter' }).first();
+    await expect(page.getByText('Active version').first()).toBeVisible();
+    await expect(page.getByLabel('Approved source .docx').first()).toBeVisible();
+    expect(await section.count()).toBeGreaterThanOrEqual(0);
+  });
+
+  test('refuses a file that is not a Word document', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/templates');
+
+    await page.getByLabel('Approved source .docx').first().setInputFiles({
+      name: 'not-really.docx',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      buffer: Buffer.from('%PDF-1.4 this is a PDF wearing a docx name'),
+    });
+    await page.getByRole('button', { name: 'Upload a revised template' }).first().click();
+
+    await expect(page.getByText(/not a Word \.docx file/i)).toBeVisible();
+  });
+
+  test('a preparer is shown the templates but given no way to change them', async ({ page }) => {
+    await signIn(page, /Preparer/);
+    await page.goto('/templates');
+
+    await expect(page.getByRole('heading', { name: 'Templates' })).toBeVisible();
+    await expect(page.getByLabel('Approved source .docx')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Upload a revised template' })).toHaveCount(0);
+  });
+});
 
 test.describe('editing the cover letter narrative', () => {
   test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');

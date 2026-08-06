@@ -7,6 +7,8 @@ import {
   BulkRolloutService,
   CoverLetterService,
   CoverLetterNarrativeService,
+  TemplatePublishService,
+  UserAdminService,
   DateRuleService,
   DocumentStore,
   EngagementService,
@@ -88,6 +90,10 @@ const coverLetterNarratives = new CoverLetterNarrativeService({
   audit,
   templateDirectory,
 });
+
+const users = new UserAdminService({ prisma, audit });
+
+const templatePublishing = new TemplatePublishService({ prisma, audit, store });
 const notifications = new KarbonNotificationService({
   prisma,
   audit,
@@ -118,6 +124,8 @@ export const container = {
   signing,
   coverLetters,
   coverLetterNarratives,
+  users,
+  templatePublishing,
   notifications,
   bulk,
   async testModeState() {
