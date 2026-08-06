@@ -651,7 +651,18 @@ Each was fixed in the code, not the test:
     Only the `$skip` offset is taken from the nextLink. Following a
     vendor-supplied absolute URL would let a response point this client at any
     host it liked.
-57. Activating a draft template was a decision made on a file name and a hash.
+57. **The switch that decides whether the application talks to Karbon or to a
+    mock displayed the wrong value.** Both selects on the Integrations screen
+    are uncontrolled, and React resets a form once its action completes — but
+    `defaultValue` is only applied on mount, so the reset put the previous
+    choice back. Choosing "Yes", saving, and watching it snap to "No" is what
+    it looked like; the row was written correctly the whole time and only the
+    screen lied. Worse, saving again then sent the displayed "No" and genuinely
+    turned the connection off, so the fix appeared to be impossible rather than
+    merely invisible. Reproduced in a browser before the fix and after it: the
+    test fails with `Received: "false"` without the re-keying that remounts the
+    select when the stored value changes.
+58. Activating a draft template was a decision made on a file name and a hash.
     The second administrator — required to be a different person precisely
     because a template version is a wording change to every future engagement
     at once — had no way to read the wording they were approving. Every version

@@ -487,6 +487,37 @@ test.describe('configuring an integration', () => {
     }
   });
 
+  test('turning the connection on stays on, on the screen as well as in the database', async ({ page }) => {
+    // The defect: both selects are uncontrolled, and React resets a form once
+    // its action completes. `defaultValue` only applies on mount, so the reset
+    // put the old choice back — you chose Yes, the server stored Yes, and the
+    // dropdown said No. For the switch that decides whether the application
+    // talks to a real vendor or a mock, a screen that contradicts the database
+    // is worse than one that refuses.
+    await signIn(page, /Administrator/);
+    await page.goto('/integrations');
+
+    // Scoped by id: both provider cards carry the same labels.
+    const useConnection = page.locator('#KARBON-isEnabled');
+
+    await page.getByLabel('Bearer token').fill('e2e-enable-bearer');
+    await page.getByLabel('Access key').fill('e2e-enable-access');
+    await useConnection.selectOption('true');
+    await page.getByRole('button', { name: 'Save connection' }).first().click();
+
+    await expect(page.getByText(/Saved\./)).toBeVisible();
+
+    // The dropdown still says Yes after the form has been reset...
+    await expect(useConnection).toHaveValue('true');
+    // ...and the Karbon card's own badge, rendered from the stored row, agrees.
+    const karbonCard = page.locator('section').filter({ has: page.locator('#KARBON-isEnabled') });
+    await expect(karbonCard.getByText('enabled', { exact: true })).toBeVisible();
+
+    // And it survives a fresh load, which is the database's account of it.
+    await page.reload();
+    await expect(useConnection).toHaveValue('true');
+  });
+
   test('stores a credential and never shows it back', async ({ page }) => {
     await signIn(page, /Administrator/);
     await page.goto('/integrations');

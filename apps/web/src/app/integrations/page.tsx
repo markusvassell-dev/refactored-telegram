@@ -274,7 +274,15 @@ function ConnectionCard({
                   <label className="label" htmlFor={`${provider}-isSandbox`}>
                     Environment
                   </label>
+                  {/* Keyed on the stored value. These are uncontrolled selects,
+                      and React resets a form once its action completes — but
+                      `defaultValue` is only applied on mount, so a reset put
+                      the old choice back and the screen then contradicted the
+                      database. Re-keying remounts the select when the stored
+                      value changes, which is the only way an uncontrolled one
+                      picks up a new default. */}
                   <select
+                    key={`sandbox-${connection.isSandbox}`}
                     id={`${provider}-isSandbox`}
                     name="isSandbox"
                     className="input"
@@ -295,6 +303,7 @@ function ConnectionCard({
                     Use this connection
                   </label>
                   <select
+                    key={`enabled-${connection.isEnabled}`}
                     id={`${provider}-isEnabled`}
                     name="isEnabled"
                     className="input"
