@@ -1,7 +1,8 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { container } from '@/lib/container';
-import { requirePermission, sessionCsrfToken } from '@/lib/session';
+import { pageAccess, sessionCsrfToken } from '@/lib/session';
+import { AccessDenied } from '@/components/access-denied';
 import { PageHeader } from '@/components/shell';
 import { FeeRuleEditor, type FeeRuleFormValues } from './editor';
 
@@ -11,7 +12,9 @@ export const dynamic = 'force-dynamic';
 const NEW = 'new';
 
 export default async function PricingRulePage({ params }: { params: Promise<{ id: string }> }) {
-  await requirePermission('pricing_rule:manage');
+  const access = await pageAccess('pricing_rule:manage');
+  if (!access.allowed) return <AccessDenied permission="pricing_rule:manage" user={access.user} what="Editing a pricing rule" />;
+
   const { id } = await params;
   const csrfToken = (await sessionCsrfToken()) ?? '';
 

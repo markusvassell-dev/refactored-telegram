@@ -329,11 +329,24 @@ test.describe('templates', () => {
 });
 
 test.describe('role permissions', () => {
-  test('a read-only user cannot reach the audit log', async ({ page }) => {
+  test('a read-only user is not offered the audit log, and is told why if they go there', async ({ page }) => {
     await signIn(page, /Viewer/);
 
-    const response = await page.request.get('/audit-log');
-    expect(response.status()).toBeGreaterThanOrEqual(400);
+    // Not offered. The previous version of this test asserted only that the
+    // request failed, which a generic error screen satisfies — so "Something
+    // went wrong, reference 298691949" passed for a permission decision, and a
+    // real deployment reported the audit log as broken when it was working.
+    await expect(page.getByRole('link', { name: 'Audit Log' })).toHaveCount(0);
+
+    // Reached directly anyway, the refusal explains itself rather than looking
+    // like a crash.
+    await page.goto('/audit-log');
+    await expect(page.getByRole('heading', { name: 'You do not have access to this' })).toBeVisible();
+    await expect(page.getByText('audit:view')).toBeVisible();
+    await expect(page.getByText('Something went wrong')).toHaveCount(0);
+
+    // Server-side authorisation, not a hidden link: no audit data is rendered.
+    await expect(page.getByRole('table')).toHaveCount(0);
   });
 
   test('an administrator can read the audit log', async ({ page }) => {
@@ -954,9 +967,12 @@ test.describe('starting an engagement', () => {
 
     await expect(page.getByRole('link', { name: 'Start an engagement' })).toHaveCount(0);
 
-    // Hidden in the UI and refused on the server, not merely hidden.
-    const response = await page.request.get('/engagements/new');
-    expect(response.status()).toBeGreaterThanOrEqual(400);
+    // Hidden in the UI and refused on the server, not merely hidden — and the
+    // refusal says which permission it wants rather than reading as a crash.
+    await page.goto('/engagements/new');
+    await expect(page.getByRole('heading', { name: 'You do not have access to this' })).toBeVisible();
+    await expect(page.getByText('engagement:create')).toBeVisible();
+    await expect(page.getByRole('button', { name: /create engagement/i })).toHaveCount(0);
   });
 });
 
@@ -1019,8 +1035,10 @@ test.describe('editing a pricing rule', () => {
 
     await expect(page.getByRole('link', { name: 'New pricing rule' })).toHaveCount(0);
 
-    const response = await page.request.get('/pricing-rules/new');
-    expect(response.status()).toBeGreaterThanOrEqual(400);
+    await page.goto('/pricing-rules/new');
+    await expect(page.getByRole('heading', { name: 'You do not have access to this' })).toBeVisible();
+    await expect(page.getByText('pricing_rule:manage')).toBeVisible();
+    await expect(page.getByRole('button', { name: /save/i })).toHaveCount(0);
   });
 });
 
@@ -1098,8 +1116,10 @@ test.describe('editing a date rule', () => {
     await expect(page.getByRole('cell', { name: RULE })).toBeVisible();
     await expect(page.getByRole('link', { name: RULE })).toHaveCount(0);
 
-    const response = await page.request.get(`/date-rules/${RULE}`);
-    expect(response.status()).toBeGreaterThanOrEqual(400);
+    await page.goto(`/date-rules/${RULE}`);
+    await expect(page.getByRole('heading', { name: 'You do not have access to this' })).toBeVisible();
+    await expect(page.getByText('date_rule:manage')).toBeVisible();
+    await expect(page.getByRole('button', { name: /save/i })).toHaveCount(0);
   });
 });
 

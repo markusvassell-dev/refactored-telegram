@@ -1,5 +1,6 @@
 import { container } from '@/lib/container';
-import { requirePermission } from '@/lib/session';
+import { pageAccess } from '@/lib/session';
+import { AccessDenied } from '@/components/access-denied';
 import { EmptyState, PageHeader } from '@/components/shell';
 import { Pagination, PageOutOfRange } from '@/components/pagination';
 import { boundedCount, parsePageRequest, toPage, withStableOrder } from '@/lib/pagination';
@@ -11,7 +12,9 @@ export default async function AuditLogPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requirePermission('audit:view');
+  const access = await pageAccess('audit:view');
+  if (!access.allowed) return <AccessDenied permission="audit:view" user={access.user} what="The audit log" />;
+
   const params = await searchParams;
   const request = parsePageRequest(params, { defaultPageSize: 100 });
 

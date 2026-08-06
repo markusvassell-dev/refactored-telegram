@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import type { Principal } from '@element/shared';
+import { navigationFor } from '@/lib/navigation';
 
 /**
  * Application shell.
@@ -8,29 +9,6 @@ import type { Principal } from '@element/shared';
  * Desktop-first but responsive. The Test Mode banner is permanent and
  * unmissable whenever Test Mode is active.
  */
-
-export interface NavItem {
-  href: string;
-  label: string;
-  description: string;
-}
-
-export const NAV_ITEMS: NavItem[] = [
-  { href: '/', label: 'Dashboard', description: 'What needs attention today' },
-  { href: '/engagements', label: 'Engagements', description: 'All engagement letters' },
-  { href: '/review-queue', label: 'Review Queue', description: 'Drafts waiting for you' },
-  { href: '/cover-letters', label: 'Cover Letters', description: 'Completion cover letters' },
-  { href: '/needs-attention', label: 'Needs Attention', description: 'Blocked or failed work' },
-  { href: '/bulk-rollout', label: 'Bulk Rollout', description: 'Annual rollout' },
-  { href: '/templates', label: 'Templates', description: 'Approved master templates' },
-  { href: '/pricing-rules', label: 'Pricing Rules', description: 'Fee increase policy' },
-  { href: '/date-rules', label: 'Date Rules', description: 'Deadline calculation' },
-  { href: '/integrations', label: 'Integrations', description: 'Karbon and Adobe Sign' },
-  { href: '/users', label: 'Users and Roles', description: 'Access control' },
-  { href: '/audit-log', label: 'Audit Log', description: 'Immutable history' },
-  { href: '/system-jobs', label: 'System Jobs', description: 'Background processing' },
-  { href: '/settings', label: 'Settings', description: 'System configuration' },
-];
 
 export function TestModeBanner({ banner }: { banner: string | null }): ReactNode {
   if (!banner) return null;
@@ -84,7 +62,7 @@ export function Shell({
           </div>
 
           <ul className="flex flex-wrap gap-1 px-3 pb-4 lg:flex-col lg:gap-0">
-            {NAV_ITEMS.map((item) => (
+            {navigationFor(user).map((item) => (
               <li key={item.href}>
                 <Link
                   href={item.href}
@@ -105,7 +83,13 @@ export function Shell({
                 <div className="flex items-center gap-3">
                   <span className="text-slate-700">
                     {user.displayName}
-                    <span className="ml-2 text-xs text-slate-500">{user.roles.join(', ')}</span>
+                    {/* Rendered even when empty. A signed-in user holding no
+                        roles can do almost nothing, and leaving the space blank
+                        makes that look like a page fault rather than the
+                        account state it is. */}
+                    <span className="ml-2 text-xs text-slate-500">
+                      {user.roles.length > 0 ? user.roles.join(', ') : 'no roles assigned'}
+                    </span>
                   </span>
                   <form action="/api/auth/sign-out" method="post">
                     <button type="submit" className="btn-secondary">

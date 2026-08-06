@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { container } from '@/lib/container';
-import { requirePermission, sessionCsrfToken } from '@/lib/session';
+import { pageAccess, sessionCsrfToken } from '@/lib/session';
+import { AccessDenied } from '@/components/access-denied';
 import { PageHeader } from '@/components/shell';
 import { ActionForm } from '@/components/action-form';
 import { createEngagement } from '@/app/actions';
@@ -15,7 +16,9 @@ export const dynamic = 'force-dynamic';
  * against a live tenant, this is the only way to begin real work.
  */
 export default async function NewEngagementPage() {
-  await requirePermission('engagement:create');
+  const access = await pageAccess('engagement:create');
+  if (!access.allowed) return <AccessDenied permission="engagement:create" user={access.user} what="Starting an engagement" />;
+
   const csrfToken = (await sessionCsrfToken()) ?? '';
 
   const [clients, reviewers, templates, testMode] = await Promise.all([

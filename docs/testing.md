@@ -561,6 +561,33 @@ Each was fixed in the code, not the test:
     reason on the page, and the route that builds the authorization URL declines
     to build it. Shape only — whether a well-formed GUID is a real directory is
     Microsoft's question to answer.
+44. **A permission decision was reported as a crash.** `requirePermission`
+    threw from inside a page, the route error boundary caught it, and the
+    reader got "Something went wrong" with a reference number — the same screen
+    a failed database query produces. Nothing on it distinguished "your account
+    may not read this" from "the application is broken". A deployment was
+    reported as having a broken audit log when the audit log was working
+    correctly and refusing a user who held no roles. Pages now report the
+    decision instead of raising it: which permission is required, which address
+    is signed in, and which roles it holds.
+45. The navigation offered every page to every role, so a user without
+    `audit:view` was shown a link to the audit log and refused on arrival. The
+    application invited somebody somewhere and then turned them away. It is now
+    filtered by what the principal can actually reach.
+46. Four browser tests asserted only `status >= 400` for a refused page, which
+    a generic error screen satisfies — so the crash-shaped denial passed for a
+    permission decision in all four. They now assert what a person sees.
+47. **Nothing seeded the deployed database.** `start-web.sh` migrated and
+    started; the seed was a manual step documented in the deployment guide.
+    A correctly deployed application therefore came up with no approved
+    templates, no pricing rules, no date rules and no system settings — every
+    screen rendered, nothing could be generated, and the Templates page
+    reported all eight document types as awaiting a template that was sitting
+    in the image the whole time. The seed now runs on every boot, before the
+    server starts.
+48. `db:seed` was `tsx --env-file=.env`, and `.dockerignore` excludes `.env`
+    deliberately. The one command that had to work in the image was the one
+    that required a file the image must not contain.
 
 ## What is not covered
 

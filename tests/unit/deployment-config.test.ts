@@ -181,6 +181,27 @@ describe('the start scripts', () => {
     expect(workerScript).not.toMatch(/pnpm db:migrate/);
   });
 
+  it('seeds after migrating, because a migrated schema is not a usable application', () => {
+    // Without this the deployment comes up with no approved templates, no
+    // pricing rules and no date rules: every screen renders, nothing can be
+    // generated, and the Templates page reports all eight document types as
+    // awaiting a template that is sitting in the image the whole time.
+    expect(webScript).toMatch(/pnpm db:seed/);
+    expect(webScript.indexOf('pnpm db:migrate')).toBeLessThan(webScript.indexOf('pnpm db:seed'));
+
+    // One writer, same reason migrations have one.
+    expect(workerScript).not.toMatch(/pnpm db:seed/);
+  });
+
+  it('seeds with a command that works in an image with no .env', () => {
+    // `.dockerignore` excludes `.env` deliberately — a developer's copy would
+    // otherwise override the platform's variables. A seed command that
+    // *required* that file would therefore fail in the one place it matters.
+    const scripts = JSON.parse(read('package.json')) as { scripts: Record<string, string> };
+    expect(scripts.scripts['db:seed']).not.toMatch(/--env-file=/);
+    expect(scripts.scripts['db:seed']).toMatch(/--env-file-if-exists=/);
+  });
+
   it('check configuration before starting, so a missing key fails the deploy rather than every page', () => {
     expect(webScript).toMatch(/check_environment/);
     expect(workerScript).toMatch(/check_environment/);

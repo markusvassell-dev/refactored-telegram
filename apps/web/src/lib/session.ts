@@ -102,6 +102,24 @@ export async function requirePermission(permission: Permission): Promise<Princip
   return user;
 }
 
+/**
+ * The page equivalent of `requirePermission`.
+ *
+ * A server action or an API route should throw: the caller is code, and a 403
+ * is the answer it needs. A page is read by a person, and throwing there means
+ * the route error boundary renders "Something went wrong" with a reference
+ * number — indistinguishable from a crash, and useless to the person reading
+ * it. So this reports the decision instead of raising it, and the page renders
+ * `<AccessDenied>`.
+ */
+export async function pageAccess(
+  permission: Permission,
+): Promise<{ allowed: true; user: Principal } | { allowed: false; user: Principal | null }> {
+  const user = await currentUser();
+  if (user && can(user, permission)) return { allowed: true, user };
+  return { allowed: false, user };
+}
+
 // ---------------------------------------------------------------------------
 // CSRF
 // ---------------------------------------------------------------------------

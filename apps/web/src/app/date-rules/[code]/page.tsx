@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { dateFactQuestion } from '@element/dates';
 import { container } from '@/lib/container';
-import { requirePermission, sessionCsrfToken } from '@/lib/session';
+import { pageAccess, sessionCsrfToken } from '@/lib/session';
+import { AccessDenied } from '@/components/access-denied';
 import { PageHeader } from '@/components/shell';
 import { DateRuleEditor } from './editor';
 
@@ -16,7 +17,9 @@ export const dynamic = 'force-dynamic';
  * affect is stated before the change rather than discovered afterwards.
  */
 export default async function DateRulePage({ params }: { params: Promise<{ code: string }> }) {
-  await requirePermission('date_rule:manage');
+  const access = await pageAccess('date_rule:manage');
+  if (!access.allowed) return <AccessDenied permission="date_rule:manage" user={access.user} what="Editing a date rule" />;
+
   const { code } = await params;
   const csrfToken = (await sessionCsrfToken()) ?? '';
 

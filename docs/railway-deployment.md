@@ -152,13 +152,24 @@ See the full list in `.env.example`.
 ## Database
 
 ```bash
-pnpm db:migrate      # prisma migrate deploy — the web service runs this on boot
+pnpm db:migrate      # prisma migrate deploy
 pnpm db:seed         # idempotent; safe to re-run
 ```
 
-The seed registers the approved templates, the default price and date rules,
-and the system settings. Sample clients and the sample engagement are skipped
-when `APP_ENV=production`.
+**The web service runs both on every boot.** A migrated schema is not a usable
+application: the seed is what registers the approved templates, the default
+price and date rules, and the system settings. Left as a manual step it was
+simply never run, and the deployment came up with every screen rendering, no
+document generatable, and the Templates page reporting all eight document types
+as awaiting a template that was in the image the whole time.
+
+The seed upserts, and skips a template version that already exists rather than
+rewriting it — which the database forbids in any case. Sample clients and the
+sample engagement are skipped when `APP_ENV=production`.
+
+If it fails the deploy fails, for the same reason a failed migration does:
+starting anyway would hide a half-configured application behind screens that
+render but cannot do any work.
 
 Run `pnpm templates:normalize` **before** building if any template changed; the
 normalised files are committed, so a normal deploy does not need it.
@@ -238,7 +249,10 @@ database is ever recreated; swap it for a reference once the deployment is up.
 5. Each service checks its configuration, then the web service migrates. Both
    print what they are doing in the **Deploy Logs**.
 6. `GET /api/ready` — confirm `testMode: true` on a first deployment.
-7. Sign in via Entra ID as a `BOOTSTRAP_ADMIN_EMAILS` address.
+7. Sign in via Entra ID as a `BOOTSTRAP_ADMIN_EMAILS` address. If the header
+   reads **no roles assigned**, the address Entra authenticated is not the one
+   in the variable — the two must match exactly, ignoring case. Correct the
+   variable and sign in again.
 8. Under Settings, configure the directory role mapping, then clear
    `BOOTSTRAP_ADMIN_EMAILS`.
 9. Configure integrations against **sandbox** credentials and health check.

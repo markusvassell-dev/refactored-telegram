@@ -36,5 +36,27 @@ if ! pnpm db:migrate; then
   exit 1
 fi
 
-echo "==> Migrations applied; starting the web server"
+echo "==> Migrations applied"
+
+# The schema is not the application. Without this the deployment comes up with
+# no approved templates, no pricing rules, no date rules and no system
+# settings — every screen renders, nothing can be generated, and the Templates
+# page reports all eight document types as awaiting a template that is sitting
+# in the image the whole time.
+#
+# The seed is idempotent: it upserts, and skips a template version that already
+# exists rather than rewriting it, which the database forbids anyway. Sample
+# clients and the sample engagement are skipped when APP_ENV=production.
+echo "==> Registering approved templates and reference data"
+if ! pnpm db:seed; then
+  echo "" >&2
+  echo "FATAL: seeding failed; the web server was not started." >&2
+  echo "       The schema is migrated but the approved templates, pricing" >&2
+  echo "       rules and date rules are missing or incomplete, so no document" >&2
+  echo "       could be generated. Starting anyway would hide that behind" >&2
+  echo "       screens that render but cannot do any work." >&2
+  exit 1
+fi
+
+echo "==> Starting the web server"
 exec pnpm --filter @element/web start
