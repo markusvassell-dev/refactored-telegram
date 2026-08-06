@@ -6,7 +6,7 @@ pnpm lint               # eslint
 pnpm test               # unit + integration  (496 tests)
 pnpm test:unit          # 238 — no external dependencies
 pnpm test:integration   # 258 — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 47  — needs a browser
+pnpm test:e2e           # 49  — needs a browser
 pnpm build              # production build
 ```
 
@@ -543,6 +543,14 @@ Each was fixed in the code, not the test:
     verification checklist opened with "configure a sandbox connection on the
     Integrations screen". There was no way to configure either integration, from
     the UI or the environment.
+42. **Nobody could sign in.** `form-action 'self'` is checked against where a
+    form submission ends up, not only where it was aimed, so the browser blocked
+    the sign-in redirect to Microsoft — and blocked it silently. Clicking
+    "Continue with Microsoft" did nothing at all, with the reason visible only
+    in a console nobody had open. Reproduced in a real browser against the
+    production build before the fix and after it; a browser test now asserts
+    both that no policy violation fires and that the served header names the
+    sign-in host.
 
 ## What is not covered
 

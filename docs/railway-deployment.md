@@ -69,6 +69,7 @@ Set on **both** the web and worker services unless noted.
 | `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` | Required outside development — the app refuses to boot without them |
 | `ENTRA_REDIRECT_URI` | `https://<your-domain>/api/auth/entra/callback`, registered identically in Entra |
 | `BOOTSTRAP_ADMIN_EMAILS` | The first administrator. Required on a first deployment; see below |
+| `ENTRA_SIGN_IN_HOSTS` | Only for a national cloud. Defaults to `https://login.microsoftonline.com`, which the Content Security Policy must name for sign-in to be able to redirect there |
 
 #### The first administrator
 

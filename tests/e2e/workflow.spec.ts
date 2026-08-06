@@ -416,6 +416,46 @@ async function resetRoleFixtureUser(environment: E2EEnvironment): Promise<string
   }
 }
 
+test.describe('signing in with Microsoft', () => {
+  test('the security policy lets the sign-in redirect leave for Microsoft', async ({ page }) => {
+    // This is the whole test: `form-action` is checked against where a form
+    // submission ends up, not only where it was aimed. With `'self'` alone the
+    // browser blocked the redirect to Microsoft and said so only in a console
+    // nobody had open — clicking "Continue with Microsoft" did nothing at all.
+    const violations: string[] = [];
+    page.on('console', (message) => {
+      if (/Content Security Policy/i.test(message.text())) violations.push(message.text());
+    });
+
+    await page.goto('/sign-in');
+
+    const button = page.getByRole('button', { name: 'Continue with Microsoft' });
+    await expect(button).toBeEnabled();
+    await button.click();
+    await page.waitForTimeout(1_500);
+
+    expect(violations, violations.join('\n')).toEqual([]);
+
+    // It left the sign-in page. Where it ended up depends on whether the run
+    // can reach Microsoft, which is not what this is testing.
+    expect(page.url()).not.toContain('/sign-in');
+  });
+
+  test('the served policy names the sign-in host, not just the source', async ({ page }) => {
+    const response = await page.request.get('/sign-in');
+    const policy = response.headers()['content-security-policy'] ?? '';
+
+    const formAction = policy
+      .split(';')
+      .map((directive) => directive.trim())
+      .find((directive) => directive.startsWith('form-action'));
+
+    expect(formAction).toBeDefined();
+    expect(formAction).toContain("'self'");
+    expect(formAction).toContain('https://login.microsoftonline.com');
+  });
+});
+
 test.describe('configuring an integration', () => {
   test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
 

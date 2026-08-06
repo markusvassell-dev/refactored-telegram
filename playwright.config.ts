@@ -82,6 +82,13 @@ export default defineConfig({
           // Pinned so a test can put a working copy where the server will look
           // for it, and sign a link the server will accept.
           DOCUMENT_STORAGE_DIRECTORY: e2eEnvironment.storageDirectory,
+          // Not real, and never used to reach Microsoft: they exist so the
+          // sign-in button is enabled and a test can prove the Content Security
+          // Policy lets the submission through. It did not, and the browser
+          // said nothing a user would see.
+          ENTRA_TENANT_ID: '11111111-2222-3333-4444-555555555555',
+          ENTRA_CLIENT_ID: '66666666-7777-8888-9999-000000000000',
+          ENTRA_CLIENT_SECRET: 'not-a-real-secret',
         },
       },
 });

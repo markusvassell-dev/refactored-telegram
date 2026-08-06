@@ -48,6 +48,23 @@ const nextConfig = {
     const isDevelopment = process.env.NODE_ENV !== 'production';
     const scriptSrc = ["'self'", "'unsafe-inline'", ...(isDevelopment ? ["'unsafe-eval'"] : [])].join(' ');
 
+    // Sign-in is a form that posts to this application and is answered with a
+    // redirect to Microsoft. `form-action` is checked against where the
+    // submission ends up, not only where it was aimed, so a policy of `'self'`
+    // alone blocks the redirect — and the browser blocks it silently. Clicking
+    // "Continue with Microsoft" simply did nothing, with the reason visible
+    // only in a console nobody had open.
+    //
+    // Configurable because a national cloud has a different sign-in host:
+    // Entra's authority is login.microsoftonline.com for the global cloud,
+    // login.microsoftonline.us for US Government, and so on. Anything listed
+    // here can receive a form submission from this application, so it stays a
+    // short, explicit list rather than a wildcard.
+    const signInHosts = (process.env.ENTRA_SIGN_IN_HOSTS ?? 'https://login.microsoftonline.com')
+      .split(',')
+      .map((host) => host.trim())
+      .filter(Boolean);
+
     return [
       {
         source: '/:path*',
@@ -68,7 +85,7 @@ const nextConfig = {
               "frame-src 'self' blob:",
               "frame-ancestors 'none'",
               "base-uri 'self'",
-              "form-action 'self'",
+              `form-action 'self' ${signInHosts.join(' ')}`,
             ].join('; '),
           },
         ],

@@ -194,3 +194,17 @@ makes a deadline decision.
    documents in Karbon were never overwritten.
 4. **Data exposure question** — the audit trail answers what was generated,
    approved, uploaded and sent, for every engagement, immutably.
+
+## Content Security Policy and sign-in
+
+`form-action` is checked against where a form submission **ends up**, not only
+where it was aimed. Sign-in posts to this application and is answered with a
+redirect to Microsoft, so a policy of `form-action 'self'` blocks it — and
+browsers block it silently: the button appears to do nothing, and the reason
+goes only to the developer console.
+
+The policy therefore lists the Entra sign-in host explicitly. It is configurable
+through `ENTRA_SIGN_IN_HOSTS` because a national cloud uses a different one
+(`login.microsoftonline.us` for US Government, and so on), and it stays a short
+explicit list rather than a wildcard: anything named there can receive a form
+submission from this application.
