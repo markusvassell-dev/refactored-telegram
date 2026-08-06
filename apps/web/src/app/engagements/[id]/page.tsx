@@ -5,6 +5,7 @@ import { formatMoney } from '@element/shared';
 import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
 import { linksForAll } from '@/lib/document-links';
+import { boundedCount, withStableOrder } from '@/lib/pagination';
 import { PageHeader, StatusBadge } from '@/components/shell';
 import { ReviewWorkspace } from './workspace';
 
@@ -45,21 +46,37 @@ export default async function EngagementDetailPage({ params }: { params: Promise
       reviewComments: { include: { user: true }, orderBy: { createdAt: 'desc' } },
       approvals: { include: { user: true }, orderBy: { createdAt: 'desc' } },
       wordingExceptions: { include: { author: true, approver: true } },
-      adobeAgreements: { include: { signers: true, events: { orderBy: { receivedAt: 'desc' }, take: 20 } } },
+      adobeAgreements: {
+        include: {
+          signers: true,
+          // `id` last so "the twenty most recent" is a defined twenty: signing
+          // events arriving in one webhook batch share a `receivedAt`.
+          events: { orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }], take: 20 },
+          _count: { select: { events: true } },
+        },
+      },
       coverLetters: { include: { documentVersions: true } },
-      karbonActivities: { orderBy: { createdAt: 'desc' }, take: 50 },
-      workflowEvents: { orderBy: { createdAt: 'desc' }, take: 50 },
+      karbonActivities: { orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 50 },
+      // `workflowEvents` was fetched here and rendered nowhere — a join on every
+      // page view for data no screen showed. The status history it holds is in
+      // the audit trail as STATUS_CHANGED events, which the audit tab links to
+      // in full, so it is not fetched rather than shown twice.
+      _count: { select: { karbonActivities: true } },
     },
   });
 
   if (!engagement) notFound();
 
-  const [auditEvents, templateVersion, gate] = await Promise.all([
+  const [auditEvents, auditEventCount, templateVersion, gate] = await Promise.all([
     container.prisma.auditEvent.findMany({
       where: { engagementId: id },
-      orderBy: { createdAt: 'desc' },
+      // Every audit event written by one transaction shares a `createdAt` to
+      // the microsecond, so the tiebreaker is what makes "the hundred most
+      // recent" mean anything.
+      orderBy: withStableOrder([{ createdAt: 'desc' as const }]),
       take: 100,
     }),
+    boundedCount((limit) => container.prisma.auditEvent.count({ where: { engagementId: id }, take: limit })),
     engagement.templateVersionId
       ? container.prisma.templateVersion.findUnique({ where: { id: engagement.templateVersionId } })
       : null,
@@ -148,6 +165,7 @@ export default async function EngagementDetailPage({ params }: { params: Promise
         csrfToken={csrfToken}
         engagement={JSON.parse(JSON.stringify(engagement))}
         auditEvents={JSON.parse(JSON.stringify(auditEventsForDisplay))}
+        auditEventCount={auditEventCount}
         templateVersion={JSON.parse(JSON.stringify(templateVersion))}
         documentLinks={documentLinks}
         dateFacts={dateFacts}

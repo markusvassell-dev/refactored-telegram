@@ -295,14 +295,13 @@ application has never seen remains a reviewed code change.
 
 ## Next implementation step
 
-**Pagination on the remaining capped lists.** `/system-jobs` stops at 100,
-`/needs-attention` at 50, and the per-engagement activity lists at 20–100 — the
-same silent truncation the engagement and audit lists had. The helper and its
-tests exist, so each is a few lines; they are listed together because none is
-individually large.
+**No integration has been exercised against a real sandbox.** Karbon and Adobe
+Sign both run through mock adapters that are honest about being mocks, and
+`docs/karbon-capability-matrix.md` records what has been confirmed against vendor
+documentation rather than against a live account. Every workflow around them —
+generation, review, approval, the signing state machine, the return path into
+Karbon — is exercised end to end against those mocks, so what is unproven is the
+wire format and the credentials, not the logic.
 
-After that, the largest remaining gap is that no integration has been exercised
-against a real sandbox. Karbon and Adobe Sign both run through mock adapters
-that are honest about being mocks, and the capability matrix records what has
-been confirmed against vendor documentation rather than against a live account.
-Closing that needs credentials, not code.
+Closing it needs a sandbox tenant for each vendor, not code. Until then no claim
+that an integration "works" should be made, and none is.

@@ -3,10 +3,10 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (476 tests)
-pnpm test:unit          # 237 — no external dependencies
+pnpm test               # unit + integration  (477 tests)
+pnpm test:unit          # 238 — no external dependencies
 pnpm test:integration   # 239 — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 40  — needs a browser
+pnpm test:e2e           # 43  — needs a browser
 pnpm build              # production build
 ```
 
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (237)
+## Unit tests (238)
 
 No database, no filesystem, no network.
 
@@ -65,7 +65,7 @@ reported as "the web service has not migrated yet" rather than
 distinguished from a missing schema because the fix differs, and an
 unrecognised failure says nothing rather than guessing.
 
-**Pagination (28)** — nonsense in the query string reads as the first page
+**Pagination (29)** — nonsense in the query string reads as the first page
 rather than an error or an empty one; the page size is capped so a hand-edited
 URL cannot ask for the whole table; `skip` stays a usable integer however large
 the page asked for. An empty page reports no range rather than a misleading
@@ -509,6 +509,15 @@ Each was fixed in the code, not the test:
     `Sample Viewer` and failed before removing it. Both broke a later suite with
     an error pointing nowhere near the cause. Fixture state is now restored in a
     `finally`, and the browser test uses a user it owns.
+37. Four of the five Needs Attention queries had no `take` at all. An unbounded
+    `findMany` is the same defect as a silent cap, one year later — fine until
+    the season the firm has three hundred blocked engagements.
+38. `workflowEvents` was fetched on every engagement page view and rendered
+    nowhere: a join per request for data no screen showed. The status history it
+    held is already in the audit trail as `STATUS_CHANGED`.
+39. Adobe signing events were fetched the same way and also never shown, which
+    left the provider's own account of a signing — including whether its webhook
+    signature verified — invisible to the person reviewing it. Now rendered.
 
 ## What is not covered
 

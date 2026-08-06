@@ -69,6 +69,7 @@ export function ReviewWorkspace({
   csrfToken,
   engagement,
   auditEvents,
+  auditEventCount,
   templateVersion,
   documentLinks,
   dateFacts,
@@ -78,6 +79,7 @@ export function ReviewWorkspace({
   csrfToken: string;
   engagement: any;
   auditEvents: any[];
+  auditEventCount: { value: number; isLowerBound: boolean };
   templateVersion: any;
   documentLinks: Record<string, DocumentVersionLinks>;
   dateFacts: DateFactPrompt[];
@@ -138,7 +140,9 @@ export function ReviewWorkspace({
         {tab === 'Karbon Activity' ? <KarbonActivity engagement={engagement} /> : null}
         {tab === 'Adobe Sign' ? <AdobeSign csrfToken={csrfToken} engagement={engagement} /> : null}
         {tab === 'Version History' ? <Versions engagement={engagement} documentLinks={documentLinks} /> : null}
-        {tab === 'Audit History' ? <AuditHistory auditEvents={auditEvents} /> : null}
+        {tab === 'Audit History' ? (
+          <AuditHistory auditEvents={auditEvents} total={auditEventCount} engagementId={engagement.id} />
+        ) : null}
       </div>
     </div>
   );
@@ -1346,6 +1350,7 @@ function KarbonActivity({ engagement }: { engagement: any }): ReactNode {
           </tbody>
         </table>
       )}
+      <ShowingMostRecent shown={engagement.karbonActivities.length} total={{ value: engagement._count.karbonActivities, isLowerBound: false }} />
     </Card>
   );
 }
@@ -1414,6 +1419,37 @@ function AdobeSign({ csrfToken, engagement }: { csrfToken: string; engagement: a
 
               {agreement.declineReason ? (
                 <p className="mt-2 text-sm text-red-700">Declined: {agreement.declineReason}</p>
+              ) : null}
+
+              {/* What Adobe actually reported, and when. These were being
+                  fetched and rendered nowhere, which left the provider's own
+                  account of a signing invisible to the person reviewing it. */}
+              {agreement.events.length > 0 ? (
+                <div className="mt-3">
+                  <h4 className="text-xs font-semibold uppercase text-slate-500">Signing events</h4>
+                  <ul className="mt-1 space-y-1 text-xs">
+                    {agreement.events.map((event: any) => (
+                      <li key={event.id} className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">{event.eventType.replace(/_/g, ' ').toLowerCase()}</span>
+                        <span className="text-slate-500">
+                          {new Date(event.receivedAt).toISOString().slice(0, 16).replace('T', ' ')}
+                        </span>
+                        {/* An event whose signature did not verify is shown as
+                            such rather than listed alongside the genuine ones. */}
+                        {event.signatureValid ? null : (
+                          <span className="badge bg-red-100 text-red-800">signature not verified</span>
+                        )}
+                        {event.processingError ? (
+                          <span className="text-red-700">{event.processingError}</span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  <ShowingMostRecent
+                    shown={agreement.events.length}
+                    total={{ value: agreement._count.events, isLowerBound: false }}
+                  />
+                </div>
               ) : null}
 
               <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-2">
@@ -1499,7 +1535,56 @@ function Versions({
   );
 }
 
-function AuditHistory({ auditEvents }: { auditEvents: any[] }): ReactNode {
+/**
+ * What a truncated panel says about itself.
+ *
+ * These panels are a recent-activity view inside a tab, not an archive, so they
+ * do not grow a pager each. What they must not do is stop at a fixed number in
+ * silence — a reader cannot tell a short history from a clipped one — and where
+ * the complete record lives somewhere else, they point at it.
+ */
+function ShowingMostRecent({
+  shown,
+  total,
+  href,
+  linkLabel,
+}: {
+  shown: number;
+  total: { value: number; isLowerBound: boolean };
+  href?: string;
+  linkLabel?: string;
+}): ReactNode {
+  if (!total.isLowerBound && total.value <= shown) return null;
+
+  const totalText = total.isLowerBound
+    ? `more than ${total.value.toLocaleString('en-CA')}`
+    : total.value.toLocaleString('en-CA');
+
+  return (
+    <p className="mt-2 text-xs text-slate-600">
+      Showing the {shown} most recent of {totalText}.
+      {href ? (
+        <>
+          {' '}
+          <a className="text-brand-700 underline" href={href}>
+            {linkLabel}
+          </a>
+          .
+        </>
+      ) : null}
+    </p>
+  );
+}
+
+function AuditHistory({
+  auditEvents,
+  total,
+  engagementId,
+}: {
+  auditEvents: any[];
+  total: { value: number; isLowerBound: boolean };
+  engagementId: string;
+}): ReactNode {
   return (
     <Card title="Audit history" description="Immutable. The database rejects any attempt to update or delete an audit event.">
       {auditEvents.length === 0 ? (
@@ -1530,6 +1615,12 @@ function AuditHistory({ auditEvents }: { auditEvents: any[] }): ReactNode {
           </tbody>
         </table>
       )}
+      <ShowingMostRecent
+        shown={auditEvents.length}
+        total={total}
+        href={`/audit-log?engagementId=${engagementId}`}
+        linkLabel="See the complete audit trail for this engagement"
+      />
     </Card>
   );
 }

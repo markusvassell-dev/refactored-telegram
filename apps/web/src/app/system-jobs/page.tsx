@@ -1,19 +1,41 @@
+import Link from 'next/link';
 import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
 import { EmptyState, PageHeader } from '@/components/shell';
 import { ActionForm } from '@/components/action-form';
+import { Pagination, PageOutOfRange } from '@/components/pagination';
+import { boundedCount, parsePageRequest, toPage, withStableOrder } from '@/lib/pagination';
 import { retryJob } from '@/app/actions';
 
 export const dynamic = 'force-dynamic';
 
-export default async function SystemJobsPage() {
+export default async function SystemJobsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
   await requireUser();
   const csrfToken = (await sessionCsrfToken()) ?? '';
+  const params = await searchParams;
+  const request = parsePageRequest(params);
 
-  const [counts, jobs] = await Promise.all([
+  const where = params.status ? { status: params.status as never } : {};
+
+  const [counts, rows, total] = await Promise.all([
     container.queue.countByStatus(),
-    container.prisma.backgroundJob.findMany({ orderBy: { updatedAt: 'desc' }, take: 100 }),
+    container.prisma.backgroundJob.findMany({
+      where,
+      // Jobs enqueued or completed together share an `updatedAt`, so the order
+      // is not total without the tiebreaker and paging over it would drop rows.
+      orderBy: withStableOrder([{ updatedAt: 'desc' as const }]),
+      skip: request.skip,
+      take: request.take,
+    }),
+    boundedCount((limit) => container.prisma.backgroundJob.count({ where, take: limit })),
   ]);
+
+  const page = toPage(rows, request);
+  const jobs = page.items;
 
   return (
     <>
@@ -22,17 +44,36 @@ export default async function SystemJobsPage() {
         description="Every job carries a deterministic idempotency key, so retrying can never duplicate a document, an upload, or an Adobe Sign agreement."
       />
 
+      {/* Each count is a link, so a number worth investigating is one click from
+          the jobs behind it rather than a figure to read and act on elsewhere. */}
       <div className="mb-4 flex flex-wrap gap-3">
         {Object.entries(counts).map(([status, count]) => (
-          <div key={status} className="card px-4 py-2">
+          <Link
+            key={status}
+            href={`/system-jobs?status=${status}`}
+            className={
+              params.status === status
+                ? 'card border-brand-500 px-4 py-2 ring-1 ring-brand-500'
+                : 'card px-4 py-2 hover:border-slate-400'
+            }
+          >
             <span className="text-xs uppercase text-slate-500">{status.replace(/_/g, ' ').toLowerCase()}</span>
             <span className="ml-2 text-lg font-semibold">{count}</span>
-          </div>
+          </Link>
         ))}
+        {params.status ? (
+          <Link href="/system-jobs" className="btn-secondary self-center">
+            Clear filter
+          </Link>
+        ) : null}
       </div>
 
       {jobs.length === 0 ? (
-        <EmptyState message="No jobs have run yet." />
+        page.page > 1 ? (
+          <PageOutOfRange pathname="/system-jobs" params={params} pluralNoun="jobs" />
+        ) : (
+          <EmptyState message={params.status ? 'No jobs have that status.' : 'No jobs have run yet.'} />
+        )
       ) : (
         <div className="card overflow-x-auto">
           <table className="table">
@@ -82,6 +123,17 @@ export default async function SystemJobsPage() {
               ))}
             </tbody>
           </table>
+
+          <div className="px-4 pb-3">
+            <Pagination
+              page={page}
+              total={total}
+              noun="job"
+              pathname="/system-jobs"
+              params={params}
+              label="System jobs pagination"
+            />
+          </div>
         </div>
       )}
     </>

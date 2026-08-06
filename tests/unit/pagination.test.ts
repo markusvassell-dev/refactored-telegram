@@ -103,6 +103,8 @@ describe('working out where in the list we are', () => {
 });
 
 describe('the order the query runs in', () => {
+  const root = resolve(import.meta.dirname, '..', '..', 'apps', 'web', 'src', 'app');
+
   it('appends a unique tiebreaker, because OFFSET over a tie loses rows', () => {
     expect(withStableOrder([{ createdAt: 'desc' }])).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
   });
@@ -115,16 +117,37 @@ describe('the order the query runs in', () => {
     ]);
   });
 
-  it('is what the paged lists actually order by', () => {
+  it('is what every paged or truncated list actually orders by', () => {
     // Measured, not assumed: paging 300 audit events written in one transaction
     // without the tiebreaker lost 6 of them and showed 6 twice. A page that
     // reverts to a bare orderBy would silently reintroduce that.
-    const root = resolve(import.meta.dirname, '..', '..', 'apps', 'web', 'src', 'app');
-
-    for (const page of ['audit-log/page.tsx', 'engagements/page.tsx']) {
+    for (const page of ['audit-log/page.tsx', 'engagements/page.tsx', 'system-jobs/page.tsx']) {
       const source = readFileSync(resolve(root, page), 'utf8');
       expect(source, page).toMatch(/orderBy: withStableOrder\(/);
       expect(source, page).not.toMatch(/orderBy: \{/);
+    }
+
+    // These show only the most recent few rather than paging, but "the ten most
+    // recent" is just as ambiguous over a non-total order as page two is.
+    for (const page of ['needs-attention/page.tsx', 'engagements/[id]/page.tsx']) {
+      const source = readFileSync(resolve(root, page), 'utf8');
+      const orderings = source.match(/orderBy: \[[^\]]*\]/g) ?? [];
+      expect(orderings.length, page).toBeGreaterThan(0);
+      for (const ordering of orderings) {
+        expect(ordering, `${page}: ${ordering}`).toMatch(/id: 'desc'/);
+      }
+    }
+  });
+
+  it('leaves no list fetching without a limit', () => {
+    // An unbounded findMany is the same defect as a silent cap, one year later:
+    // four of the Needs Attention queries had no `take` at all.
+    const source = readFileSync(resolve(root, 'needs-attention/page.tsx'), 'utf8');
+    const finds = source.match(/\.findMany\(\{[\s\S]*?\n {4}\}\)/g) ?? [];
+
+    expect(finds.length).toBeGreaterThanOrEqual(5);
+    for (const find of finds) {
+      expect(find).toMatch(/take: PREVIEW/);
     }
   });
 });

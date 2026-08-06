@@ -23,6 +23,13 @@ append-only audit table grows without bound, and nobody needs to know there are
 exactly 41,882 events. Counting stops at 10,000 and reports a lower bound beyond
 it — cheap, and true.
 
+Not every list needs a pager. A worklist like Needs Attention shows the most
+recent few of each kind, says how many there are, and links to the full paged
+list where one exists; the recent-activity panels inside the engagement
+workspace do the same, and the audit panel links to the audit log filtered to
+that engagement. What none of them do is stop at a fixed number in silence, and
+none of them fetch without a limit.
+
 The page itself fetches one row more than it shows. That extra row is how a page
 knows there is a next one without a second query, and it stays correct when the
 total is only a lower bound.

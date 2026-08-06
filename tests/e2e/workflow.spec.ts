@@ -416,6 +416,80 @@ async function resetRoleFixtureUser(environment: E2EEnvironment): Promise<string
   }
 }
 
+test.describe('the smaller lists', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  test('system jobs pages, and each status count filters to the jobs behind it', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/system-jobs?pageSize=5');
+
+    const pager = page.getByRole('navigation', { name: 'System jobs pagination' });
+
+    if ((await page.getByRole('table').count()) === 0) {
+      // No jobs have run; the page must say so rather than showing an empty
+      // table that looks like a filter matching nothing.
+      await expect(page.getByText(/No jobs have run yet/)).toBeVisible();
+      return;
+    }
+
+    await expect(pager.getByText(/Showing 1–\d+ of/)).toBeVisible();
+
+    // A count is a link: a number worth investigating is one click from the
+    // rows behind it.
+    const succeeded = page.getByRole('link', { name: /succeeded/i }).first();
+    if (await succeeded.isVisible()) {
+      await succeeded.click();
+      await expect(page).toHaveURL(/status=SUCCEEDED/);
+      await expect(page.getByRole('link', { name: 'Clear filter' })).toBeVisible();
+    }
+  });
+
+  test('needs attention counts every section rather than stopping in silence', async ({ page }) => {
+    await signIn(page, /Reviewer/);
+    await page.goto('/needs-attention');
+
+    await expect(page.getByRole('heading', { name: 'Needs Attention' })).toBeVisible();
+
+    // Every section is present whether or not it has anything in it, so an
+    // empty worklist is distinguishable from a section that failed to load.
+    for (const title of [
+      'Blocked engagements',
+      'Declined agreements',
+      'Expired agreements',
+      'Stale cover letters',
+      'Failed jobs',
+    ]) {
+      await expect(page.getByRole('heading', { name: new RegExp(title) })).toBeVisible();
+    }
+  });
+
+  test('the audit tab points at the complete trail for the engagement', async ({ page }) => {
+    await signIn(page, /Reviewer/);
+
+    if (!sampleEngagementId) {
+      await page.goto('/engagements');
+      const first = page.getByRole('table').getByRole('link').first();
+      if ((await first.count()) === 0) {
+        test.skip(true, 'No engagements are seeded in this environment.');
+        return;
+      }
+      await first.click();
+    } else {
+      await page.goto(`/engagements/${sampleEngagementId}`);
+    }
+
+    await page.getByRole('tab', { name: 'Audit History' }).click();
+
+    const link = page.getByRole('link', { name: /complete audit trail/i });
+    if (await link.isVisible()) {
+      await link.click();
+      // It lands on the paginated audit log, filtered to this engagement.
+      await expect(page).toHaveURL(/\/audit-log\?engagementId=/);
+      await expect(page.getByRole('heading', { name: 'Audit Log' })).toBeVisible();
+    }
+  });
+});
+
 test.describe('managing roles', () => {
   test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
 
