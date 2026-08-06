@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { describeEntraConfigurationProblem } from './entra.js';
 
 /**
  * Runtime environment contract.
@@ -137,13 +138,24 @@ export const envSchema = z
       });
     }
 
-    if (isProdLike && (!env.ENTRA_TENANT_ID || !env.ENTRA_CLIENT_ID || !env.ENTRA_CLIENT_SECRET)) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['ENTRA_CLIENT_ID'],
-        message:
-          'Microsoft Entra ID configuration (ENTRA_TENANT_ID, ENTRA_CLIENT_ID, ENTRA_CLIENT_SECRET) is required outside development.',
+    // Outside development, Entra ID is the only way in. A value of the wrong
+    // shape is as good as a missing one — worse, in fact: it produces a green
+    // deployment with a sign-in button that sends everybody to Microsoft to be
+    // told `AADSTS900023`. Refused here for the same reason a missing value is.
+    if (isProdLike) {
+      const problem = describeEntraConfigurationProblem({
+        tenantId: env.ENTRA_TENANT_ID,
+        clientId: env.ENTRA_CLIENT_ID,
+        clientSecret: env.ENTRA_CLIENT_SECRET,
       });
+
+      if (problem) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['ENTRA_CLIENT_ID'],
+          message: `Microsoft Entra ID is required outside development. ${problem}`,
+        });
+      }
     }
 
     if (env.AI_EXTRACTION_ENABLED && (env.AI_PROVIDER === 'none' || !env.AI_API_KEY)) {

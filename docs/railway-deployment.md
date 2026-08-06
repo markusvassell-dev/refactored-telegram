@@ -66,10 +66,49 @@ Set on **both** the web and worker services unless noted.
 | `SESSION_SECRET` | `openssl rand -hex 32`. Rotating it signs everyone out |
 | `APP_BASE_URL` | Public URL; used in Karbon deep links |
 | `APP_ENV` | `staging` or `production` |
-| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` | Required outside development — the app refuses to boot without them |
+| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` | Required outside development — the app refuses to boot without them, or with values of the wrong shape; see below |
 | `ENTRA_REDIRECT_URI` | `https://<your-domain>/api/auth/entra/callback`, registered identically in Entra |
 | `BOOTSTRAP_ADMIN_EMAILS` | The first administrator. Required on a first deployment; see below |
 | `ENTRA_SIGN_IN_HOSTS` | Only for a national cloud. Defaults to `https://login.microsoftonline.com`, which the Content Security Policy must name for sign-in to be able to redirect there |
+
+#### Where the three Entra values come from
+
+One app registration in the Azure portal, under **Entra ID → App
+registrations → New registration**:
+
+| Variable | Where | Shape |
+| --- | --- | --- |
+| `ENTRA_TENANT_ID` | Overview → **Directory (tenant) ID** | A GUID, or a verified domain such as `contoso.onmicrosoft.com` |
+| `ENTRA_CLIENT_ID` | Overview → **Application (client) ID** | Always a GUID |
+| `ENTRA_CLIENT_SECRET` | Certificates & secrets → New client secret → the **Value** column | An opaque string, shown once |
+
+Two things reliably go wrong here. The portal shows a client secret's **Value**
+and its **Secret ID** side by side and the Secret ID is the one that looks like
+an identifier — copy the Value, and copy it immediately, because it is masked
+after you leave the page. And the redirect URI must be registered under
+**Authentication → Add a platform → Web** exactly as `ENTRA_REDIRECT_URI` is
+set, character for character; a trailing slash is a different URI.
+
+Grant delegated `openid`, `profile`, `email` and `User.Read`, then grant admin
+consent so nobody is asked to consent individually.
+
+##### `AADSTS900023`, and why the app now refuses to boot instead
+
+> Specified tenant identifier '…' is neither a valid DNS name, nor a valid
+> external domain.
+
+This is Microsoft saying `ENTRA_TENANT_ID` is not a directory identifier —
+almost always a placeholder that was never replaced. It used to be discovered
+by a person clicking "Continue with Microsoft" on an apparently healthy
+deployment, because a placeholder is a perfectly good non-empty string and the
+old check only asked whether the variable was set.
+
+The environment schema now checks the *shape* of all three values, so in
+staging and production a placeholder fails the deploy with the variable named,
+and the sign-in button is disabled with the reason on the page rather than
+offered and broken. The check cannot tell whether a well-formed GUID is real —
+only Microsoft can — so `AADSTS700016` (application not found in directory)
+still means what it always did.
 
 #### The first administrator
 
@@ -169,7 +208,8 @@ Ranked by how often it is the cause:
 | `DATABASE_URL` added as a reference that did not resolve | `FATAL: DATABASE_URL is set but empty` |
 | `SERVICE_ROLE` missing on the worker | `NOTE: SERVICE_ROLE is not set; starting as the web service` |
 | Migrations cannot reach the database | `FATAL: database migrations failed; the web server was not started` |
-| A required variable missing — `ENCRYPTION_KEY`, `SESSION_SECRET`, Entra in production | `Invalid environment configuration:` and the failing key |
+| A required variable missing or malformed — `ENCRYPTION_KEY`, `SESSION_SECRET`, Entra in production | `Invalid environment configuration:` and the failing key |
+| An Entra value left as a placeholder | `Invalid environment configuration:` … `is not a directory id` |
 | Health check pointed at the wrong port | The server logs `Ready`, and the probe still fails |
 
 ### A reference that resolves to nothing

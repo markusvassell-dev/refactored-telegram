@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
 import { EntraIdProvider } from '@element/integrations';
-import { env, seal } from '@element/shared';
+import { describeEntraConfigurationProblem, env, seal } from '@element/shared';
 import { ENTRA_FLOW_COOKIE, ENTRA_FLOW_TTL_SECONDS, type EntraFlowState } from '@/lib/entra-flow';
 
 export const dynamic = 'force-dynamic';
@@ -16,9 +16,20 @@ export const dynamic = 'force-dynamic';
 export async function POST(): Promise<Response> {
   const configuration = env();
 
-  if (!configuration.ENTRA_TENANT_ID || !configuration.ENTRA_CLIENT_ID || !configuration.ENTRA_CLIENT_SECRET) {
+  // A set-but-wrong value is refused here as firmly as a missing one. The
+  // sign-in button is disabled when the configuration is bad, but the button is
+  // not the guard — this route builds the Microsoft URL, so it is the last
+  // place that can decline to send somebody to a vendor to be told
+  // AADSTS900023 about a mistake that is visible from here.
+  const problem = describeEntraConfigurationProblem({
+    tenantId: configuration.ENTRA_TENANT_ID,
+    clientId: configuration.ENTRA_CLIENT_ID,
+    clientSecret: configuration.ENTRA_CLIENT_SECRET,
+  });
+
+  if (problem || !configuration.ENTRA_TENANT_ID || !configuration.ENTRA_CLIENT_ID || !configuration.ENTRA_CLIENT_SECRET) {
     return NextResponse.json(
-      { error: 'Microsoft Entra ID is not configured in this environment.' },
+      { error: `Microsoft Entra ID is not configured in this environment. ${problem ?? ''}`.trim() },
       { status: 503 },
     );
   }

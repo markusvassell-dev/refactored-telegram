@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { env } from '@element/shared';
+import { describeEntraConfigurationProblem, env } from '@element/shared';
 import { container } from '@/lib/container';
 import { currentUser } from '@/lib/session';
 import { PageHeader } from '@/components/shell';
@@ -19,7 +19,15 @@ export default async function SignInPage() {
   if (user) redirect('/');
 
   const configuration = env();
-  const entraConfigured = Boolean(configuration.ENTRA_TENANT_ID && configuration.ENTRA_CLIENT_ID);
+  // Not just "is it set": a placeholder is a perfectly good non-empty string,
+  // and offering the button anyway sends somebody to Microsoft to be told
+  // AADSTS900023 by a vendor about a mistake this page could name itself.
+  const entraProblem = describeEntraConfigurationProblem({
+    tenantId: configuration.ENTRA_TENANT_ID,
+    clientId: configuration.ENTRA_CLIENT_ID,
+    clientSecret: configuration.ENTRA_CLIENT_SECRET,
+  });
+  const entraConfigured = entraProblem === null;
   const devLoginAvailable =
     configuration.DEV_LOGIN_ENABLED && (configuration.APP_ENV === 'development' || configuration.APP_ENV === 'test');
 
@@ -47,10 +55,10 @@ export default async function SignInPage() {
               <button type="submit" className="btn-primary" disabled={!entraConfigured}>
                 Continue with Microsoft
               </button>
-              {!entraConfigured ? (
-                <p className="field-note">
-                  Entra ID is not configured in this environment. An administrator must set ENTRA_TENANT_ID,
-                  ENTRA_CLIENT_ID and ENTRA_CLIENT_SECRET.
+              {entraProblem ? (
+                <p className="field-note" role="note">
+                  Entra ID is not configured in this environment. {entraProblem} The Directory (tenant) ID and
+                  Application (client) ID are both on the app registration&rsquo;s Overview page in the Azure portal.
                 </p>
               ) : null}
             </form>

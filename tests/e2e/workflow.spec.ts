@@ -431,6 +431,12 @@ test.describe('signing in with Microsoft', () => {
 
     const button = page.getByRole('button', { name: 'Continue with Microsoft' });
     await expect(button).toBeEnabled();
+
+    // Well-formed configuration renders no complaint. The shape check that
+    // rejects `PASTE_YOUR_TENANT_ID` has to accept a real GUID pair, and this
+    // is the only place that exercises it through a real render.
+    await expect(page.getByText(/Entra ID is not configured/)).toHaveCount(0);
+
     await button.click();
     await page.waitForTimeout(1_500);
 

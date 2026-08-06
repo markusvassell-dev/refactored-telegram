@@ -551,6 +551,16 @@ Each was fixed in the code, not the test:
     production build before the fix and after it; a browser test now asserts
     both that no policy violation fires and that the served header names the
     sign-in host.
+43. Once sign-in could reach Microsoft, it arrived with `PASTE_YOUR_TENANT_ID`
+    and came back `AADSTS900023`. The gate was `Boolean(tenantId && clientId)`,
+    and a placeholder is a perfectly good non-empty string — so the deployment
+    was green, the button was enabled, and the mistake was reported by a vendor
+    rather than by the application that could see it. All three values are now
+    checked for shape: staging and production refuse to boot on a malformed one
+    exactly as they do on a missing one, the sign-in button is disabled with the
+    reason on the page, and the route that builds the authorization URL declines
+    to build it. Shape only — whether a well-formed GUID is a real directory is
+    Microsoft's question to answer.
 
 ## What is not covered
 

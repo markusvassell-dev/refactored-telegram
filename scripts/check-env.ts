@@ -1,4 +1,4 @@
-import { loadEnv } from '@element/shared';
+import { describeEntraConfigurationProblem, loadEnv } from '@element/shared';
 
 /**
  * Pre-flight environment check.
@@ -28,6 +28,18 @@ try {
   // screen, so whether Karbon or Adobe Sign is connected is a question for that
   // screen rather than for a start-up log.
   process.stdout.write(`      entra id configured      ${env.ENTRA_CLIENT_ID ? 'yes' : 'no'}\n`);
+
+  // In development the schema does not require Entra, so a wrong-shaped value
+  // reaches here rather than failing the boot. Named now, not at the first
+  // attempt to sign in.
+  const entraProblem = describeEntraConfigurationProblem({
+    tenantId: env.ENTRA_TENANT_ID,
+    clientId: env.ENTRA_CLIENT_ID,
+    clientSecret: env.ENTRA_CLIENT_SECRET,
+  });
+  if (entraProblem && env.ENTRA_CLIENT_ID) {
+    process.stdout.write(`      entra id problem         ${entraProblem}\n`);
+  }
 
   if (env.BOOTSTRAP_ADMIN_EMAILS.length > 0) {
     process.stdout.write(

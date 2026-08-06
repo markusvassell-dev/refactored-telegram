@@ -49,14 +49,16 @@ describe('what the environment schema refuses', () => {
   });
 
   it('refuses the development login outside development', () => {
+    // Entra values of a real shape, so this test fails for its own reason
+    // rather than incidentally tripping the Entra check.
     expect(() =>
       loadEnv({
         ...MINIMUM,
         APP_ENV: 'staging',
         DEV_LOGIN_ENABLED: 'true',
-        ENTRA_TENANT_ID: 't',
-        ENTRA_CLIENT_ID: 'c',
-        ENTRA_CLIENT_SECRET: 's',
+        ENTRA_TENANT_ID: '72f988bf-86f1-41af-91ab-2d7cd011db47',
+        ENTRA_CLIENT_ID: '4e4b1a2c-9f3d-4f2a-8c1b-0d5e6f7a8b9c',
+        ENTRA_CLIENT_SECRET: 'a-client-secret-value',
       }),
     ).toThrow(/development login cannot be enabled/i);
   });
