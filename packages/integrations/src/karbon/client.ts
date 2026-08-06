@@ -56,6 +56,42 @@ interface RequestOptions {
 
 const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
 
+/** Karbon's maximum page size for a list endpoint. */
+const PAGE_SIZE = 100;
+
+/**
+ * A bound on how far a single search will page. Fifty pages is five thousand
+ * work items — far more than a filtered search should ever reach, and low
+ * enough that a runaway query fails instead of exhausting the account's request
+ * budget.
+ */
+const MAX_SEARCH_PAGES = 50;
+
+interface KarbonPage {
+  value?: Record<string, unknown>[];
+  '@odata.nextLink'?: string;
+}
+
+/**
+ * The `$skip` for the next page, or null when this was the last one.
+ *
+ * Karbon's `@odata.nextLink` is an absolute URL. Only the offset is taken from
+ * it: following a URL supplied in a response would let a vendor response point
+ * this client at any host it liked.
+ */
+function nextSkip(page: KarbonPage | null): number | null {
+  const link = page?.['@odata.nextLink'];
+  if (typeof link !== 'string' || link.length === 0) return null;
+
+  try {
+    const skip = new URL(link).searchParams.get('$skip');
+    const parsed = Number(skip);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export class KarbonRestClient implements KarbonProvider {
   readonly name = 'karbon';
   readonly isMock = false;
@@ -196,26 +232,61 @@ export class KarbonRestClient implements KarbonProvider {
     if (query.workType) filters.push(`WorkType eq '${escapeODataLiteral(query.workType)}'`);
     if (query.workStatus) filters.push(`WorkStatus eq '${escapeODataLiteral(query.workStatus)}'`);
 
-    const response = await this.request<{ value?: Record<string, unknown>[] } | null>({
-      path: '/WorkItems',
-      query: {
-        $filter: filters.length > 0 ? filters.join(' and ') : undefined,
-        $top: query.limit ?? 100,
-      },
-    });
-
-    const items = (response?.value ?? []).map(mapWorkItem);
-
-    // Re-filter client-side: a tenant whose API ignores an unsupported $filter
-    // must not cause us to act on the wrong work item.
-    return items.filter((item) => {
+    // Re-filtered client-side: a tenant whose API ignores an unsupported
+    // $filter must not cause us to act on the wrong work item. That defence is
+    // also why paging matters so much here — when the filter is ignored, the
+    // matching work item may be on any page, and reading only the first means
+    // quietly concluding a client has no prior-year letter.
+    const matches = (item: KarbonWorkItem): boolean => {
       if (query.clientKey && item.clientKey !== query.clientKey) return false;
       if (query.workType && item.workType !== query.workType) return false;
       if (query.workStatus && item.workStatus !== query.workStatus) return false;
       if (query.title && !item.title.toLowerCase().includes(query.title.toLowerCase())) return false;
       if (query.year && !matchesYear(item, query.year)) return false;
       return true;
-    });
+    };
+
+    const wanted = query.limit ?? Number.POSITIVE_INFINITY;
+    const found: KarbonWorkItem[] = [];
+    let skip = 0;
+
+    for (let page = 1; page <= MAX_SEARCH_PAGES; page += 1) {
+      const response = await this.request<KarbonPage | null>({
+        path: '/WorkItems',
+        query: {
+          $filter: filters.length > 0 ? filters.join(' and ') : undefined,
+          $top: PAGE_SIZE,
+          $skip: skip > 0 ? skip : undefined,
+        },
+      });
+
+      const items = (response?.value ?? []).map(mapWorkItem);
+      for (const item of items) {
+        if (!matches(item)) continue;
+        found.push(item);
+        if (found.length >= wanted) return found;
+      }
+
+      // Karbon caps a page at 100 and hands back a nextLink carrying $skip.
+      // The link is a vendor-supplied absolute URL; the $skip is read out of it
+      // and re-issued against our own base URL rather than followed, so a
+      // response can never redirect this client at another host.
+      const next = nextSkip(response);
+      if (next === null || items.length === 0) return found;
+      skip = next;
+    }
+
+    // Never a silent truncation. Reading one page of a larger result and
+    // treating it as the whole was the original defect; stopping quietly at
+    // fifty pages would be the same defect with a bigger number.
+    throw new IntegrationError(
+      'Karbon',
+      `A work item search exceeded ${MAX_SEARCH_PAGES} pages of ${PAGE_SIZE} without exhausting the result set.`,
+      {
+        retryable: false,
+        context: { filters, pages: MAX_SEARCH_PAGES, matched: found.length },
+      },
+    );
   }
 
   async listDocuments(scope: { workItemKey?: string; entityKey?: string }): Promise<KarbonDocument[]> {

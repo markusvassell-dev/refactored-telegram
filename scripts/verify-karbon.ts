@@ -143,10 +143,13 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
   }
 
   // ---- Reads --------------------------------------------------------------
+  // Bounded deliberately. Search now pages until the result set is exhausted,
+  // and walking an entire tenant to prove that search works would spend the
+  // account's request budget to learn nothing extra.
   const found = await attempt(
     'SEARCH_WORK_ITEMS',
-    () => client.searchWorkItems({}),
-    (items) => `${items.length} work item(s) returned`,
+    () => client.searchWorkItems({ limit: 5 }),
+    (items) => `${items.length} work item(s) returned (asked for at most 5)`,
   );
 
   const subject: KarbonWorkItem | null =

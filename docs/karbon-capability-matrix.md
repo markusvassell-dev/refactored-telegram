@@ -4,14 +4,28 @@
 
 | Level | Meaning |
 | --- | --- |
-| **Supported** | Implemented against a documented operation **and** exercised against a live tenant from this codebase. |
+| **Supported** | Implemented against a documented operation **and** observed working against a live tenant, via `pnpm verify:karbon`. |
 | **Unverified** | Implemented against Karbon's published documentation, but **not yet run against a live tenant from this project**. |
 | **Unsupported** | No officially supported API operation exists. The application uses the documented fallback and keeps the step visible in its own UI. |
 
-**Everything below is currently `unverified` or `unsupported`.** Nothing has
-been exercised against a real Karbon tenant from this repository. The
-Integrations screen shows the same levels, and a connection stays unverified
-until a health check succeeds with real credentials.
+**Verified 2026-08-06.** Health check, search, read work item, read client and
+list documents were run against a live tenant and are `Supported`.
+
+Everything else remains `Unverified`, and the reasons are worth stating rather
+than glossing:
+
+- The **writes** — add comment, create task, update status, upload document —
+  cannot be exercised by a read-only run, and the tenant available was the
+  firm's production Karbon. A verification script has no business writing
+  there.
+- **Download document** was skipped because the work item it landed on had no
+  documents. Re-run with `--work-item <KEY>` naming one that does; prior-year
+  document discovery is the feature that depends on it.
+- **Webhooks** need a subscription and an inbound request, which no script can
+  arrange on its own.
+
+The Integrations screen shows the same levels, and a connection stays
+unverified until a health check succeeds with real credentials.
 
 Browser automation and scraping are not used anywhere, and will not be added.
 
@@ -19,11 +33,11 @@ Browser automation and scraping are not used anywhere, and will not be added.
 
 | Operation | Support | Official method | Fallback | Known limitation |
 | --- | --- | --- | --- | --- |
-| Search work items | Unverified | `GET /v3/WorkItems` with OData `$filter` / `$top` | Broader query, then filter client-side | Filter support varies by field. The provider re-filters every result locally, so a tenant that ignores an unsupported `$filter` produces a smaller result set, never a wrong one. |
-| Read work item | Unverified | `GET /v3/WorkItems/{WorkItemKey}` | — | — |
-| Read client | Unverified | `GET /v3/Organizations/{EntityKey}`, `GET /v3/Contacts/{EntityKey}` | Tries organisation, then contact | The entity type must be known in advance; it is stored on the client record. |
+| Search work items | Supported | `GET /v3/WorkItems` with OData `$filter` / `$top`, following `@odata.nextLink` | Broader query, then filter client-side | Pages are capped at 100. The provider follows `@odata.nextLink` until the result set is exhausted, taking only the `$skip` offset from the link rather than following a vendor-supplied URL. It re-filters every result locally, so a tenant that ignores an unsupported `$filter` produces a smaller result set, never a wrong one — which is precisely why it must page rather than read the first 100. |
+| Read work item | Supported | `GET /v3/WorkItems/{WorkItemKey}` | — | — |
+| Read client | Supported | `GET /v3/Organizations/{EntityKey}`, `GET /v3/Contacts/{EntityKey}` | Tries organisation, then contact | The entity type must be known in advance; it is stored on the client record. |
 | Read contacts | Unverified | `GET /v3/Contacts` and the organisation contact collection | — | — |
-| List documents | Unverified | `GET /v3/WorkItems/{WorkItemKey}/Documents` | — | Returns names and identifiers. **File names are never trusted on their own** — every prior-year candidate is verified against its contents. |
+| List documents | Supported | `GET /v3/WorkItems/{WorkItemKey}/Documents` | — | Returns names and identifiers. **File names are never trusted on their own** — every prior-year candidate is verified against its contents. |
 | Download document | Unverified | `GET /v3/Documents/{DocumentId}/Content` | — | — |
 | Upload document | Unverified | `POST /v3/WorkItems/{WorkItemKey}/Documents` | — | Approved, signed and certificate files are uploaded with `neverOverwrite`. On a name collision the upload is skipped, the collision is recorded, and the reviewer is told. |
 | Add comment or note | Unverified | `POST /v3/Notes` | — | Comments are **notifications only**. They are never parsed as automation commands. |

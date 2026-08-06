@@ -634,7 +634,24 @@ Each was fixed in the code, not the test:
     `Date.parse` is lenient, resolved it to the past, and returned 0. An
     unreadable header became "retry immediately", the single worst answer to
     give a throttled client. Caught by its own test before it shipped.
-56. Activating a draft template was a decision made on a file name and a hash.
+56. **Karbon work-item search read the first page and stopped.** It asked for
+    `$top=100` and returned whatever came back as though it were the whole
+    result set; Karbon caps a page at 100 and hands back an `@odata.nextLink`
+    the client ignored. The first verification run against a real tenant
+    returned exactly 100 — the cap, hit precisely, reported as a total.
+
+    The consequence is not a short list. The client re-filters every result
+    locally, *because* a tenant may ignore an unsupported `$filter` — and when
+    it does, the matching work item can be on any page. Reading only the first
+    meant quietly concluding a client had no prior-year letter, for every
+    client whose work items sort past the first hundred. Search now follows the
+    nextLink until the result set is exhausted, and raises rather than
+    truncating if a tenant keeps offering pages past a bound.
+
+    Only the `$skip` offset is taken from the nextLink. Following a
+    vendor-supplied absolute URL would let a response point this client at any
+    host it liked.
+57. Activating a draft template was a decision made on a file name and a hash.
     The second administrator — required to be a different person precisely
     because a template version is a wording change to every future engagement
     at once — had no way to read the wording they were approving. Every version

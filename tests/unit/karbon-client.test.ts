@@ -233,3 +233,96 @@ describe('being throttled', () => {
     expect(Math.max(...waits)).toBeGreaterThanOrEqual(2_000);
   });
 });
+
+describe('searching past the first page', () => {
+  /** A page of `count` work items, with a nextLink when more follow. */
+  function page(count: number, nextSkip: number | null, titlePrefix = 'WI') {
+    return {
+      status: 200,
+      body: {
+        value: Array.from({ length: count }, (_, index) => ({
+          WorkItemKey: `${titlePrefix}-${index}`,
+          Title: `${titlePrefix} ${index}`,
+          ClientKey: 'ORG-1',
+        })),
+        ...(nextSkip === null ? {} : { '@odata.nextLink': `https://api.karbonhq.com/v3/WorkItems?$skip=${nextSkip}` }),
+      },
+    };
+  }
+
+  it('follows the nextLink instead of stopping at one page', async () => {
+    // The defect this covers, observed against a real tenant: the client asked
+    // for $top=100, got exactly 100 back, and returned them as if that were the
+    // whole result set. Karbon caps a page at 100 and hands back a nextLink.
+    const { client, calls } = clientWith([page(100, 100), page(100, 200), page(40, null)]);
+
+    const items = await client.searchWorkItems({});
+
+    expect(items).toHaveLength(240);
+    expect(calls).toHaveLength(3);
+    expect(calls[1]?.url).toContain('%24skip=100');
+    expect(calls[2]?.url).toContain('%24skip=200');
+  });
+
+  it('stops as soon as it has the number asked for', async () => {
+    const { client, calls } = clientWith([page(100, 100), page(100, 200)]);
+
+    const items = await client.searchWorkItems({ limit: 5 });
+
+    expect(items).toHaveLength(5);
+    // One page was enough; it must not have kept walking.
+    expect(calls).toHaveLength(1);
+  });
+
+  it('keeps paging when the tenant ignores the filter, rather than giving up', async () => {
+    // This is why paging matters most. The client re-filters locally precisely
+    // because a tenant may ignore an unsupported $filter — and if it does, the
+    // one matching work item can be on any page. Reading only the first page
+    // meant quietly concluding a client had no prior-year letter.
+    const wanted = { WorkItemKey: 'WI-MATCH', Title: 'T2 2025', ClientKey: 'ORG-WANTED' };
+    const { client } = clientWith([
+      page(100, 100, 'OTHER'),
+      { status: 200, body: { value: [wanted] } },
+    ]);
+
+    const items = await client.searchWorkItems({ clientKey: 'ORG-WANTED' });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]?.workItemKey).toBe('WI-MATCH');
+  });
+
+  it('stops when a page comes back empty, even if a nextLink is offered', async () => {
+    const { client, calls } = clientWith([page(100, 100), page(0, 200)]);
+
+    await client.searchWorkItems({});
+    expect(calls).toHaveLength(2);
+  });
+
+  it('refuses to page for ever, loudly', async () => {
+    // A silent stop at fifty pages would be the original defect with a bigger
+    // number. A tenant that keeps offering a nextLink is a fault to report.
+    const endless = Array.from({ length: 60 }, (_, index) => page(100, (index + 1) * 100));
+    const { client } = clientWith(endless);
+
+    await expect(client.searchWorkItems({})).rejects.toThrow(/exceeded 50 pages/i);
+  });
+
+  it('ignores a nextLink pointing somewhere else, taking only the offset', async () => {
+    // The link is vendor-supplied. Following it as a URL would let a response
+    // redirect this client at any host; only the $skip is read out of it.
+    const { client, calls } = clientWith([
+      {
+        status: 200,
+        body: {
+          value: [{ WorkItemKey: 'WI-1', Title: 'One' }],
+          '@odata.nextLink': 'https://attacker.example/v3/WorkItems?$skip=100',
+        },
+      },
+      { status: 200, body: { value: [] } },
+    ]);
+
+    await client.searchWorkItems({});
+
+    expect(calls.every((call) => call.url.startsWith('https://api.karbonhq.test/'))).toBe(true);
+  });
+});

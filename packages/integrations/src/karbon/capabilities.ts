@@ -5,7 +5,8 @@ import type { CapabilityReport } from './types.js';
  *
  * Support levels reflect what has actually been verified from this codebase:
  *
- *   SUPPORTED   — implemented against a documented public API operation.
+ *   SUPPORTED   — observed working against a live Karbon tenant from this
+ *                 project, via `pnpm verify:karbon`.
  *   UNVERIFIED  — implemented per Karbon's published documentation, but not
  *                 yet exercised against a live tenant from this project.
  *   UNSUPPORTED — no officially supported API operation is available. The
@@ -18,19 +19,19 @@ import type { CapabilityReport } from './types.js';
 export const KARBON_CAPABILITY_MATRIX: readonly CapabilityReport[] = [
   {
     capability: 'SEARCH_WORK_ITEMS',
-    support: 'UNVERIFIED',
+    support: 'SUPPORTED',
     operation: 'GET /v3/WorkItems with $filter/$top OData parameters',
     limitation:
-      'Filter support varies by field. The provider requests a filtered page and then re-filters client-side, so an unsupported $filter degrades to a broader query rather than a wrong result.',
+      'Filter support varies by field. The provider requests a filtered page and then re-filters client-side, so an unsupported $filter degrades to a broader query rather than a wrong result. Pages are 100 items; the provider follows @odata.nextLink until the result set is exhausted, taking only the $skip offset from the link.',
   },
   {
     capability: 'READ_WORK_ITEM',
-    support: 'UNVERIFIED',
+    support: 'SUPPORTED',
     operation: 'GET /v3/WorkItems/{WorkItemKey}',
   },
   {
     capability: 'READ_CLIENT',
-    support: 'UNVERIFIED',
+    support: 'SUPPORTED',
     operation: 'GET /v3/Organizations/{EntityKey} and GET /v3/Contacts/{EntityKey}',
     limitation: 'The entity type must be known in advance; the application stores it on the client record.',
   },
@@ -41,7 +42,7 @@ export const KARBON_CAPABILITY_MATRIX: readonly CapabilityReport[] = [
   },
   {
     capability: 'LIST_DOCUMENTS',
-    support: 'UNVERIFIED',
+    support: 'SUPPORTED',
     operation: 'GET /v3/WorkItems/{WorkItemKey}/Documents',
     limitation:
       'Document listings expose file names and identifiers. File names are never trusted on their own — every candidate prior-year document is verified against its content.',
