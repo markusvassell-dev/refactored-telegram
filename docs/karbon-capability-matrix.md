@@ -72,7 +72,44 @@ Before relying on any row above:
    "Use this connection" to Yes, and save.
 2. Press **Check connection**. It issues `GET /WorkItems?$top=1` and stores the
    result — success or the vendor's own error — against the connection.
-3. Exercise each operation against the sandbox with a test work item.
+3. Run the verification harness:
+
+   ```bash
+   pnpm verify:karbon                     # reads only
+   pnpm verify:karbon --work-item <KEY>   # against a work item you have chosen
+   pnpm verify:karbon --allow-writes      # includes a test note and task
+   ```
+
+   It reads the credentials already stored on the Integrations screen — there
+   is no second home for a Karbon credential, and none is passed on a command
+   line where it would land in a shell history. It performs no writes unless
+   asked, and **refuses to write at all** to a connection not marked sandbox.
+
+   It prints one line per capability with the vendor's own error text where
+   something failed. A failure is evidence, not necessarily a defect: an
+   operation genuinely unavailable on the tenant belongs in the table as
+   `Unsupported` with its fallback, not left `Unverified`.
+
 4. Update the level in `packages/integrations/src/karbon/capabilities.ts` from
    `UNVERIFIED` to `SUPPORTED` or `UNSUPPORTED`, with the fallback recorded.
 5. Update this table to match.
+
+`UPDATE_WORK_ITEM_STATUS` and `UPLOAD_DOCUMENT` are deliberately skipped by the
+harness. Both change real state in a way a firm would have to undo: a status
+value is tenant-specific and alters workflow, and an upload puts a file on a
+client's work item. Verify those two by hand, on a work item you have chosen.
+
+## Rate limits
+
+Karbon asks for no more than **120 requests a minute**, per account per
+application, and answers `429` with a `Retry-After` header. The limit is shared
+with anything else the firm has connected to the same account.
+
+The client holds itself to that budget with a token bucket — a burst is allowed
+so long as the average holds — and honours `Retry-After` when it is throttled
+anyway. Lower `requestsPerMinute` if the firm runs other integrations against
+the same Karbon account.
+
+This matters most during an annual rollout: several hundred engagements,
+several calls each, drained by however many workers are running. Without a
+limiter that is a throttled account, not a slow one.

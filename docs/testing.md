@@ -614,7 +614,27 @@ Each was fixed in the code, not the test:
     and that the served response carries `SAMEORIGIN` and
     `frame-ancestors 'self'`; a unit test finds every file containing an
     `<iframe>` and fails when one appears that has not been considered.
-52. Activating a draft template was a decision made on a file name and a hash.
+52. **A Karbon task that was never created was reported as created.** The client
+    turned a 404 into `null` for every HTTP method, so `createTask` returned
+    `SUCCEEDED` with no task id. Karbon's task API availability varies by tenant
+    and plan, which makes 404 the *expected* shape of "not available here" — and
+    it was the one shape reported as success, defeating the fallback-to-a-note
+    design that exists precisely for it. A 404 is now an answer of "nothing"
+    only for a read.
+53. The client ignored `Retry-After`. Karbon documents 120 requests a minute per
+    account per application and says exactly how long to wait when it throttles;
+    the client backed off on its own schedule — 0.5s, 1s, 2s — and gave up after
+    three attempts, having spent the retry budget while the limit was still in
+    force and made it worse by trying.
+54. There was no client-side rate limiting at all. An annual rollout is several
+    hundred engagements, several calls each, drained by however many workers are
+    running, against a budget shared with everything else the firm has connected
+    to that Karbon account.
+55. `retryAfterMs` — written for the fix above — read `"2.5"` as a date, because
+    `Date.parse` is lenient, resolved it to the past, and returned 0. An
+    unreadable header became "retry immediately", the single worst answer to
+    give a throttled client. Caught by its own test before it shipped.
+56. Activating a draft template was a decision made on a file name and a hash.
     The second administrator — required to be a different person precisely
     because a template version is a wording change to every future engagement
     at once — had no way to read the wording they were approving. Every version

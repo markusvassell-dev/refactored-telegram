@@ -1,5 +1,6 @@
 import { IntegrationError, type Logger, createLogger } from '@element/shared';
 import { KARBON_CAPABILITY_MATRIX } from './capabilities.js';
+import { KARBON_DOCUMENTED_REQUESTS_PER_MINUTE, RateLimiter, retryAfterMs } from './throttle.js';
 import type {
   CapabilityReport,
   KarbonClient,
@@ -33,6 +34,14 @@ export interface KarbonClientConfig {
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   maxRetries?: number;
+  /**
+   * Karbon documents no more than 120 requests a minute per account per
+   * application. Lower it when a firm runs other integrations against the same
+   * account, since the budget is shared.
+   */
+  requestsPerMinute?: number;
+  /** Shared across clients when one is supplied, which is what a bulk rollout needs. */
+  rateLimiter?: RateLimiter;
 }
 
 interface RequestOptions {
@@ -51,10 +60,14 @@ export class KarbonRestClient implements KarbonProvider {
   readonly name = 'karbon';
   readonly isMock = false;
 
-  private readonly config: Required<Omit<KarbonClientConfig, 'logger' | 'fetchImpl'>> & {
+  private readonly config: Required<
+    Omit<KarbonClientConfig, 'logger' | 'fetchImpl' | 'rateLimiter'>
+  > & {
     logger: Logger;
     fetchImpl: typeof fetch;
   };
+
+  private readonly limiter: RateLimiter;
 
   constructor(config: KarbonClientConfig) {
     this.config = {
@@ -63,9 +76,13 @@ export class KarbonRestClient implements KarbonProvider {
       accessKey: config.accessKey,
       timeoutMs: config.timeoutMs ?? 30_000,
       maxRetries: config.maxRetries ?? 3,
+      requestsPerMinute: config.requestsPerMinute ?? KARBON_DOCUMENTED_REQUESTS_PER_MINUTE,
       logger: config.logger ?? createLogger({ base: { integration: 'karbon' } }),
       fetchImpl: config.fetchImpl ?? fetch,
     };
+
+    this.limiter =
+      config.rateLimiter ?? new RateLimiter({ requestsPerMinute: this.config.requestsPerMinute });
   }
 
   capabilities(): CapabilityReport[] {
@@ -80,7 +97,13 @@ export class KarbonRestClient implements KarbonProvider {
 
     let lastError: unknown;
 
+    const method = options.method ?? 'GET';
+
     for (let attempt = 1; attempt <= this.config.maxRetries; attempt += 1) {
+      // Every attempt spends a token, retries included: a retry is a request as
+      // far as the account's budget is concerned.
+      await this.limiter.acquire();
+
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
 
@@ -105,12 +128,20 @@ export class KarbonRestClient implements KarbonProvider {
                 : JSON.stringify(options.body),
         });
 
-        if (response.status === 404) return null as T;
+        // A read that found nothing is an answer. A *write* that 404s is not:
+        // it means the operation does not exist on this tenant, which is the
+        // most likely form of "tasks are unavailable here" — and returning null
+        // reported that as a task successfully created.
+        if (response.status === 404 && method === 'GET') return null as T;
 
         if (!response.ok) {
           const detail = await response.text().catch(() => '');
           if (RETRYABLE_STATUS.has(response.status) && attempt < this.config.maxRetries) {
-            await delay(backoffMs(attempt));
+            // Karbon answers 429 with how long to wait. Backing off on our own
+            // shorter schedule spends the retry budget while the limit is still
+            // in force, and the requests themselves prolong it.
+            const requested = retryAfterMs(response.headers.get('retry-after'));
+            await delay(Math.max(requested ?? 0, backoffMs(attempt)));
             continue;
           }
           throw new IntegrationError('Karbon', `HTTP ${response.status} for ${options.path}`, {

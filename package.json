@@ -26,7 +26,8 @@
     "db:seed": "tsx --env-file-if-exists=.env packages/database/src/seed.ts",
     "db:studio": "prisma studio --schema packages/database/prisma/schema.prisma",
     "templates:normalize": "tsx scripts/normalize-templates.ts",
-    "templates:verify": "tsx scripts/verify-template-hashes.ts"
+    "templates:verify": "tsx scripts/verify-template-hashes.ts",
+    "verify:karbon": "tsx --env-file-if-exists=.env scripts/verify-karbon.ts"
   },
   "devDependencies": {
     "@eslint/js": "9.39.5",
