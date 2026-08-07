@@ -82,6 +82,35 @@ export interface ConnectionView {
 
 type StoredCredentials = Record<string, string>;
 
+/**
+ * The scopes this application asks Adobe for.
+ *
+ * `:self` throughout, because it only ever reads back agreements it created
+ * itself. `:account` would additionally cover agreements people sent by hand
+ * from Adobe's own UI — which this never needs — and asking for it requires an
+ * account administrator to approve, raising the bar for no benefit.
+ */
+export const ADOBE_OAUTH_SCOPES = [
+  'agreement_read:self',
+  'agreement_write:self',
+  'agreement_send:self',
+  'webhook_write:self',
+  'user_read:self',
+] as const;
+
+/**
+ * The web host that matches an API host.
+ *
+ * Adobe splits these: tokens are exchanged on `api.<shard>.adobesign.com`, but
+ * a human authorises on `secure.<shard>.adobesign.com`. Sending someone to the
+ * API host produces a blank page or a 404 rather than a consent screen, and the
+ * shard must match or the authorisation is issued against the wrong region.
+ */
+export function adobeWebHostFor(apiBaseUrl: string): string {
+  const url = new URL(apiBaseUrl);
+  return `${url.protocol}//${url.hostname.replace(/^api\./, 'secure.')}`;
+}
+
 export class IntegrationConnectionService {
   constructor(private readonly deps: IntegrationConnectionDeps) {}
 
@@ -311,6 +340,112 @@ export class IntegrationConnectionService {
       beforeValue: { credentialsStored: Boolean(connection.encryptedCredentials), isEnabled: connection.isEnabled },
       afterValue: { credentialsStored: false, isEnabled: false },
       reason,
+    });
+  }
+
+  /**
+   * Where to send an administrator to authorise this application in Adobe.
+   *
+   * The refresh token is the one credential nobody can look up and paste: Adobe
+   * only issues it at the end of an authorisation round trip. Without this the
+   * setup guide's instruction was "complete the authorization-code flow once",
+   * which in practice means assembling a URL by hand, catching a code out of a
+   * redirect, and running a curl — for a value that then has to be carried back
+   * through a terminal and a clipboard. A credential handled that way is a
+   * credential in a shell history.
+   *
+   * Here it never leaves the server: Adobe redirects back to a route that
+   * exchanges the code and stores the token encrypted, and no human ever sees it.
+   */
+  async adobeAuthorizeUrl(input: { redirectUri: string; state: string; actor: Principal }): Promise<string> {
+    assertCan(input.actor, 'integration:manage');
+
+    const connection = await this.deps.prisma.integrationConnection.findUnique({
+      where: { provider: 'ADOBE_SIGN' },
+    });
+    const credentials = this.read(connection?.encryptedCredentials ?? null);
+
+    if (!credentials.clientId || !credentials.clientSecret) {
+      throw new PreconditionError(
+        'Save the Client ID and Client secret first. Adobe will not authorise an application it cannot identify.',
+      );
+    }
+    if (!connection?.baseUrl) {
+      throw new PreconditionError(
+        'Set the region-specific API base URL first, for example https://api.na1.adobesign.com. The authorisation page lives on the matching shard, and the wrong one fails in a way that reads like bad credentials.',
+      );
+    }
+
+    const authorizeUrl = new URL('/public/oauth/v2', adobeWebHostFor(connection.baseUrl));
+    authorizeUrl.searchParams.set('client_id', credentials.clientId);
+    authorizeUrl.searchParams.set('redirect_uri', input.redirectUri);
+    authorizeUrl.searchParams.set('response_type', 'code');
+    authorizeUrl.searchParams.set('state', input.state);
+    // Least privilege that works. `:account` would let this read agreements
+    // people created by hand in Adobe's own UI, which it never needs, and it
+    // requires a separate administrator approval.
+    authorizeUrl.searchParams.set('scope', ADOBE_OAUTH_SCOPES.join(' '));
+
+    return authorizeUrl.toString();
+  }
+
+  /**
+   * Exchanges the authorisation code Adobe redirected back with, and stores the
+   * refresh token it returns.
+   */
+  async completeAdobeOAuth(input: { code: string; redirectUri: string; actor: Principal }): Promise<void> {
+    assertCan(input.actor, 'integration:manage');
+
+    const connection = await this.deps.prisma.integrationConnection.findUnique({
+      where: { provider: 'ADOBE_SIGN' },
+    });
+    const credentials = this.read(connection?.encryptedCredentials ?? null);
+
+    if (!credentials.clientId || !credentials.clientSecret || !connection?.baseUrl) {
+      throw new PreconditionError('The Adobe Sign connection is no longer configured. Save the credentials and retry.');
+    }
+
+    const response = await fetch(`${connection.baseUrl.replace(/\/+$/, '')}/oauth/v2/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        client_id: credentials.clientId,
+        client_secret: credentials.clientSecret,
+        redirect_uri: input.redirectUri,
+        code: input.code,
+      }).toString(),
+    });
+
+    if (!response.ok) {
+      // Adobe's body can name the actual problem — a redirect_uri that does not
+      // match the registered one is the commonest — and it is worth showing.
+      const detail = await response.text().catch(() => '');
+      throw new ValidationError(
+        `Adobe refused the authorisation (HTTP ${response.status}). ${detail.slice(0, 300)}`.trim(),
+      );
+    }
+
+    const payload = (await response.json()) as { refresh_token?: string };
+    if (!payload.refresh_token) {
+      throw new ValidationError('Adobe returned no refresh token, so nothing was stored.');
+    }
+
+    const next = { ...credentials, refreshToken: payload.refresh_token };
+
+    await this.deps.prisma.integrationConnection.update({
+      where: { provider: 'ADOBE_SIGN' },
+      data: { encryptedCredentials: this.write(next), rotatedAt: new Date() },
+    });
+
+    await this.deps.audit.record({
+      eventType: 'CONFIGURATION_CHANGED',
+      objectType: 'IntegrationConnection',
+      objectId: 'ADOBE_SIGN',
+      userId: input.actor.id,
+      // The token itself is never recorded, here or anywhere.
+      afterValue: { rotated: ['Refresh token'], via: 'oauth' },
+      reason: 'Refresh token obtained by authorising the application in Adobe Acrobat Sign.',
     });
   }
 

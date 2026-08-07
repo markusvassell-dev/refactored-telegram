@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@element/database';
 import { createAuditLogger } from '@element/audit';
 import { IntegrationConnectionService } from '@element/services';
-import { createLogger, decryptSecret, type Principal } from '@element/shared';
+import { PermissionError, createLogger, decryptSecret, type Principal } from '@element/shared';
 
 /**
  * Storing a vendor credential.
@@ -279,5 +279,176 @@ describe('a credential blob this key cannot read', () => {
     const [karbon] = await integrations.list();
     expect(karbon?.credentials.every((field) => !field.stored)).toBe(true);
     expect(karbon?.isComplete).toBe(false);
+  });
+});
+
+/**
+ * Authorising Adobe Acrobat Sign.
+ *
+ * The refresh token is the one Adobe credential nobody can look up and paste —
+ * Adobe issues it only at the end of an authorisation round trip. Before this
+ * existed the setup guide said "complete the authorization-code flow once",
+ * which meant assembling a URL by hand, catching a code out of a redirect, and
+ * carrying the result back through a terminal and a clipboard. It also told
+ * people to register a redirect URI at a route that did not exist.
+ */
+describe('authorising Adobe Sign', () => {
+  const REDIRECT = 'https://app.test/api/integrations/adobe-sign/callback';
+
+  beforeEach(async () => {
+    await prisma.integrationConnection.deleteMany({ where: { provider: 'ADOBE_SIGN' } });
+  });
+
+  afterAll(async () => {
+    await prisma.integrationConnection.deleteMany({ where: { provider: 'ADOBE_SIGN' } });
+  });
+
+  async function saveAdobe(overrides: Record<string, unknown> = {}) {
+    return integrations.save({
+      provider: 'ADOBE_SIGN',
+      baseUrl: 'https://api.na1.adobesign.com',
+      isSandbox: true,
+      isEnabled: false,
+      credentials: { clientId: 'adobe-client-id', clientSecret: 'adobe-client-secret' },
+      testModeActive: true,
+      actor: admin,
+      ...overrides,
+    });
+  }
+
+  it('sends the administrator to the consent host, carrying the state and scopes', async () => {
+    await saveAdobe();
+
+    const url = new URL(await integrations.adobeAuthorizeUrl({ redirectUri: REDIRECT, state: 'state-123', actor: admin }));
+
+    // The consent host, not the API host — the API host has no consent screen.
+    expect(url.origin).toBe('https://secure.na1.adobesign.com');
+    expect(url.searchParams.get('client_id')).toBe('adobe-client-id');
+    expect(url.searchParams.get('redirect_uri')).toBe(REDIRECT);
+    expect(url.searchParams.get('response_type')).toBe('code');
+    expect(url.searchParams.get('state')).toBe('state-123');
+    expect(url.searchParams.get('scope')).toContain('agreement_send:self');
+
+    // The client secret is not a query parameter, and a query string ends up in
+    // browser history, referrers and vendor access logs.
+    expect(url.search).not.toContain('adobe-client-secret');
+  });
+
+  it('refuses to start before the client id and secret are saved', async () => {
+    await expect(
+      integrations.adobeAuthorizeUrl({ redirectUri: REDIRECT, state: 's', actor: admin }),
+    ).rejects.toThrow(/Client ID/i);
+  });
+
+  it('refuses to start without the region-specific base URL', async () => {
+    // Guessing the shard produces an authorisation against the wrong region,
+    // which then fails in a way that reads exactly like a bad client secret.
+    await saveAdobe({ baseUrl: null });
+
+    await expect(
+      integrations.adobeAuthorizeUrl({ redirectUri: REDIRECT, state: 's', actor: admin }),
+    ).rejects.toThrow(/base URL/i);
+  });
+
+  it('is not something a reader may start', async () => {
+    await saveAdobe();
+
+    await expect(
+      integrations.adobeAuthorizeUrl({ redirectUri: REDIRECT, state: 's', actor: reader }),
+    ).rejects.toThrow(PermissionError);
+  });
+
+  it('stores the refresh token Adobe returns, encrypted, and never shows it', async () => {
+    await saveAdobe();
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ refresh_token: 'the-refresh-token', access_token: 'a' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch;
+
+    try {
+      await integrations.completeAdobeOAuth({ code: 'auth-code', redirectUri: REDIRECT, actor: admin });
+    } finally {
+      globalThis.fetch = original;
+    }
+
+    const row = await prisma.integrationConnection.findUniqueOrThrow({ where: { provider: 'ADOBE_SIGN' } });
+    expect(row.encryptedCredentials).not.toContain('the-refresh-token');
+    expect(JSON.parse(decryptSecret(row.encryptedCredentials as string, ENCRYPTION_KEY))).toMatchObject({
+      clientId: 'adobe-client-id',
+      refreshToken: 'the-refresh-token',
+    });
+
+    // Reported to the screen as stored, never as a value.
+    const view = (await integrations.list()).find((entry) => entry.provider === 'ADOBE_SIGN');
+    const token = view?.credentials.find((field) => field.key === 'refreshToken');
+    expect(token?.stored).toBe(true);
+    expect(JSON.stringify(view)).not.toContain('the-refresh-token');
+  });
+
+  it('keeps the token out of the audit trail', async () => {
+    await saveAdobe();
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ refresh_token: 'secret-token-value' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch;
+
+    try {
+      await integrations.completeAdobeOAuth({ code: 'auth-code', redirectUri: REDIRECT, actor: admin });
+    } finally {
+      globalThis.fetch = original;
+    }
+
+    const event = await prisma.auditEvent.findFirstOrThrow({
+      where: { objectType: 'IntegrationConnection', objectId: 'ADOBE_SIGN' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(JSON.stringify(event)).not.toContain('secret-token-value');
+    expect(event.reason).toMatch(/authorising/i);
+  });
+
+  it('shows Adobe’s own reason when it refuses, because it names the real fault', async () => {
+    // A redirect_uri that does not match the registered one is the commonest
+    // failure here, and Adobe says so. Swallowing that leaves somebody guessing.
+    await saveAdobe();
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response('{"error":"invalid_request","error_description":"redirect_uri mismatch"}', { status: 400 })) as typeof fetch;
+
+    try {
+      await expect(
+        integrations.completeAdobeOAuth({ code: 'auth-code', redirectUri: REDIRECT, actor: admin }),
+      ).rejects.toThrow(/redirect_uri mismatch/);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  it('stores nothing when Adobe returns no refresh token', async () => {
+    await saveAdobe();
+
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ access_token: 'only-an-access-token' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch;
+
+    try {
+      await expect(
+        integrations.completeAdobeOAuth({ code: 'auth-code', redirectUri: REDIRECT, actor: admin }),
+      ).rejects.toThrow(/no refresh token/i);
+    } finally {
+      globalThis.fetch = original;
+    }
+
+    const view = (await integrations.list()).find((entry) => entry.provider === 'ADOBE_SIGN');
+    expect(view?.credentials.find((field) => field.key === 'refreshToken')?.stored).toBe(false);
   });
 });

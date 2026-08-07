@@ -1,5 +1,6 @@
 import { KARBON_CAPABILITY_MATRIX } from '@element/integrations';
-import { can } from '@element/shared';
+import type { ReactNode } from 'react';
+import { can, env } from '@element/shared';
 import type { ConnectionView } from '@element/services';
 import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
@@ -18,7 +19,12 @@ const BASE_URL_HELP: Record<string, string> = {
   ADOBE_SIGN: 'Region-specific, and required — for example https://api.na1.adobesign.com.',
 };
 
-export default async function IntegrationsPage() {
+export default async function IntegrationsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
+  const params = await searchParams;
   const user = await requireUser();
   const csrfToken = (await sessionCsrfToken()) ?? '';
   const canManage = can(user, 'integration:manage');
@@ -69,6 +75,27 @@ export default async function IntegrationsPage() {
           ) : null}
         </div>
       </section>
+
+      {/* The authorisation happens on Adobe's site and returns here, so the
+          outcome has to be reported on arrival — otherwise a refused
+          authorisation looks identical to a successful one: the same page,
+          with the same empty box. */}
+      {params.adobe === 'connected' ? (
+        <div role="note" className="mb-6 rounded border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          <p>
+            <strong className="font-semibold">Adobe Sign authorised.</strong> The refresh token is stored encrypted.
+            Run the connection check below to confirm it works.
+          </p>
+        </div>
+      ) : null}
+      {params.adobe === 'error' ? (
+        <div role="note" className="mb-6 rounded border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+          <p>
+            <strong className="font-semibold">Adobe Sign was not authorised.</strong>{' '}
+            {typeof params.reason === 'string' ? params.reason : 'The authorisation did not complete.'}
+          </p>
+        </div>
+      ) : null}
 
       {connections.map((connection) => (
         <ConnectionCard
@@ -320,6 +347,8 @@ function ConnectionCard({
               </div>
             </ActionForm>
 
+            {provider === 'ADOBE_SIGN' ? <AdobeConnect connection={connection} /> : null}
+
             <div className="flex flex-wrap gap-2">
               {connection.isComplete ? (
                 <ActionForm
@@ -357,5 +386,55 @@ function ConnectionCard({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * The refresh token, obtained by clicking rather than by hand.
+ *
+ * It is the one Adobe credential nobody can look up and paste: Adobe only
+ * issues it at the end of an authorisation round trip. The setup guide's
+ * instruction was "complete the authorization-code flow once", which in
+ * practice meant assembling a URL by hand, catching a code out of a redirect,
+ * running a curl, and carrying the result back through a terminal and a
+ * clipboard — into a box on this very screen. A credential handled that way
+ * ends up in a shell history.
+ *
+ * The redirect URI is shown because Adobe rejects the exchange unless the
+ * registered value matches this one exactly, and "exactly" includes the scheme
+ * and any trailing slash. Guessing it is the commonest way this fails.
+ */
+function AdobeConnect({ connection }: { connection: ConnectionView }): ReactNode {
+  const hasIdentity = connection.credentials.some(
+    (field) => field.key === 'clientId' && field.stored,
+  ) && connection.credentials.some((field) => field.key === 'clientSecret' && field.stored);
+  const hasToken = connection.credentials.some((field) => field.key === 'refreshToken' && field.stored);
+  const redirectUri = new URL('/api/integrations/adobe-sign/callback', env().APP_BASE_URL).toString();
+
+  return (
+    <div className="rounded border border-slate-300 bg-slate-50 px-4 py-3 text-sm">
+      <p>
+        <strong className="font-semibold">Refresh token</strong> — Adobe issues this only at the end of an
+        authorisation, so it cannot be looked up and pasted like the other two. Save the Client ID and Client secret,
+        then use the button below and approve the application in Adobe.
+      </p>
+
+      <p className="mt-2">
+        Register this exact redirect URI on the API application in Adobe, or the authorisation will be refused:
+      </p>
+      <p className="mt-1 break-all font-mono text-xs">{redirectUri}</p>
+
+      <div className="mt-3">
+        {hasIdentity ? (
+          <a className="btn-secondary inline-block" href="/api/integrations/adobe-sign/authorize">
+            {hasToken ? 'Re-authorise with Adobe' : 'Connect Adobe Sign'}
+          </a>
+        ) : (
+          <p className="text-slate-600">
+            Save the Client ID and Client secret first — Adobe will not authorise an application it cannot identify.
+          </p>
+        )}
+      </div>
+    </div>
   );
 }

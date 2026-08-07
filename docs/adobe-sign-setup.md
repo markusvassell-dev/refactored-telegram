@@ -97,6 +97,11 @@ access tokens. The refresh token is the credential to protect; it is stored
 envelope-encrypted.
 
 1. Complete the authorization-code flow once to obtain the refresh token.
+   **Use the Connect button on the Integrations screen**, which does this for
+   you: it sends you to Adobe, and the callback exchanges the code and stores
+   the token encrypted server-side. Doing it by hand means carrying a
+   long-lived credential through a terminal and a clipboard, which is how one
+   ends up in a shell history.
 2. Store `ADOBE_SIGN_CLIENT_ID`, `ADOBE_SIGN_CLIENT_SECRET`,
    `ADOBE_SIGN_REFRESH_TOKEN` and the region-specific
    `ADOBE_SIGN_API_BASE_URL` (for example `https://api.na1.adobesign.com`) on
