@@ -58,8 +58,16 @@ That is far more than sending firm notices needs.
 Restrict it. This client only ever sends from `NOTIFICATION_EMAIL_SENDER`, so
 an Exchange application access policy costs nothing and removes the over-grant:
 
+This is tenant configuration, not application configuration. It runs in
+**Exchange Online PowerShell**, by somebody holding the Exchange Administrator
+role, and it is done once.
+
 ```powershell
-# One mail-enabled security group holding only the sending mailbox.
+Install-Module ExchangeOnlineManagement -Scope CurrentUser   # first time only
+Connect-ExchangeOnline -UserPrincipalName admin@yourfirm.ca
+
+# One mail-enabled security group holding only the sending mailbox. The policy
+# cannot name a mailbox directly; it can only name a group.
 New-DistributionGroup -Name "ElementEngagementsSenders" -Type Security `
   -Members engagements@yourfirm.ca
 
@@ -68,6 +76,19 @@ New-ApplicationAccessPolicy -AppId <ENTRA_CLIENT_ID> `
   -AccessRight RestrictAccess `
   -Description "Element Engagements may send only as the engagements mailbox."
 ```
+
+The backtick is PowerShell's line continuation — each command is one statement.
+
+### Legacy, and what replaces it
+
+`New-ApplicationAccessPolicy` still works and is the shortest path today, but
+Microsoft has marked application access policies **legacy** and directs new
+configuration to **RBAC for Applications** — a scoped `Application Mail.Send`
+role assignment against a resource scope, rather than a group-based policy.
+
+Either restricts the grant, which is the point. Prefer RBAC for a new
+deployment, and follow Microsoft's current page for the exact parameters rather
+than the sketch above: the cmdlets there have changed more than once.
 
 Without the policy, a compromised client secret can send mail as the managing
 partner. With it, the worst case is mail from a mailbox created for the
