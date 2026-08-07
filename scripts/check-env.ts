@@ -1,6 +1,7 @@
 import {
   describeBootstrapAddressProblem,
   describeEntraConfigurationProblem,
+  describeSenderProblem,
   inspectStorageDurability,
   loadEnv,
 } from '@element/shared';
@@ -59,6 +60,16 @@ try {
       if (problem) {
         process.stderr.write(`WARNING: BOOTSTRAP_ADMIN_EMAILS entry "${address}" ${problem}\n`);
       }
+    }
+  }
+
+  // The mailbox notices are sent from. A placeholder here fails at Microsoft
+  // in a way that reads as a missing permission, which sends somebody to Entra
+  // to re-check a consent that was never the problem.
+  if (env.NOTIFICATION_EMAIL_ENABLED) {
+    const senderProblem = describeSenderProblem(env.NOTIFICATION_EMAIL_SENDER);
+    if (senderProblem) {
+      process.stderr.write(`WARNING: NOTIFICATION_EMAIL_SENDER ${senderProblem}\n`);
     }
   }
 

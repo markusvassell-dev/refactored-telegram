@@ -1,6 +1,6 @@
 import { PrismaClient } from '@element/database';
 import { KarbonRestClient, type KarbonProvider, type KarbonWorkItem } from '@element/integrations';
-import { createLogger, decryptSecret, loadEnv } from '@element/shared';
+import { createLogger, decryptSecret, describeSandboxMislabel, loadEnv } from '@element/shared';
 
 /**
  * Exercising Karbon against a real tenant.
@@ -54,11 +54,31 @@ function record(capability: string, outcome: Outcome, detail: string): void {
   process.stdout.write(`[${mark}] ${capability.padEnd(26)} ${detail}\n`);
 }
 
-/** Runs one capability, turning any throw into a recorded failure. */
-async function attempt<T>(capability: string, run: () => Promise<T>, describe: (value: T) => string): Promise<T | null> {
+/**
+ * Runs one capability, turning any throw into a recorded failure.
+ *
+ * `proves` decides whether the result is evidence the operation works. Not
+ * throwing is not the same as working: a read that 404s comes back as `null` by
+ * design — "a read that found nothing is an answer" — so without this, an
+ * operation that found nothing was recorded as passing. `READ_WORK_ITEM` was
+ * reported `ok  not found`, against a key `SEARCH_WORK_ITEMS` had just
+ * returned, and that reading is what promoted the row to Supported in the
+ * matrix.
+ */
+async function attempt<T>(
+  capability: string,
+  run: () => Promise<T>,
+  describe: (value: T) => string,
+  proves: (value: T) => boolean = () => true,
+): Promise<T | null> {
   try {
     const value = await run();
-    record(capability, 'PASS', describe(value));
+    const detail = describe(value);
+    if (proves(value)) {
+      record(capability, 'PASS', detail);
+      return value;
+    }
+    record(capability, 'FAIL', `${detail} — the call succeeded but returned nothing, so this proves nothing`);
     return value;
   } catch (error) {
     // The vendor's own message is the point of this script.
@@ -126,6 +146,15 @@ async function main(): Promise<void> {
     process.stdout.write(`  environment  ${environment}\n`);
     process.stdout.write(`  used by app  ${connection.isEnabled ? 'yes' : 'NO — the application is using the mock adapter'}\n`);
     process.stdout.write(`  writes       ${writeMode(connection.isSandbox)}\n\n`);
+
+    const mislabel = describeSandboxMislabel({
+      provider: 'KARBON',
+      baseUrl: connection.baseUrl ?? env.KARBON_API_BASE_URL,
+      isSandbox: connection.isSandbox,
+    });
+    if (mislabel) {
+      process.stdout.write(`  WARNING: ${mislabel}\n\n`);
+    }
 
     // This script reads the credentials directly, so it verifies a connection
     // the application itself may not be using. Passing every check while the
@@ -219,7 +248,14 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
   );
 
   const subject: KarbonWorkItem | null =
-    (workItemKey ? await attempt('READ_WORK_ITEM', () => client.getWorkItem(workItemKey), (item) => (item ? `"${item.title}"` : 'not found')) : null) ??
+    (workItemKey
+      ? await attempt(
+          'READ_WORK_ITEM',
+          () => client.getWorkItem(workItemKey),
+          (item) => (item ? `"${item.title}"` : `no work item with key ${workItemKey}`),
+          (item) => item !== null,
+        )
+      : null) ??
     found?.[0] ??
     null;
 
@@ -229,7 +265,30 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
     }
   } else {
     if (!workItemKey) {
-      await attempt('READ_WORK_ITEM', () => client.getWorkItem(subject.workItemKey), (item) => (item ? `"${item.title}"` : 'not found'));
+      // Reading back a key the search has just returned. "Not found" here is
+      // not an empty tenant — it means the key the search reports is not the
+      // one the read endpoint accepts, which would break every feature that
+      // looks a work item up by key.
+      const readBack = await attempt(
+        'READ_WORK_ITEM',
+        () => client.getWorkItem(subject.workItemKey),
+        (item) => (item ? `"${item.title}"` : `key ${subject.workItemKey} came from the search but does not resolve on read`),
+        (item) => item !== null,
+      );
+
+      if (!readBack) {
+        process.stdout.write(
+          [
+            '',
+            'READ_WORK_ITEM failed in the way that matters: the search returned this work',
+            `item, but GET /WorkItems/${subject.workItemKey} does not find it. Every feature`,
+            'that resolves a work item by key depends on this, so it is worth settling before',
+            'anything else. Most likely the field the search result is read from is not the',
+            'key the read endpoint expects.',
+            '',
+          ].join('\n'),
+        );
+      }
     }
 
     if (subject.clientKey) {
@@ -237,6 +296,7 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
         'READ_CLIENT',
         () => client.getClient(subject.clientKey as string),
         (found) => (found ? `${found.legalName} (${found.entityType})` : 'no organisation or contact matched that key'),
+        (found) => found !== null,
       );
     } else {
       record('READ_CLIENT', 'SKIP', 'the work item carries no client key');

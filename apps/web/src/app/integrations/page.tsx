@@ -1,6 +1,6 @@
 import { KARBON_CAPABILITY_MATRIX } from '@element/integrations';
 import type { ReactNode } from 'react';
-import { can, env } from '@element/shared';
+import { can, describeSandboxMislabel, env } from '@element/shared';
 import type { ConnectionView } from '@element/services';
 import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
@@ -171,6 +171,14 @@ function ConnectionCard({
   testMode: boolean;
 }) {
   const { provider } = connection;
+  // A production connection labelled Sandbox defeats Test Mode's only
+  // structural guarantee, and the screen that offers the label is the screen
+  // that should say so.
+  const mislabel = describeSandboxMislabel({
+    provider,
+    baseUrl: connection.baseUrl,
+    isSandbox: connection.isSandbox,
+  });
 
   return (
     <section className="card mb-6">
@@ -189,6 +197,14 @@ function ConnectionCard({
       </div>
 
       <div className="card-body space-y-4">
+        {mislabel ? (
+          <div role="note" className="rounded border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900">
+            <p>
+              <strong className="font-semibold">This says sandbox, but it is production.</strong> {mislabel}
+            </p>
+          </div>
+        ) : null}
+
         <dl className="grid gap-3 text-sm sm:grid-cols-2">
           <div>
             <dt className="text-slate-500">Credentials</dt>

@@ -1,6 +1,6 @@
 import { PrismaClient } from '@element/database';
 import { MicrosoftGraphMailer } from '@element/integrations';
-import { createLogger, loadEnv } from '@element/shared';
+import { createLogger, describeSenderProblem, loadEnv } from '@element/shared';
 
 /**
  * Proving that staff notification e-mail works.
@@ -42,6 +42,16 @@ async function main(): Promise<void> {
   if (!env.NOTIFICATION_EMAIL_ENABLED) {
     process.stderr.write('NOTIFICATION_EMAIL_ENABLED is off, so no mail is sent whatever else is configured.\n');
     process.stderr.write('Set it to true, set NOTIFICATION_EMAIL_SENDER, and redeploy.\n\n');
+    process.exit(1);
+  }
+
+  // A placeholder domain reaches Microsoft, is refused, and the refusal reads
+  // as a permissions problem — sending somebody to Entra to re-check a consent
+  // that was never the issue. Caught here instead.
+  const senderProblem = describeSenderProblem(env.NOTIFICATION_EMAIL_SENDER);
+  if (senderProblem) {
+    process.stderr.write(`NOTIFICATION_EMAIL_SENDER ${senderProblem}\n`);
+    process.stderr.write('Nothing was attempted; Microsoft would have refused it for the wrong-looking reason.\n\n');
     process.exit(1);
   }
 

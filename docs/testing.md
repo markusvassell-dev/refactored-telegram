@@ -3,8 +3,8 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (678 tests)
-pnpm test:unit          # 345 — no external dependencies
+pnpm test               # unit + integration  (687 tests)
+pnpm test:unit          # 354 — no external dependencies
 pnpm test:integration   # 333 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 58  — needs a browser
 pnpm build              # production build
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (345)
+## Unit tests (354)
 
 No database, no filesystem, no network.
 
@@ -791,6 +791,24 @@ Each was fixed in the code, not the test:
     skipped entirely and so was never exercised anywhere. Writes now require a
     named work item always, and a second explicit flag against production, and
     the upload is attempted rather than skipped.
+
+77. The verification harness recorded a capability as passing whenever the call
+    did not throw. A Karbon read that 404s returns `null` by design — "a read
+    that found nothing is an answer" — so `READ_WORK_ITEM` was reported
+    `ok  not found`, against a key `SEARCH_WORK_ITEMS` had just returned, and
+    that reading is what promoted the row to Supported in the matrix. Not
+    throwing is not the same as working.
+78. `NOTIFICATION_EMAIL_SENDER` was left as `engagements@yourfirm.ca` — a
+    perfectly well-formed address on a domain from a set-up guide. Microsoft
+    refuses it, and the refusal reads as a missing `Mail.Send` consent, which
+    sends the operator to Entra to re-check a permission that was never the
+    problem. A placeholder domain is now named as one before anything is sent.
+79. Karbon publishes no sandbox host, so a firm that wants the application to
+    use Karbon at all while Test Mode is on has exactly one route: mark the
+    production connection "Sandbox". That turns Test Mode's only structural
+    guarantee into a label, and real client records become reachable while
+    every screen still says TEST MODE. The mismatch between the label and the
+    host is now reported wherever the label appears.
 
 ## What is not covered
 

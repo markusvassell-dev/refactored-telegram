@@ -58,3 +58,47 @@ export function describeBootstrapAddressProblem(value: string): string | null {
 
   return 'is not an e-mail address, so it can never match anyone. It must be the address Entra ID authenticates, which is usually the work e-mail address.';
 }
+
+/**
+ * Domains that are obviously stand-ins rather than a firm's own.
+ *
+ * `engagements@yourfirm.ca` is a perfectly well-formed address, so the shape
+ * check above says yes to it. It then reaches Microsoft, which refuses it, and
+ * the refusal reads as a missing Mail.Send consent — sending somebody to Entra
+ * to re-check a permission that was never the problem. The mailbox simply does
+ * not exist, because the domain is one from a set-up guide.
+ */
+const PLACEHOLDER_DOMAINS = [
+  'yourfirm.ca',
+  'yourfirm.com',
+  'yourcompany.com',
+  'example.com',
+  'example.ca',
+  'example.test',
+  'firm.ca',
+  'contoso.com',
+];
+
+/**
+ * Names what is wrong with the address notifications are sent from, or returns
+ * null when it is at least plausible. It cannot know a real mailbox exists —
+ * only Microsoft can — but it catches the value nobody replaced.
+ */
+export function describeSenderProblem(value: string | undefined | null): string | null {
+  const trimmed = value?.trim() ?? '';
+
+  if (trimmed.length === 0) {
+    return 'is not set, so there is no mailbox to send from.';
+  }
+
+  if (!looksLikeEmailAddress(trimmed)) {
+    return `is "${trimmed}", which is not an e-mail address.`;
+  }
+
+  const domain = trimmed.slice(trimmed.indexOf('@') + 1).toLowerCase();
+  if (PLACEHOLDER_DOMAINS.includes(domain)) {
+    return `is "${trimmed}" — ${domain} is a placeholder domain from a set-up guide, not your firm's. Microsoft will refuse it, and the refusal looks like a missing permission rather than a mailbox that does not exist. Replace it with a real shared mailbox on your own domain; a shared mailbox needs no licence.`;
+  }
+
+  return null;
+}
