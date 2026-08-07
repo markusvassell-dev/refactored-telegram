@@ -1482,3 +1482,43 @@ export async function recordExternalSignature(formData: FormData): Promise<Actio
       : 'Signature recorded, and filing it into Karbon has been queued. The file shows it was signed outside this application.';
   });
 }
+
+/**
+ * Brings the firm's clients in from Karbon.
+ *
+ * Without it, populating a firm with hundreds of T1s meant typing them into a
+ * form one at a time — the kind of task nobody finishes, leaving an application
+ * nobody can use. It never overwrites a client already here: Karbon is the
+ * system of record for documents, not for the details that go into a legal
+ * document, and somebody may have corrected those deliberately.
+ */
+export async function importClientsFromKarbon(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('engagement:create');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const dryRun = formData.get('dryRun')?.toString() !== 'false';
+    const providers = await container.providers();
+
+    const result = await container.clientImport.run({
+      karbon: providers.karbon,
+      actor,
+      dryRun,
+      correlationId: newCorrelationId(),
+    });
+
+    revalidatePath('/clients');
+
+    const parts = [
+      `${result.found} client(s) found in Karbon.`,
+      dryRun
+        ? `${result.created.length} would be added.`
+        : `${result.created.length} added.`,
+      `${result.unchanged} already here and matching.`,
+    ];
+    if (result.differing.length > 0) parts.push(`${result.differing.length} differ and were left alone.`);
+    if (result.failed.length > 0) parts.push(`${result.failed.length} could not be read.`);
+
+    return { ok: true, message: parts.join(' '), blockers: result.notes };
+  });
+}

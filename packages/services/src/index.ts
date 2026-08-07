@@ -9,6 +9,7 @@ export * from './generation-service.js';
 export * from './approval-service.js';
 export * from './signing-service.js';
 export * from './external-signature-service.js';
+export * from './client-import-service.js';
 export * from './cover-letter-service.js';
 export * from './cover-letter-narrative-service.js';
 export * from './karbon-notification.js';

@@ -1,0 +1,172 @@
+import Link from 'next/link';
+import { can } from '@element/shared';
+import { container } from '@/lib/container';
+import { requireUser, sessionCsrfToken } from '@/lib/session';
+import { EmptyState, PageHeader } from '@/components/shell';
+import { Pagination, PageOutOfRange } from '@/components/pagination';
+import { ActionForm } from '@/components/action-form';
+import { boundedCount, parsePageRequest, toPage, withStableOrder } from '@/lib/pagination';
+import { importClientsFromKarbon } from '@/app/actions';
+
+export const dynamic = 'force-dynamic';
+
+/**
+ * The firm's clients.
+ *
+ * There was no such screen, which meant there was also no way to see whether
+ * the application knew about a client at all — and no route from "Karbon holds
+ * the client list" to "this application can start an engagement for them"
+ * except typing each one into a form. For a firm with hundreds of T1s that is
+ * the task that never gets done, and an application nobody finishes populating
+ * is one nobody uses.
+ */
+export default async function ClientsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  const user = await requireUser();
+  const csrfToken = (await sessionCsrfToken()) ?? '';
+  const params = await searchParams;
+  const request = parsePageRequest(params);
+
+  const [rows, total, providers] = await Promise.all([
+    container.prisma.client.findMany({
+      // A bulk import creates hundreds in one pass, so `legalName` ties and
+      // identical timestamps are the normal case. Without the tiebreaker the
+      // order between tied rows is undefined and paging would drop clients
+      // from a list that reports itself complete.
+      orderBy: withStableOrder([{ legalName: 'asc' as const }]),
+      include: { _count: { select: { engagements: true, contacts: true } } },
+      skip: request.skip,
+      take: request.take,
+    }),
+    boundedCount((limit) => container.prisma.client.count({ take: limit })),
+    container.providers(),
+  ]);
+
+  const page = toPage(rows, request);
+  const clients = page.items;
+  const canImport = can(user, 'engagement:create');
+  const karbonIsMock = providers.karbon.isMock;
+
+  return (
+    <>
+      <PageHeader
+        title="Clients"
+        description="Every client this application knows about. Karbon remains the firm's client list; these are the ones an engagement can be started for."
+      />
+
+      {canImport ? (
+        <section className="card mb-6">
+          <div className="card-header">
+            <h2 className="text-base font-semibold">Import from Karbon</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              Reads the clients named on recent Karbon work items and adds the ones not already here. A client already
+              here is never overwritten — Karbon is the system of record for documents, not for the details that go
+              into a legal document, and somebody may have corrected those on purpose. Differences are reported so you
+              can decide.
+            </p>
+          </div>
+          <div className="card-body">
+            {karbonIsMock ? (
+              <p className="text-sm text-slate-600">
+                Karbon is not connected, so there is nothing to import. The mock adapter would add fictional sample
+                clients to this list, where nothing would distinguish them from the firm&rsquo;s own.
+              </p>
+            ) : (
+              <div className="grid gap-6 lg:grid-cols-2">
+                <ActionForm
+                  action={importClientsFromKarbon}
+                  csrfToken={csrfToken}
+                  submitLabel="Preview the import"
+                  variant="secondary"
+                >
+                  <input type="hidden" name="dryRun" value="true" />
+                  <p className="text-sm text-slate-600">Reports what would happen and changes nothing.</p>
+                </ActionForm>
+
+                <ActionForm
+                  action={importClientsFromKarbon}
+                  csrfToken={csrfToken}
+                  submitLabel="Import them"
+                  confirm="This adds the clients Karbon knows about to this application. Continue?"
+                >
+                  <input type="hidden" name="dryRun" value="false" />
+                  <p className="text-sm text-slate-600">Adds the new ones. Existing clients are left alone.</p>
+                </ActionForm>
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {clients.length === 0 ? (
+        page.page > 1 ? (
+          <PageOutOfRange pathname="/clients" params={params} pluralNoun="clients" />
+        ) : (
+          <EmptyState message="No clients yet. Import them from Karbon above, or start an engagement, which creates one." />
+        )
+      ) : (
+        <section className="card">
+          <div className="card-body overflow-x-auto">
+            <table className="table">
+              <caption className="sr-only">Clients</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Legal name</th>
+                  <th scope="col">Karbon</th>
+                  <th scope="col">Business number</th>
+                  <th scope="col">Contacts</th>
+                  <th scope="col">Engagements</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clients.map((client) => (
+                  <tr key={client.id}>
+                    <td className="font-medium">
+                      {client.legalName}
+                      {client.isTestFixture ? (
+                        <span className="badge ml-2 bg-amber-100 text-amber-800">test fixture</span>
+                      ) : null}
+                    </td>
+                    <td className="font-mono text-xs">
+                      {client.karbonEntityKey ? (
+                        <>
+                          {client.karbonEntityKey}
+                          <span className="ml-2 text-slate-500">{client.karbonEntityType}</span>
+                        </>
+                      ) : (
+                        <span className="text-slate-500">not linked</span>
+                      )}
+                    </td>
+                    <td className="text-xs">{client.businessNumber ?? '—'}</td>
+                    <td className="text-xs">{client._count.contacts}</td>
+                    <td className="text-xs">
+                      {client._count.engagements > 0 ? (
+                        <Link className="underline" href={`/engagements?client=${client.id}`}>
+                          {client._count.engagements}
+                        </Link>
+                      ) : (
+                        '0'
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      <Pagination
+        page={page}
+        total={total}
+        noun="client"
+        pathname="/clients"
+        params={params}
+        label="Clients pagination"
+      />
+    </>
+  );
+}

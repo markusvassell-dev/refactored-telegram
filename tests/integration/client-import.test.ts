@@ -1,0 +1,201 @@
+import { randomUUID } from 'node:crypto';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { PrismaClient } from '@element/database';
+import { createAuditLogger } from '@element/audit';
+import { ClientImportService } from '@element/services';
+import { MockKarbonProvider } from '@element/integrations';
+import { PermissionError, PreconditionError, createLogger, type Principal } from '@element/shared';
+
+/**
+ * Bringing the firm's clients in from Karbon.
+ *
+ * There was no route from "Karbon holds the client list" to "this application
+ * knows a client exists": `KARBON_SYNC` syncs one work item by key and creates
+ * no client at all. Populating a firm with hundreds of T1s meant typing each
+ * one into a form, which is the task that never gets finished — and an
+ * application nobody finishes populating is one nobody uses.
+ *
+ * The tests are about what makes it safe to run twice: it must not overwrite a
+ * client somebody has corrected, and it must not quietly fill the real client
+ * list with fictional ones.
+ */
+
+const prisma = new PrismaClient();
+const audit = createAuditLogger(prisma);
+const logger = createLogger({ level: 'error' });
+const service = new ClientImportService({ prisma, audit, logger });
+
+const suffix = randomUUID().slice(0, 8);
+const entityKeys: string[] = [];
+let admin: Principal;
+let readOnly: Principal;
+
+/** Three clients on three work items, as a tenant would present them. */
+function seed() {
+  const keys = [`ci-org-${suffix}-1`, `ci-org-${suffix}-2`, `ci-con-${suffix}-3`];
+  for (const key of keys) if (!entityKeys.includes(key)) entityKeys.push(key);
+
+  return {
+    clients: [
+      {
+        entityKey: keys[0]!,
+        entityType: 'Organization' as const,
+        legalName: 'Ziegeman Pipeline Services Ltd.',
+        businessNumber: '11111 1111 RC0001',
+        city: 'Calgary',
+        province: 'AB',
+        contacts: [
+          { contactKey: `${keys[0]}-c1`, fullName: 'Dale Ziegeman', email: 'dale@example.test', isPrimary: true },
+        ],
+      },
+      {
+        entityKey: keys[1]!,
+        entityType: 'Organization' as const,
+        legalName: 'Northwind Holdings Ltd.',
+        businessNumber: '22222 2222 RC0001',
+        contacts: [],
+      },
+      {
+        entityKey: keys[2]!,
+        entityType: 'Contact' as const,
+        legalName: 'Robin Fournier',
+        contacts: [{ contactKey: `${keys[2]}-c1`, fullName: 'Robin Fournier', email: 'robin@example.test' }],
+      },
+    ],
+    workItems: keys.map((key, index) => ({
+      workItemKey: `ci-wi-${suffix}-${index}`,
+      title: `Year-end ${index}`,
+      clientKey: key,
+    })),
+  };
+}
+
+/** A Karbon that reports itself real, since a mock is refused by design. */
+function connectedKarbon(): MockKarbonProvider {
+  const inner = new MockKarbonProvider(seed());
+  return Object.create(inner, { isMock: { value: false, enumerable: true } }) as MockKarbonProvider;
+}
+
+async function makeUser(email: string, roles: Principal['roles']): Promise<Principal> {
+  const user = await prisma.user.upsert({
+    where: { email },
+    create: { email, displayName: email.split('@')[0] as string },
+    update: {},
+  });
+  for (const role of roles) {
+    await prisma.userRole.upsert({
+      where: { userId_role: { userId: user.id, role } },
+      create: { userId: user.id, role },
+      update: {},
+    });
+  }
+  return { id: user.id, email: user.email, displayName: user.displayName, roles };
+}
+
+beforeAll(async () => {
+  await prisma.$connect();
+  admin = await makeUser(`import-admin-${suffix}@test.example`, ['PREPARER']);
+  readOnly = await makeUser(`import-reader-${suffix}@test.example`, ['READ_ONLY']);
+});
+
+beforeEach(async () => {
+  seed(); // registers the keys for cleanup
+  await prisma.client.deleteMany({ where: { karbonEntityKey: { in: entityKeys } } });
+});
+
+afterAll(async () => {
+  await prisma.client.deleteMany({ where: { karbonEntityKey: { in: entityKeys } } });
+  await prisma.user.deleteMany({ where: { email: { contains: `-${suffix}@test.example` } } });
+  await prisma.$disconnect();
+});
+
+describe('importing clients from Karbon', () => {
+  it('adds the clients it finds, with their contacts', async () => {
+    const result = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+
+    expect(result.found).toBeGreaterThan(0);
+    expect(result.created.length).toBe(result.found);
+
+    const created = await prisma.client.findMany({
+      where: { karbonEntityKey: { in: result.created.map((entry) => entry.entityKey) } },
+      include: { contacts: true },
+    });
+    expect(created.length).toBe(result.created.length);
+    expect(created.every((client) => client.karbonEntityKey && client.legalName.length > 0)).toBe(true);
+  });
+
+  it('changes nothing on a dry run', async () => {
+    const preview = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: true });
+
+    expect(preview.dryRun).toBe(true);
+    expect(preview.created.length).toBeGreaterThan(0);
+
+    const stored = await prisma.client.count({
+      where: { karbonEntityKey: { in: preview.created.map((entry) => entry.entityKey) } },
+    });
+    expect(stored).toBe(0);
+  });
+
+  it('running it twice does not duplicate anybody', async () => {
+    await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+    const second = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+
+    expect(second.created).toEqual([]);
+    expect(second.unchanged + second.differing.length).toBe(second.found);
+  });
+
+  it('never overwrites a client somebody has corrected', async () => {
+    // Karbon is the system of record for documents, not for the details that
+    // go into a legal document. A legal name corrected from the CRA notice
+    // must survive a re-import, or the correction has to be made again every
+    // time — and nobody would notice it had been undone.
+    const first = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+    const target = first.created[0]!;
+
+    await prisma.client.update({
+      where: { karbonEntityKey: target.entityKey },
+      data: { legalName: 'Corrected Legal Name Ltd.', businessNumber: '99999 9999 RC0001' },
+    });
+
+    const second = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+
+    const after = await prisma.client.findUniqueOrThrow({ where: { karbonEntityKey: target.entityKey } });
+    expect(after.legalName).toBe('Corrected Legal Name Ltd.');
+    expect(after.businessNumber).toBe('99999 9999 RC0001');
+
+    // And the difference is reported rather than swallowed, so somebody can decide.
+    const reported = second.differing.find((entry) => entry.entityKey === target.entityKey);
+    expect(reported).toBeDefined();
+    expect(reported!.differences.some((difference) => difference.field === 'Legal name')).toBe(true);
+  });
+
+  it('refuses to import from a mock, which would invent clients', async () => {
+    // The failure this prevents: fictional sample clients in the real client
+    // list, indistinguishable from the firm's own and sitting in the
+    // engagement list for ever.
+    await expect(
+      service.run({ karbon: new MockKarbonProvider(seed()), actor: admin, dryRun: false }),
+    ).rejects.toThrow(PreconditionError);
+
+    await expect(
+      service.run({ karbon: new MockKarbonProvider(seed()), actor: admin, dryRun: true }),
+    ).rejects.toThrow(/not connected/i);
+  });
+
+  it('is not something a read-only user may do', async () => {
+    await expect(
+      service.run({ karbon: connectedKarbon(), actor: readOnly, dryRun: true }),
+    ).rejects.toThrow(PermissionError);
+  });
+
+  it('records what it did, and says so on a dry run too', async () => {
+    await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: true });
+
+    const event = await prisma.auditEvent.findFirstOrThrow({
+      where: { objectType: 'Client', userId: admin.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(event.reason).toMatch(/previewed/i);
+    expect((event.afterValue as { dryRun?: boolean }).dryRun).toBe(true);
+  });
+});

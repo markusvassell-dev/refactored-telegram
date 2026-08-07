@@ -5,6 +5,7 @@ import { libreOfficeConverter } from '@element/documents';
 import {
   ApprovalService,
   BulkRolloutService,
+  ClientImportService,
   CoverLetterService,
   CoverLetterNarrativeService,
   IntegrationConnectionService,
@@ -80,6 +81,7 @@ const generation = new GenerationService({
 const sourceDocuments = new SourceDocumentService({ prisma, audit, store });
 const approvals = new ApprovalService({ prisma, audit, workflow, settings });
 const userNotifications = new NotificationService({ prisma });
+const clientImport = new ClientImportService({ prisma, audit, logger });
 const signing = new SigningService({ notifications: userNotifications, prisma, audit, store, workflow, settings, logger });
 const externalSignature = new ExternalSignatureService({
   notifications: userNotifications,
@@ -153,6 +155,7 @@ export const container = {
   generation,
   approvals,
   signing,
+  clientImport,
   externalSignature,
   coverLetters,
   coverLetterNarratives,

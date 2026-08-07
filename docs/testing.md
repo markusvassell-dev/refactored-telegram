@@ -3,9 +3,9 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (687 tests)
+pnpm test               # unit + integration  (694 tests)
 pnpm test:unit          # 354 — no external dependencies
-pnpm test:integration   # 333 — needs Postgres and LibreOffice Writer
+pnpm test:integration   # 340 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 58  — needs a browser
 pnpm build              # production build
 ```
@@ -134,7 +134,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (333)
+## Integration tests (340)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -809,6 +809,20 @@ Each was fixed in the code, not the test:
     guarantee into a label, and real client records become reachable while
     every screen still says TEST MODE. The mismatch between the label and the
     host is now reported wherever the label appears.
+
+80. There was no route from "Karbon holds the client list" to "this application
+    knows a client exists". `KARBON_SYNC` syncs one work item by key and
+    creates no client at all, so populating a firm with hundreds of T1s meant
+    typing each one into a form — the task that never gets finished, and an
+    application nobody finishes populating is one nobody uses. There was also
+    no clients screen, so there was no way to see whether it had worked. Both
+    now exist, and the import never overwrites a client somebody has corrected:
+    Karbon is the system of record for documents, not for the details that go
+    into a legal document.
+81. The import refuses a mock adapter outright. With Karbon unconnected it
+    would otherwise have written fictional sample clients into the real client
+    list, where nothing would distinguish them from the firm's own and they
+    would sit in the engagement list for ever.
 
 ## What is not covered
 

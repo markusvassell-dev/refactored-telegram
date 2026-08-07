@@ -25,6 +25,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { href: '/', label: 'Dashboard', description: 'What needs attention today' },
   { href: '/engagements', label: 'Engagements', description: 'All engagement letters' },
+  { href: '/clients', label: 'Clients', description: 'Who the firm acts for' },
   { href: '/review-queue', label: 'Review Queue', description: 'Drafts waiting for you' },
   { href: '/cover-letters', label: 'Cover Letters', description: 'Completion cover letters' },
   { href: '/needs-attention', label: 'Needs Attention', description: 'Blocked or failed work' },
