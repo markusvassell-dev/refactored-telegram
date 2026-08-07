@@ -1,4 +1,4 @@
-import type { JobHandler, JobType } from '@element/services';
+import { NotificationEmailService, type JobHandler, type JobType } from '@element/services';
 import { extractPdfText, DeterministicExtractor, selectPriorYearDocument } from '@element/integrations';
 import { detectCheckboxStates, extractParagraphs, isPdf, parseManifest } from '@element/documents';
 import { PreconditionError, ValidationError, sha256Hex, type DocumentType } from '@element/shared';
@@ -626,6 +626,27 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         sandboxConfigured: adobeSign.isMock === false || adobeSign.name.includes('mock'),
         correlationId: job.correlationId,
       });
+
+      return { ...result };
+    },
+
+    SEND_NOTIFICATION_EMAILS: async () => {
+      // Delivery is separate from raising the notice: a signature must never
+      // fail because a mail server was briefly unreachable, so the notice is
+      // written first and sent from here afterwards.
+      //
+      // The mailer is resolved per drain, like every other provider, so a
+      // configuration change takes effect without restarting the worker.
+      const { mailer } = await context.providers();
+      const state = await context.testMode();
+
+      const result = await new NotificationEmailService({
+        prisma: context.prisma,
+        mailer,
+        logger: context.logger,
+        appBaseUrl: context.env.APP_BASE_URL,
+        testMode: state.testMode,
+      }).drain();
 
       return { ...result };
     },

@@ -32,6 +32,7 @@ export const JOB_TYPES = [
   'DETECT_STALE_SOURCES',
   'BULK_ROLLOUT_ITEM',
   'PURGE_TEMPORARY_FILES',
+  'SEND_NOTIFICATION_EMAILS',
 ] as const;
 
 export type JobType = (typeof JOB_TYPES)[number];

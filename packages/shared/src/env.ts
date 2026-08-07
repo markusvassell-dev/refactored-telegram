@@ -109,6 +109,19 @@ export const envSchema = z
     AI_MODEL: z.string().default('claude-sonnet-5'),
     AI_MIN_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.8),
 
+    // ---- Staff notification e-mail (Microsoft 365) ----
+    //
+    // Reuses the Entra ID app registration: same tenant, same client id, same
+    // secret. Sending needs the `Mail.Send` **application** permission, which
+    // is a separate grant from the delegated sign-in scopes and must be
+    // restricted to this one mailbox with an Exchange application access
+    // policy — otherwise it can send as anybody in the firm.
+    //
+    // Staff only. Nothing in this application e-mails a client.
+    NOTIFICATION_EMAIL_ENABLED: bool.default(false),
+    /** The single mailbox notices are sent from. */
+    NOTIFICATION_EMAIL_SENDER: optionalString,
+
     // ---- Documents ----
     DOCUMENT_TEMP_DIRECTORY: z.string().default('/tmp/element-engagements'),
     DOCUMENT_STORAGE_DIRECTORY: z.string().default('/var/lib/element-engagements/storage'),
@@ -154,6 +167,27 @@ export const envSchema = z
           code: 'custom',
           path: ['ENTRA_CLIENT_ID'],
           message: `Microsoft Entra ID is required outside development. ${problem}`,
+        });
+      }
+    }
+
+    // Mail borrows the Entra registration, so it cannot be turned on without
+    // one — and a sender address is not optional: there is no sensible default
+    // mailbox to send a firm's notices from.
+    if (env.NOTIFICATION_EMAIL_ENABLED) {
+      if (!env.NOTIFICATION_EMAIL_SENDER) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['NOTIFICATION_EMAIL_SENDER'],
+          message: 'Notification e-mail is enabled but no sender mailbox is set. There is no safe default.',
+        });
+      }
+      if (!env.ENTRA_TENANT_ID || !env.ENTRA_CLIENT_ID || !env.ENTRA_CLIENT_SECRET) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['NOTIFICATION_EMAIL_ENABLED'],
+          message:
+            'Notification e-mail sends through the Entra ID app registration, so ENTRA_TENANT_ID, ENTRA_CLIENT_ID and ENTRA_CLIENT_SECRET must all be set.',
         });
       }
     }

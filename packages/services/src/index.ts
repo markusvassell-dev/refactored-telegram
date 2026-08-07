@@ -24,3 +24,4 @@ export * from './source-document-service.js';
 export * from './date-rule-service.js';
 export * from './fee-rule-service.js';
 export * from './notification-service.js';
+export * from './notification-email-service.js';

@@ -1356,10 +1356,19 @@ model Notification {
   readAt       DateTime?
   createdAt    DateTime  @default(now())
 
+  /// Email delivery, tracked separately from the notice itself. An in-app
+  /// notice that could not be emailed is still a notice; it must not vanish
+  /// because a mail server was briefly unreachable.
+  emailedAt    DateTime?
+  emailError   String?
+  emailAttempts Int      @default(0)
+
   user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   engagement Engagement? @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
   /// The unread list, newest first, is the query this table exists to serve.
   @@index([userId, readAt, createdAt])
+  /// The drain query: never emailed, not yet given up on, oldest first.
+  @@index([emailedAt, emailAttempts, createdAt])
   @@map("notification")
 }

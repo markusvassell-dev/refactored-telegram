@@ -6,7 +6,11 @@ import {
   KarbonRestClient,
   MockAdobeSignProvider,
   MockKarbonProvider,
+  MicrosoftGraphMailer,
+  MockEmailSender,
+  BlockedEmailSender,
   type AdobeSignProvider,
+  type EmailSender,
   type KarbonProvider,
 } from '@element/integrations';
 import { decryptSecret, type Env, type Logger } from '@element/shared';
@@ -26,10 +30,12 @@ import type { TestModeState } from './settings.js';
 export interface ResolvedProviders {
   karbon: KarbonProvider;
   adobeSign: AdobeSignProvider;
+  mailer: EmailSender;
   /** Describes what the caller actually got, for display and for the audit log. */
   description: {
     karbon: string;
     adobeSign: string;
+    mailer: string;
     testMode: boolean;
   };
 }
@@ -74,7 +80,7 @@ export interface ProviderFactoryOptions {
   testModeState: TestModeState;
   logger: Logger;
   /** Injected in tests so a suite can drive the mocks directly. */
-  overrides?: { karbon?: KarbonProvider; adobeSign?: AdobeSignProvider };
+  overrides?: { karbon?: KarbonProvider; adobeSign?: AdobeSignProvider; mailer?: EmailSender };
 }
 
 export async function resolveProviders(options: ProviderFactoryOptions): Promise<ResolvedProviders> {
@@ -84,9 +90,11 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
     return {
       karbon: overrides.karbon,
       adobeSign: overrides.adobeSign,
+      mailer: overrides.mailer ?? new MockEmailSender(),
       description: {
         karbon: `${overrides.karbon.name} (injected)`,
         adobeSign: `${overrides.adobeSign.name} (injected)`,
+        mailer: 'mock mailer (injected)',
         testMode: testModeState.testMode,
       },
     };
@@ -158,9 +166,48 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
     adobeDescription = 'mock adapter (no Adobe Sign connection configured)';
   }
 
+  // ---- Staff notification e-mail ------------------------------------------
+  //
+  // Staff only, so Test Mode does not block it: nothing here reaches a client,
+  // and being able to prove mail works before going live is the point of a
+  // test deployment. Test Mode marks every subject instead.
+  let mailer: EmailSender;
+  let mailerDescription: string;
+
+  if (overrides?.mailer) {
+    mailer = overrides.mailer;
+    mailerDescription = 'mock mailer (injected)';
+  } else if (!env.NOTIFICATION_EMAIL_ENABLED) {
+    mailer = new MockEmailSender();
+    mailerDescription = 'not sending (NOTIFICATION_EMAIL_ENABLED is off)';
+  } else if (!env.NOTIFICATION_EMAIL_SENDER || !env.ENTRA_TENANT_ID || !env.ENTRA_CLIENT_ID || !env.ENTRA_CLIENT_SECRET) {
+    // The environment schema refuses this combination, so reaching here means
+    // something changed underneath a running process. Refusing loudly beats a
+    // mock that silently swallows notices somebody is expecting.
+    mailer = new BlockedEmailSender(
+      'Notification e-mail is enabled but the Entra ID registration or the sender mailbox is not configured.',
+    );
+    mailerDescription = 'blocked (enabled but not configured)';
+  } else {
+    mailer = new MicrosoftGraphMailer({
+      tenantId: env.ENTRA_TENANT_ID,
+      clientId: env.ENTRA_CLIENT_ID,
+      clientSecret: env.ENTRA_CLIENT_SECRET,
+      sender: env.NOTIFICATION_EMAIL_SENDER,
+      logger: options.logger,
+    });
+    mailerDescription = `Microsoft 365, sending as ${env.NOTIFICATION_EMAIL_SENDER}`;
+  }
+
   return {
     karbon,
     adobeSign,
-    description: { karbon: karbonDescription, adobeSign: adobeDescription, testMode: testModeState.testMode },
+    mailer,
+    description: {
+      karbon: karbonDescription,
+      adobeSign: adobeDescription,
+      mailer: mailerDescription,
+      testMode: testModeState.testMode,
+    },
   };
 }

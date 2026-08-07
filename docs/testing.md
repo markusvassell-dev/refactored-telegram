@@ -701,7 +701,14 @@ Each was fixed in the code, not the test:
     reporting `COMPLETED` after a webhook reported `SIGNED` would have told
     everybody twice about one signature. The event type is now the meaning, not
     the vendor's word.
-64. Activating a draft template was a decision made on a file name and a hash.
+64. Notification e-mail sends through the firm's own Microsoft 365 rather than
+    a new vendor, which means the `Mail.Send` **application** permission —
+    and that permission lets an application send as *any* mailbox in the
+    tenant. The client only ever sends from one configured address, and the
+    documentation gives the Exchange application access policy that restricts
+    it to that mailbox, because the alternative is that a leaked client secret
+    can send mail as the managing partner.
+65. Activating a draft template was a decision made on a file name and a hash.
     The second administrator — required to be a different person precisely
     because a template version is a wording change to every future engagement
     at once — had no way to read the wording they were approving. Every version

@@ -54,6 +54,10 @@ export default async function IntegrationsPage() {
               <dt className="text-slate-500">Test Mode</dt>
               <dd className="font-medium">{state.testMode ? 'On' : 'Off'}</dd>
             </div>
+            <div>
+              <dt className="text-slate-500">Staff notification e-mail</dt>
+              <dd className="font-medium">{providers.description.mailer}</dd>
+            </div>
           </dl>
 
           {state.testMode ? (

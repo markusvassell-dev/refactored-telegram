@@ -184,6 +184,33 @@ async function maintenance(): Promise<void> {
   }
 }
 
+/**
+ * Getting notices into inboxes.
+ *
+ * On its own loop rather than folded into maintenance, because the cadences
+ * differ by an order of magnitude for good reason: purging temporary files can
+ * wait a quarter of an hour, and "a client signed" cannot. The drain is one
+ * indexed query when there is nothing to send, so a minute costs nothing.
+ */
+async function notificationMail(): Promise<void> {
+  while (running) {
+    try {
+      await context.queue.enqueue({
+        jobType: 'SEND_NOTIFICATION_EMAILS',
+        // Per minute: a second worker on the same minute is a duplicate, not a
+        // second batch.
+        idempotencyKey: `notification_mail_${new Date().toISOString().slice(0, 16)}`,
+        payload: {},
+      });
+    } catch (error) {
+      logger.error('Could not queue the notification mail drain', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    await sleep(60_000);
+  }
+}
+
 // ---- Health endpoints -------------------------------------------------------
 
 /**
@@ -267,3 +294,4 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 
 void loop();
 void maintenance();
+void notificationMail();
