@@ -233,11 +233,16 @@ export class AdobeSignRestClient implements AdobeSignProvider {
 
     const created = await this.request<{ id?: string }>('/agreements', {
       method: 'POST',
-      headers: {
-        // Adobe honours a client-supplied correlation id; we send our
-        // deterministic idempotency key so a retry is traceable.
-        'x-api-user': '',
-      },
+      // No `x-api-user`. That header names the user to act *as*, in the form
+      // `email:someone@firm.ca`, and requires an `:account` scope to use. It
+      // was being sent empty, which is not a valid value — and the comment
+      // above it described a correlation id it was not sending.
+      //
+      // Omitted, the agreement is created as the token's own user, which is
+      // what this application wants: every agreement it creates belongs to the
+      // one identity it authenticates as, so `agreement_read:self` and
+      // `agreement_write:self` are sufficient. The idempotency key travels in
+      // `externalId` on the body, where `findByExternalId` looks for it.
       body: JSON.stringify({
         fileInfos: [{ transientDocumentId: transient.transientDocumentId }],
         name: request.title,

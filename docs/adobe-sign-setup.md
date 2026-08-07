@@ -6,6 +6,59 @@ screen reports the connection as unverified until a health check succeeds with
 real credentials. Confirm the current official requirements before production
 use.
 
+## 0. Confirm the account has an API at all
+
+**Acrobat Pro with eSign features is not Acrobat Sign.** They are different
+products, and only the second has an API. Acrobat Pro's e-signature feature has
+no API applications page, no OAuth, and nothing to connect to.
+
+The test takes ten seconds. Sign in and open:
+
+```
+https://secure.adobesign.com
+```
+
+| What happens | What it means |
+| --- | --- |
+| It loads into Send / Manage / Reports | The account has Acrobat Sign |
+| It redirects to a marketing page (`adobe.com/acrobat/business/sign.html?fromES=true`) | **That login has no Acrobat Sign entitlement.** Either the firm's Sign account is under a different login, or this person has not been added to it |
+
+A redirect is not a permissions problem to work around — there is nothing
+behind it for that login.
+
+### If the firm already uses Acrobat Sign
+
+The account almost certainly exists under someone else's login. What is needed
+from whoever administers it:
+
+1. **Add the integrator as a user** on the Acrobat Sign account, and make them
+   an **Account Administrator**. The API Applications page is admin-only; a
+   normal user seat can send agreements and will still see no API section.
+2. Or, if that is not acceptable, have the administrator complete sections 1
+   and 2 below themselves and hand over the client id, client secret and
+   refresh token. All three are credentials — they belong in the Integrations
+   screen, not in an email thread.
+
+### Which scopes, and why `:self` is enough
+
+Acrobat Sign scopes carry a modifier: `:self`, `:group` or `:account`.
+
+This application authenticates as **one identity** and only ever reads back
+agreements it created itself, so:
+
+```
+agreement_read:self
+agreement_write:self
+```
+
+is sufficient, and is the least privilege that works. It also matters
+practically: **only an account administrator can approve an `:account` scope**,
+so asking for one raises the bar for no benefit here.
+
+`:account` would only be needed if the application had to see agreements that
+people created by hand in the Acrobat Sign UI. It does not — every agreement it
+cares about, it sent.
+
 ## 1. Register the application
 
 In the Adobe Acrobat Sign account, under **Account → Adobe Sign API → API

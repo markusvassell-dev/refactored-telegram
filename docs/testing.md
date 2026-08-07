@@ -677,7 +677,17 @@ Each was fixed in the code, not the test:
 60. It also ignored `Retry-After` and had no pacing, against a vendor whose
     documentation says in as many words to retry only after the interval the
     header names, and which limits *polling* to three identical calls a minute.
-61. Activating a draft template was a decision made on a file name and a hash.
+61. **Creating an agreement sent `x-api-user: ''`.** That header names the user
+    to act *as* — `email:someone@firm.ca` — and an empty string is not a value
+    Adobe accepts, so the first real `createAgreement` would have failed on a
+    stray header rather than on anything to do with the agreement. The comment
+    above it described a correlation id it was not sending; the idempotency key
+    travels in `externalId` on the body, which is where `findByExternalId`
+    reads it back. Removing the header also means the agreement belongs to the
+    token's own user, which is what lets the integration work with `:self`
+    scopes rather than the `:account` scopes only an account administrator can
+    approve.
+62. Activating a draft template was a decision made on a file name and a hash.
     The second administrator — required to be a different person precisely
     because a template version is a wording change to every future engagement
     at once — had no way to read the wording they were approving. Every version
