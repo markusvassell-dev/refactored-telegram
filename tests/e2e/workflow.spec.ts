@@ -654,6 +654,31 @@ test.describe('the smaller lists', () => {
   });
 });
 
+test.describe('the first administrator', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  test('reconciles the bootstrap list against the accounts that actually exist', async ({ page }) => {
+    // The silent failure this replaces: BOOTSTRAP_ADMIN_EMAILS is matched
+    // against the address Entra ID authenticated, and when it does not match,
+    // somebody signs in, holds no roles, and nothing anywhere says the variable
+    // is why. This screen is where a person goes wondering about access.
+    await signIn(page, /Administrator/);
+    await page.goto('/users');
+
+    const panel = page.getByRole('note').filter({ hasText: 'BOOTSTRAP_ADMIN_EMAILS' });
+
+    // An address a seeded user holds is reported as granted.
+    await expect(panel.getByText('admin@example.test')).toBeVisible();
+    await expect(panel.getByText('granted', { exact: true })).toBeVisible();
+
+    // One nobody has signed in with is called out, rather than sitting there
+    // looking configured.
+    await expect(panel.getByText('nobody-signed-in@example.test')).toBeVisible();
+    await expect(panel.getByText(/nobody has signed in with this address/)).toBeVisible();
+    await expect(page.getByText(/grants nothing/)).toBeVisible();
+  });
+});
+
 test.describe('managing roles', () => {
   test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
 

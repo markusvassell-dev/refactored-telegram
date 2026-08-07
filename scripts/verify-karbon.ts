@@ -67,6 +67,14 @@ function argument(name: string): string | undefined {
 
 const allowWrites = process.argv.includes('--allow-writes');
 
+/**
+ * How many work items to consider when hunting for one with a document on it.
+ *
+ * Small on purpose. This is a verification run, not a survey, and the account's
+ * request budget is shared with everything else the firm has connected.
+ */
+const CANDIDATE_LIMIT = 25;
+
 async function main(): Promise<void> {
   const env = loadEnv();
   const prisma = new PrismaClient();
@@ -154,13 +162,13 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
   }
 
   // ---- Reads --------------------------------------------------------------
-  // Bounded deliberately. Search now pages until the result set is exhausted,
-  // and walking an entire tenant to prove that search works would spend the
-  // account's request budget to learn nothing extra.
+  // Enough to find one with documents on it, not enough to walk a tenant.
+  // Downloading a prior-year letter is the operation the whole rollout depends
+  // on, and it can only be verified against a work item that actually has one.
   const found = await attempt(
     'SEARCH_WORK_ITEMS',
-    () => client.searchWorkItems({ limit: 5 }),
-    (items) => `${items.length} work item(s) returned (asked for at most 5)`,
+    () => client.searchWorkItems({ limit: CANDIDATE_LIMIT }),
+    (items) => `${items.length} work item(s) returned (asked for at most ${CANDIDATE_LIMIT})`,
   );
 
   const subject: KarbonWorkItem | null =
@@ -193,14 +201,48 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
       (list) => `${list.length} document(s)`,
     );
 
-    if (documents && documents.length > 0) {
+    // Look past the first work item when it has nothing attached. Giving up
+    // there left the download unverified for the commonest reason imaginable —
+    // the newest work item in a tenant usually has no documents yet — and
+    // asked whoever ran this to go and find a key by hand.
+    let carrier: { workItemKey: string; documentId: string; fileName: string } | null =
+      documents && documents.length > 0
+        ? {
+            workItemKey: subject.workItemKey,
+            documentId: documents[0]!.documentId,
+            fileName: documents[0]!.fileName,
+          }
+        : null;
+
+    if (!carrier && !workItemKey && found) {
+      for (const candidate of found) {
+        if (candidate.workItemKey === subject.workItemKey) continue;
+
+        const theirs = await client.listDocuments({ workItemKey: candidate.workItemKey }).catch(() => []);
+        if (theirs.length > 0) {
+          carrier = {
+            workItemKey: candidate.workItemKey,
+            documentId: theirs[0]!.documentId,
+            fileName: theirs[0]!.fileName,
+          };
+          break;
+        }
+      }
+    }
+
+    if (carrier) {
+      const where = carrier.workItemKey === subject.workItemKey ? '' : ` (from work item ${carrier.workItemKey})`;
       await attempt(
         'DOWNLOAD_DOCUMENT',
-        () => client.downloadDocument(documents[0]!.documentId),
-        (file) => `${file.fileName}, ${file.content.byteLength} bytes, ${file.mimeType}`,
+        () => client.downloadDocument(carrier.documentId),
+        (file) => `${file.fileName}, ${file.content.byteLength} bytes, ${file.mimeType}${where}`,
       );
     } else {
-      record('DOWNLOAD_DOCUMENT', 'SKIP', 'the work item has no documents to download');
+      record(
+        'DOWNLOAD_DOCUMENT',
+        'SKIP',
+        `none of the first ${CANDIDATE_LIMIT} work items carry a document; pass --work-item <KEY> naming one that does`,
+      );
     }
   }
 

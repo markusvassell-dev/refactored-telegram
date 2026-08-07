@@ -1,4 +1,4 @@
-import { ROLE_PERMISSIONS, ROLES, can } from '@element/shared';
+import { ROLE_PERMISSIONS, ROLES, can, env } from '@element/shared';
 import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
 import { PageHeader } from '@/components/shell';
@@ -17,12 +17,71 @@ export default async function UsersPage() {
     (user) => user.isActive && user.roles.some((row) => row.role === 'ADMINISTRATOR'),
   ).length;
 
+  // BOOTSTRAP_ADMIN_EMAILS is matched against the address Entra ID
+  // authenticated. When it does not match, the result is silent: somebody signs
+  // in, holds no roles, and nothing anywhere says the variable is the reason.
+  // Reconciled here against the accounts that actually exist, because this is
+  // the screen a person visits when wondering why they have no access.
+  const bootstrapAddresses = env().BOOTSTRAP_ADMIN_EMAILS;
+  const bootstrap = bootstrapAddresses.map((address) => {
+    const match = users.find((user) => user.email.toLowerCase() === address);
+    return {
+      address,
+      matched: match !== undefined,
+      isAdministrator: match?.roles.some((row) => row.role === 'ADMINISTRATOR') ?? false,
+    };
+  });
+  const unmatched = bootstrap.filter((entry) => !entry.matched);
+
   return (
     <>
       <PageHeader
         title="Users and Roles"
         description="Roles are additive. Separation of duties is enforced separately and per document: nobody approves their own draft, wording change, or fee override."
       />
+
+      {canManage && bootstrap.length > 0 ? (
+        <div
+          role="note"
+          className={
+            unmatched.length > 0
+              ? 'mb-4 rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900'
+              : 'mb-4 rounded border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700'
+          }
+        >
+          <p>
+            <strong className="font-semibold">BOOTSTRAP_ADMIN_EMAILS</strong> is set. A listed address is granted
+            ADMINISTRATOR the next time it signs in through Entra ID — the only path to a role that does not go through
+            an existing administrator.
+          </p>
+          <ul className="mt-2 space-y-1">
+            {bootstrap.map((entry) => (
+              <li key={entry.address} className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-xs">{entry.address}</span>
+                {entry.matched ? (
+                  <span className="badge bg-emerald-100 text-emerald-800">
+                    {entry.isAdministrator ? 'granted' : 'signed in, not yet an administrator'}
+                  </span>
+                ) : (
+                  <span className="badge bg-amber-100 text-amber-800">nobody has signed in with this address</span>
+                )}
+              </li>
+            ))}
+          </ul>
+          {unmatched.length > 0 ? (
+            <p className="mt-2">
+              An address nobody has signed in with grants nothing. Entra ID may have authenticated a different address
+              than the one in the variable — the accounts below are the ones that exist. Correct the variable to match
+              one of them, or clear it.
+            </p>
+          ) : (
+            <p className="mt-2">
+              Every listed address has been granted. Clear the variable now: it is needed exactly once, on a first
+              deployment.
+            </p>
+          )}
+        </div>
+      ) : null}
 
       {canManage ? (
         <div role="note" className="mb-4 rounded border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700">

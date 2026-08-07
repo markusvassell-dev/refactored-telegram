@@ -708,7 +708,20 @@ Each was fixed in the code, not the test:
     documentation gives the Exchange application access policy that restricts
     it to that mailbox, because the alternative is that a leaked client secret
     can send mail as the managing partner.
-65. Activating a draft template was a decision made on a file name and a hash.
+65. `BOOTSTRAP_ADMIN_EMAILS` failing to match was completely silent. It is
+    matched against the address Entra ID authenticated, and when the two differ
+    the person signs in, holds no roles, and nothing anywhere connects the two
+    facts. The Users screen now reconciles the configured list against the
+    accounts that actually exist and says which addresses nobody has signed in
+    with — and says to clear the variable once every listed address has been
+    granted.
+66. The Karbon verification harness gave up on the download check if the first
+    work item it found had no documents attached, which is the commonest case
+    imaginable: the newest work item in a tenant usually has none yet. It left
+    the one operation the rollout depends on unverified and asked whoever ran
+    it to go and find a key by hand. It now looks through the first
+    twenty-five.
+67. Activating a draft template was a decision made on a file name and a hash.
     The second administrator — required to be a different person precisely
     because a template version is a wording change to every future engagement
     at once — had no way to read the wording they were approving. Every version

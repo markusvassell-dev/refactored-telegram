@@ -89,6 +89,9 @@ export default defineConfig({
           ENTRA_TENANT_ID: '11111111-2222-3333-4444-555555555555',
           ENTRA_CLIENT_ID: '66666666-7777-8888-9999-000000000000',
           ENTRA_CLIENT_SECRET: 'not-a-real-secret',
+          // One address that exists among the seeded users and one that does
+          // not, so the Users screen has both states to reconcile.
+          BOOTSTRAP_ADMIN_EMAILS: 'admin@example.test, nobody-signed-in@example.test',
         },
       },
 });
