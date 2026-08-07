@@ -33,6 +33,7 @@ const notifications = new NotificationService({ prisma });
 const workflow = new WorkflowService(prisma, audit);
 
 const store = new DocumentStore({
+  prisma,
   rootDirectory: '/tmp/element-engagements-tests/external-signatures',
   retentionHours: 72,
   maxBytes: 25 * 1024 * 1024,

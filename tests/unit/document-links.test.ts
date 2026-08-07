@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { PrismaClient } from '@element/database';
 import { DocumentStore } from '@element/services';
 import { decodeReference, encodeReference } from '../../apps/web/src/lib/document-reference';
 
@@ -13,7 +14,15 @@ import { decodeReference, encodeReference } from '../../apps/web/src/lib/documen
  * when it expires.
  */
 
+/**
+ * Link signing is pure — it hashes a reference and an expiry against the
+ * deployment secret and never reads a byte. These tests deliberately keep no
+ * database, so the store gets a client it will never call.
+ */
+const noDatabase = {} as PrismaClient;
+
 const store = new DocumentStore({
+  prisma: noDatabase,
   rootDirectory: '/tmp/element-engagements-tests/storage',
   retentionHours: 72,
   maxBytes: 1024,
@@ -81,6 +90,7 @@ describe('signed download links', () => {
 
   it('cannot be verified by a different deployment secret', () => {
     const other = new DocumentStore({
+      prisma: noDatabase,
       rootDirectory: '/tmp/element-engagements-tests/storage',
       retentionHours: 72,
       maxBytes: 1024,

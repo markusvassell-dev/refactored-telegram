@@ -1098,6 +1098,42 @@ model AdobeAgreement {
  * Without this, an approved letter can never become a signed one, and the whole
  * second half of the workflow is unreachable.
  */
+/**
+ * The bytes of a working document.
+ *
+ * These lived on the container filesystem, which works on one machine and fails
+ * quietly on a platform that runs the web and the worker as separate services:
+ * the web uploads a source document and the worker cannot read it; the worker
+ * generates a PDF and the web cannot serve it. A mounted volume does not fix
+ * that — Railway attaches a volume to exactly one service, so a second volume
+ * is a second, separate disk.
+ *
+ * Postgres is the one store both services already share, and the one thing on
+ * the platform that is actually backed up. Working copies are small — an
+ * engagement letter is a few hundred kilobytes — and the purge job clears them
+ * on the retention schedule, so this table does not grow without bound.
+ *
+ * Karbon remains the permanent home for final and signed documents. This is
+ * still scratch space; it is simply scratch space both services can reach.
+ */
+model StoredDocument {
+  /// The opaque reference persisted on document versions and source documents.
+  reference String   @id
+  /// Groups an engagement's files so its scratch space can be purged together.
+  scope     String
+  content   Bytes
+  fileName  String
+  mimeType  String
+  byteSize  Int
+  sha256    String
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+
+  @@index([scope])
+  @@index([expiresAt])
+  @@map("stored_document")
+}
+
 model ExternalSignature {
   id                String                  @id @default(uuid())
   engagementId      String

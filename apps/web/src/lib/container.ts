@@ -52,6 +52,7 @@ const feeRules = new FeeRuleService({ prisma, audit });
 const engagements = new EngagementService({ prisma, audit });
 
 const store = new DocumentStore({
+  prisma,
   rootDirectory: configuration.DOCUMENT_STORAGE_DIRECTORY,
   retentionHours: configuration.DOCUMENT_RETENTION_HOURS,
   maxBytes: configuration.DOCUMENT_MAX_UPLOAD_BYTES,

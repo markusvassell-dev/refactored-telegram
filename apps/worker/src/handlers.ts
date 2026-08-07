@@ -916,7 +916,13 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         }
       }
 
-      return { purged };
+      // A backstop, now that the bytes are rows rather than files. The passes
+      // above delete what the workflow knows about; anything whose owning
+      // record was removed — a deleted engagement, an abandoned upload — would
+      // otherwise sit in the table for ever with nothing pointing at it.
+      const orphaned = await context.store.purgeExpired();
+
+      return { purged, orphaned };
     },
   };
 }

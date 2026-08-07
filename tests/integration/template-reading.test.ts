@@ -29,6 +29,7 @@ import type { Principal } from '@element/shared';
 const prisma = new PrismaClient();
 const audit = createAuditLogger(prisma);
 const store = new DocumentStore({
+  prisma,
   rootDirectory: mkdtempSync(join(tmpdir(), 'template-reading-store-')),
   retentionHours: 72,
   maxBytes: 25 * 1024 * 1024,

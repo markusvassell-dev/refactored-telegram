@@ -43,13 +43,8 @@ export default async function SettingsPage() {
             {storage.detail}
           </p>
           <p className="mt-2">
-            {unfiledSignatures === 0
-              ? 'No signed letter is currently at risk: every one recorded here has reached Karbon. A new one is at risk from the moment it is recorded until the filing job has run.'
-              : `${unfiledSignatures} signed engagement letter${unfiledSignatures === 1 ? '' : 's'} ${
-                  unfiledSignatures === 1 ? 'has' : 'have'
-                } not reached Karbon and exist${unfiledSignatures === 1 ? 's' : ''} nowhere but this container. ${
-                  unfiledSignatures === 1 ? 'It' : 'They'
-                } will be lost on the next deploy.`}
+            This affects only documents written before storage moved into the database. Everything since is a row, and
+            survives a deploy whatever the disk does — attaching a volume is now optional rather than urgent.
           </p>
         </div>
       ) : null}

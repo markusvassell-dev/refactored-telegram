@@ -35,6 +35,7 @@ const pricing = new PricingService(prisma, audit);
 const queue = new JobQueue(prisma, logger);
 
 const store = new DocumentStore({
+  prisma,
   rootDirectory: '/tmp/element-engagements-tests/storage',
   retentionHours: 72,
   maxBytes: 25 * 1024 * 1024,

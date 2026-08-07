@@ -183,13 +183,22 @@ normalised files are committed, so a normal deploy does not need it.
 
 ## Volumes
 
-Attach a volume at `DOCUMENT_STORAGE_DIRECTORY`
-(`/var/lib/element-engagements/storage`) on both services. It holds working
-copies only — Karbon keeps the authoritative documents — and the purge job
-clears it on the retention schedule. Sizing: roughly 2 MB per live engagement.
+**Not required.** Working documents live in Postgres, not on the filesystem.
 
-Without a volume the application still works; a working copy simply disappears
-on redeploy and the reviewer regenerates or opens the Karbon copy.
+They used to live on disk, which is correct on one machine and quietly wrong
+here: the web and the worker are separate services, and Railway attaches a
+volume to exactly one service. A volume on each is two separate disks, so the
+web would upload a source document the worker could not read, and the worker
+would generate a PDF the web could not serve. No volume configuration fixes
+that; only shared storage does, and Postgres is the store both services already
+have.
+
+Sizing instead applies to the database: roughly 2 MB per live engagement of
+working copies, cleared by the purge job on the retention schedule.
+
+A volume is still worth attaching if a deployment predates this change and has
+documents on disk that should stay readable — reads fall back to the filesystem
+when a reference has no row.
 
 ## Health checks
 
@@ -316,7 +325,8 @@ pg_dump "$DATABASE_URL" --format=custom --file=element-$(date +%F).dump
 pg_restore --clean --if-exists --dbname "$DATABASE_URL" element-2026-08-04.dump
 ```
 
-The document volume does **not** need backing up. It holds only working copies;
+The database backup now covers working copies as well as workflow state. There
+is no document volume to back up separately; it holds only working copies;
 Karbon is the system of record.
 
 What matters in a restore is the audit trail, approvals and workflow state.

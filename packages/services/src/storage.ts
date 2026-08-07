@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, join, normalize, resolve, sep } from 'node:path';
+import { readFile, rm } from 'node:fs/promises';
+import { join, normalize, resolve, sep } from 'node:path';
+import type { PrismaClient } from '@element/database';
 import { AppError, ValidationError, sha256Hex, signPayload, verifySignature } from '@element/shared';
 
 /**
@@ -9,6 +10,17 @@ import { AppError, ValidationError, sha256Hex, signPayload, verifySignature } fr
  * Karbon is the permanent home for final and signed files. This store holds
  * working copies only, for as long as the workflow needs them, and everything
  * in it is purged after the configured retention period.
+ *
+ * The bytes live in Postgres. They lived on the container filesystem, which is
+ * correct on one machine and quietly wrong on a platform that runs the web and
+ * the worker as separate services — the web uploads a source document the
+ * worker cannot read, the worker generates a PDF the web cannot serve. A
+ * mounted volume does not fix it: Railway attaches a volume to exactly one
+ * service, so a volume on each is two separate disks and the files never meet.
+ * Postgres is the one store both services already share.
+ *
+ * Reads fall back to the filesystem, so anything written before this change is
+ * still readable from a volume that still has it.
  *
  * Downloads are served through short-lived signed links rather than direct
  * paths, so a document reference cannot be shared or guessed.
@@ -38,6 +50,11 @@ export interface StoredFile {
 }
 
 export interface DocumentStoreOptions {
+  prisma: PrismaClient;
+  /**
+   * Only used to read documents written before storage moved into Postgres.
+   * Nothing is written here any more.
+   */
   rootDirectory: string;
   retentionHours: number;
   maxBytes: number;
@@ -93,25 +110,54 @@ export class DocumentStore {
       );
     }
 
-    const reference = join(sanitizeScope(input.scope), `${randomUUID()}-${sanitizeName(input.fileName)}`);
-    const path = this.pathFor(reference);
+    const scope = sanitizeScope(input.scope);
+    // The reference keeps its path-like shape so references already persisted
+    // on document versions and source documents stay valid.
+    const reference = join(scope, `${randomUUID()}-${sanitizeName(input.fileName)}`);
+    const expiresAt = new Date(Date.now() + this.options.retentionHours * 3_600_000);
+    const hash = sha256Hex(data);
 
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, data, { mode: 0o600 });
+    await this.options.prisma.storedDocument.create({
+      data: {
+        reference,
+        scope,
+        content: data,
+        fileName: input.fileName,
+        mimeType: input.mimeType,
+        byteSize: data.byteLength,
+        sha256: hash,
+        expiresAt,
+      },
+    });
 
     return {
       reference,
-      hash: sha256Hex(data),
+      hash,
       byteSize: data.byteLength,
       mimeType: input.mimeType,
       fileName: input.fileName,
-      expiresAt: new Date(Date.now() + this.options.retentionHours * 3_600_000),
+      expiresAt,
     };
   }
 
   async get(reference: string): Promise<Buffer> {
+    const row = await this.options.prisma.storedDocument.findUnique({
+      where: { reference },
+      select: { content: true },
+    });
+    if (row) return Buffer.from(row.content);
+
+    // Resolved before the try, so a reference trying to climb out of the root
+    // is reported as the invalid reference it is. Inside, its ValidationError
+    // was caught and rewrapped as "this working copy has expired" — true of
+    // nothing, and it hid a caller passing something it should never have.
+    const path = this.pathFor(reference);
+
+    // Written before storage moved into Postgres. Only reachable on the service
+    // whose volume holds it, which is exactly the problem this replaced — but a
+    // document that is still there should still open.
     try {
-      return await readFile(this.pathFor(reference));
+      return await readFile(path);
     } catch (error) {
       throw new AppError('The stored document is no longer available.', {
         category: 'NOT_FOUND',
@@ -123,8 +169,14 @@ export class DocumentStore {
   }
 
   async exists(reference: string): Promise<boolean> {
+    const found = await this.options.prisma.storedDocument.findUnique({
+      where: { reference },
+      select: { reference: true },
+    });
+    if (found) return true;
+
     try {
-      await stat(this.pathFor(reference));
+      await readFile(this.pathFor(reference));
       return true;
     } catch {
       return false;
@@ -132,12 +184,28 @@ export class DocumentStore {
   }
 
   async delete(reference: string): Promise<void> {
-    await rm(this.pathFor(reference), { force: true });
+    await this.options.prisma.storedDocument.deleteMany({ where: { reference } });
+    // Best effort: a legacy copy on this service's disk, if there is one.
+    await rm(this.pathFor(reference), { force: true }).catch(() => undefined);
   }
 
   /** Removes an engagement's entire scratch space. */
   async purgeScope(scope: string): Promise<void> {
-    await rm(this.pathFor(sanitizeScope(scope)), { recursive: true, force: true });
+    const cleaned = sanitizeScope(scope);
+    await this.options.prisma.storedDocument.deleteMany({ where: { scope: cleaned } });
+    await rm(this.pathFor(cleaned), { recursive: true, force: true }).catch(() => undefined);
+  }
+
+  /**
+   * Deletes everything past its retention date and reports how much went.
+   *
+   * The purge job used to walk the filesystem; the rows are the record now.
+   */
+  async purgeExpired(now = new Date()): Promise<number> {
+    const { count } = await this.options.prisma.storedDocument.deleteMany({
+      where: { expiresAt: { lt: now } },
+    });
+    return count;
   }
 
   // ---- Signed temporary links --------------------------------------------

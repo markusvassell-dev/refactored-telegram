@@ -8,12 +8,14 @@ import { mkdir, stat } from 'node:fs/promises';
  * container disk therefore loses everything in it, silently, on a schedule
  * nobody thinks of as a schedule.
  *
- * For a generated draft that is survivable — it can be regenerated. For the
- * signed engagement letter recorded against an engagement it is not: that file
- * is the evidence a client agreed to a fee, and until the Karbon filing job has
- * run it exists nowhere else. "Attach a volume" is a line in the deployment
- * guide, which is exactly the kind of instruction that gets skipped, and
- * nothing anywhere reported that it had been.
+ * Working documents now live in Postgres rather than on that filesystem,
+ * precisely because a volume could never solve this on a platform that runs the
+ * web and the worker as separate services — Railway attaches a volume to one
+ * service, so a volume on each is two separate disks and the files never meet.
+ *
+ * What remains is a migration concern: anything written before that change is
+ * still only on disk, and is still lost on the next deploy if no volume holds
+ * it. Reported rather than left to be discovered.
  *
  * The check is a heuristic and says so. A mounted volume is a different
  * filesystem from the root, so a differing device id means something is mounted
@@ -45,8 +47,8 @@ export async function inspectStorageDurability(directory: string): Promise<Stora
         directory,
         detail:
           `${directory} is on the container's own filesystem, not a mounted volume. ` +
-          'Everything stored there — generated drafts, and any signed document not yet filed into Karbon — is lost on the next deploy. ' +
-          'Attach a volume at this path on both the web and worker services.',
+          'Documents written since this deployment moved storage into the database are unaffected — they are rows, not files. ' +
+          'Anything written before that, and still only on disk, is lost on the next deploy.',
       };
     }
 

@@ -3,9 +3,9 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (669 tests)
+pnpm test               # unit + integration  (678 tests)
 pnpm test:unit          # 345 — no external dependencies
-pnpm test:integration   # 324 — needs Postgres and LibreOffice Writer
+pnpm test:integration   # 333 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 58  — needs a browser
 pnpm build              # production build
 ```
@@ -134,7 +134,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (324)
+## Integration tests (333)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -765,6 +765,23 @@ Each was fixed in the code, not the test:
 73. The Settings screen counts the signed letters that have not reached Karbon
     rather than warning in the abstract. "Documents may be lost" is read past;
     "3 signed engagement letters exist nowhere but this container" is not.
+
+74. Working documents lived on the container filesystem, which is correct on
+    one machine and silently wrong on a platform that runs the web and the
+    worker as separate services. Four paths crossed that boundary and every one
+    of them read a file that was never on the reading service's disk: the web
+    uploads a source document and the worker extracts from it; the worker
+    generates a PDF and the web serves it to a reviewer; the web uploads a
+    template draft and the worker renders from it; the web records a signed
+    engagement letter and the worker files it into Karbon. A mounted volume
+    cannot fix it — Railway attaches a volume to exactly one service, so a
+    volume on each is two separate disks. The bytes are rows in Postgres now,
+    which is the one store both services already share.
+75. `DocumentStore.get` resolved the filesystem path inside its try block, so a
+    reference trying to climb out of the storage root was reported as "this
+    working copy has passed its retention period" — true of nothing, and it hid
+    a caller passing something it never should have. Traversal was always
+    blocked; only the reason given for it was wrong.
 
 ## What is not covered
 

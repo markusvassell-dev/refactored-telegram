@@ -32,17 +32,18 @@ describe('inspecting the document store', () => {
     expect(report.directory).toBe(directory);
   });
 
-  it('says what will be lost and what to do, not just that something is wrong', async () => {
+  it('says what is at risk and what is not', async () => {
+    // Documents written since storage moved into Postgres are rows, not files,
+    // and survive regardless. Saying otherwise would send somebody chasing a
+    // volume that no longer decides anything for them.
     const directory = await mkdtemp(join(tmpdir(), 'durability-'));
     made.push(directory);
 
     const report = await inspectStorageDurability(directory);
 
     expect(report.detail).toMatch(/lost on the next deploy/i);
-    expect(report.detail).toMatch(/attach a volume/i);
-    // The consequence that actually matters is named, because a lost draft can
-    // be regenerated and a lost signed letter cannot.
-    expect(report.detail).toMatch(/signed document/i);
+    expect(report.detail).toMatch(/unaffected/i);
+    expect(report.detail).toMatch(/rows, not files/i);
   });
 
   it('creates the directory rather than reporting a fresh deployment as broken', async () => {

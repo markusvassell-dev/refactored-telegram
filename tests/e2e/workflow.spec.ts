@@ -97,6 +97,7 @@ async function seedPreviewableVersion(
     if (!engagement) return null;
 
     const store = new DocumentStore({
+      prisma,
       rootDirectory: environment.storageDirectory,
       retentionHours: 72,
       maxBytes: 25 * 1024 * 1024,
