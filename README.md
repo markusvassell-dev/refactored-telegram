@@ -152,6 +152,7 @@ integration works because the code compiles.
 | [template-system.md](docs/template-system.md) | Source handling, normalisation, manifests, validation, versioning |
 | [karbon-capability-matrix.md](docs/karbon-capability-matrix.md) | Per-operation support, method, fallback, limitation |
 | [adobe-sign-setup.md](docs/adobe-sign-setup.md) | Registration, OAuth, webhooks, anchors, activation |
+| [signing-without-acrobat-sign.md](docs/signing-without-acrobat-sign.md) | Recording a signature obtained elsewhere, while the firm has no Acrobat Sign licence |
 | [railway-deployment.md](docs/railway-deployment.md) | Services, variables, migrations, health, backups, rollback |
 | [security.md](docs/security.md) | Authentication, authorisation, secrets, logging, retention, AI |
 | [operations-runbook.md](docs/operations-runbook.md) | Failure scenarios and recovery |

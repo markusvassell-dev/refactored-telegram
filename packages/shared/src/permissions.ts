@@ -39,6 +39,7 @@ export const PERMISSIONS = [
   'document:approve_final',
   'cover_letter:approve',
   'signing:send',
+  'signing:record_external',
 
   // Administration
   'template:manage',
@@ -85,6 +86,11 @@ const PARTNER_OR_FINAL_APPROVER: Permission[] = [
   'document:approve_final',
   'cover_letter:approve',
   'signing:send',
+  // Asserting that a client signed is as consequential as authorising the
+  // send: it is the step that makes the fee binding, and here there is no
+  // vendor's audit trail behind it, only the assertion and the file. It sits
+  // with the same people who may authorise a send, and with nobody else.
+  'signing:record_external',
 ];
 
 const ADMINISTRATOR: Permission[] = [
@@ -104,9 +110,10 @@ const ADMINISTRATOR: Permission[] = [
 
 /**
  * Note: ADMINISTRATOR deliberately does *not* receive `document:approve_final`,
- * `cover_letter:approve`, `signing:send`, `wording:approve` or the fee approval
- * permissions. Managing the system is not the same as approving client-facing
- * legal documents; a person who needs both must hold both roles explicitly.
+ * `cover_letter:approve`, `signing:send`, `signing:record_external`,
+ * `wording:approve` or the fee approval permissions. Managing the system is not
+ * the same as approving client-facing legal documents; a person who needs both
+ * must hold both roles explicitly.
  */
 export const ROLE_PERMISSIONS: Record<Role, readonly Permission[]> = {
   READ_ONLY: READ_ONLY,

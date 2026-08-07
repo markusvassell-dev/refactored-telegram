@@ -26,6 +26,16 @@ https://secure.adobesign.com
 A redirect is not a permissions problem to work around — there is nothing
 behind it for that login.
 
+**If the firm does not have Acrobat Sign, the application still works.** A
+signature obtained in Acrobat, or on paper, can be recorded against the
+engagement with the signed document as evidence, and the workflow continues
+from there. See `docs/signing-without-acrobat-sign.md`. Buying the licence is
+worth doing; waiting for it is not.
+
+Separately, a free **Acrobat Sign Developer Edition** gives full REST API
+access for development and testing — enough to verify this codebase against
+Adobe's real API, though not to send to a client.
+
 ### If the firm already uses Acrobat Sign
 
 The account almost certainly exists under someone else's login. What is needed

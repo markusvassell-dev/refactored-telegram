@@ -188,6 +188,109 @@ export function evaluateSendGate(input: SendGateInput): GateResult {
 }
 
 // ---------------------------------------------------------------------------
+// Recording a signature obtained outside this application
+// ---------------------------------------------------------------------------
+
+export interface ExternalSignatureGateInput {
+  status: EngagementStatus;
+  hasApprovedPdf: boolean;
+  /** An explicit Approval row of type FINAL_DOCUMENT or SEND_AUTHORIZATION. */
+  hasInternalApprovalEvent: boolean;
+  /** Everyone the engagement says must sign, and whether the recorder confirmed each. */
+  expectedSigners: readonly { name: string; confirmed: boolean }[];
+  /** True when the uploaded bytes really are a PDF. */
+  evidenceIsPdf: boolean;
+  evidenceByteLength: number;
+  /** The date asserted for the signature, and today, both as YYYY-MM-DD. */
+  signedOnIso: string;
+  todayIso: string;
+  /** A live Adobe agreement means the two records would contradict each other. */
+  hasOpenAdobeAgreement: boolean;
+  reason: string;
+}
+
+/** Ten characters is not a quality bar; it is a bar against an empty box. */
+const MINIMUM_REASON_LENGTH = 10;
+
+export function evaluateExternalSignatureGate(input: ExternalSignatureGateInput): GateResult {
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+
+  if (input.status !== 'READY_TO_SEND') {
+    blockers.push(
+      `A signature can only be recorded against an engagement in READY_TO_SEND, not ${input.status}. Everything before that is still a draft.`,
+    );
+  }
+
+  // The same two preconditions the Adobe path enforces. Obtaining a signature
+  // elsewhere changes who collected it, not whether the firm approved the
+  // wording and the fee first.
+  if (!input.hasApprovedPdf) {
+    blockers.push('There is no approved PDF, so there is nothing that could have been signed.');
+  }
+  if (!input.hasInternalApprovalEvent) {
+    blockers.push('An explicit internal approval is required before a signature can be recorded.');
+  }
+
+  if (!input.evidenceIsPdf) {
+    blockers.push('The signed document must be a PDF. Its contents are checked, not its file name.');
+  }
+  if (input.evidenceByteLength === 0) {
+    blockers.push('Attach the signed document. A signature with no document behind it is not a record of anything.');
+  }
+
+  if (input.expectedSigners.length === 0) {
+    blockers.push('This engagement names nobody who must sign, so there is nothing to confirm.');
+  }
+  // The joint-return case: one spouse signing is not the letter being signed.
+  // Without this, a half-signed joint letter is indistinguishable in the file
+  // from a complete one.
+  for (const signer of input.expectedSigners) {
+    if (!signer.confirmed) {
+      blockers.push(`Confirm that ${signer.name || 'each named signer'} signed, or this is not a fully signed letter.`);
+    }
+  }
+
+  if (input.hasOpenAdobeAgreement) {
+    blockers.push(
+      'This engagement already has an open Adobe Sign agreement. Cancel it first, or the two records will disagree about how the client signed.',
+    );
+  }
+
+  if (input.reason.trim().length < MINIMUM_REASON_LENGTH) {
+    blockers.push('Say why the signature was obtained outside this application. It goes in the permanent record.');
+  }
+
+  // A signature cannot have happened after today, and one dated long ago is
+  // more likely a typo than a letter that sat in someone's inbox since spring.
+  if (input.signedOnIso > input.todayIso) {
+    blockers.push(`The signature is dated ${input.signedOnIso}, which is in the future.`);
+  } else if (daysBetweenIso(input.signedOnIso, input.todayIso) > 90) {
+    warnings.push(
+      `The signature is dated ${input.signedOnIso}, more than 90 days ago. Check the date is right before recording it.`,
+    );
+  }
+
+  warnings.push(
+    'This records a signature this application did not collect. The file will show it was obtained elsewhere, and by whom it was recorded.',
+  );
+
+  return result(blockers, warnings);
+}
+
+/**
+ * Whole days between two YYYY-MM-DD dates. Both are treated as UTC midnight, so
+ * the difference is an exact multiple of a day and integer division is exact —
+ * no rounding, and no daylight-saving hour to lose.
+ */
+function daysBetweenIso(earlier: string, later: string): number {
+  const from = Date.parse(`${earlier}T00:00:00Z`);
+  const to = Date.parse(`${later}T00:00:00Z`);
+  if (Number.isNaN(from) || Number.isNaN(to)) return 0;
+  return Math.trunc((to - from) / 86_400_000);
+}
+
+// ---------------------------------------------------------------------------
 // Cover letters
 // ---------------------------------------------------------------------------
 

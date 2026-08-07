@@ -75,6 +75,13 @@ const DOCUMENT_TYPE_BY_ENGAGEMENT: Record<EngagementType, DocumentType> = {
   T3: 'T3_ENGAGEMENT_LETTER',
 };
 
+/**
+ * How a signature obtained elsewhere was obtained. Mirrors the database enum;
+ * a value not in this list is rejected rather than stored.
+ */
+const EXTERNAL_SIGNATURE_METHODS = ['ACROBAT_ESIGN', 'WET_INK', 'OTHER_ELECTRONIC'] as const;
+type ExternalSignatureMethod = (typeof EXTERNAL_SIGNATURE_METHODS)[number];
+
 export async function startGeneration(formData: FormData): Promise<ActionResult> {
   return run(async () => {
     const actor = await requirePermission('generation:start');
@@ -1398,5 +1405,65 @@ export async function markAllNotificationsRead(): Promise<ActionResult> {
     const { cleared } = await container.userNotifications.markAllRead(actor.id);
     revalidatePath('/notifications');
     return { ok: true, message: cleared === 0 ? 'Nothing was unread.' : `Marked ${cleared} read.` };
+  });
+}
+
+/**
+ * Records a signature obtained outside this application.
+ *
+ * The bridge for a firm holding Acrobat Pro rather than Acrobat Sign Solutions:
+ * the letter is signed by whatever means the firm already uses, and the signed
+ * document is brought back here so the engagement can be completed. Nothing
+ * about review changes — the engagement is already past final approval — but
+ * the provenance is recorded permanently and is never mistaken for a signature
+ * Adobe witnessed.
+ */
+export async function recordExternalSignature(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('signing:record_external');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const documentVersionId = formData.get('documentVersionId')?.toString();
+    const method = formData.get('method')?.toString();
+    const signedOn = formData.get('signedOn')?.toString();
+    const reason = formData.get('reason')?.toString() ?? '';
+    const file = formData.get('evidence');
+
+    if (!engagementId || !documentVersionId) throw new ValidationError('A document version is required.');
+    if (!method || !EXTERNAL_SIGNATURE_METHODS.includes(method as ExternalSignatureMethod)) {
+      throw new ValidationError('Choose how the letter was signed.');
+    }
+    if (!signedOn || !/^\d{4}-\d{2}-\d{2}$/.test(signedOn)) {
+      throw new ValidationError('Give the date the client signed.');
+    }
+    if (!(file instanceof File) || file.size === 0) {
+      throw new ValidationError('Attach the signed document.');
+    }
+
+    // Every confirmed signer arrives as a separate checkbox of the same name.
+    const confirmedSignerIds = formData.getAll('signer').map((value) => value.toString());
+
+    const result = await container.externalSignature.record({
+      engagementId,
+      documentVersionId,
+      actor,
+      method: method as ExternalSignatureMethod,
+      signedOn,
+      reason,
+      confirmedSignerIds,
+      evidence: {
+        fileName: file.name,
+        mimeType: 'application/pdf',
+        content: new Uint8Array(await file.arrayBuffer()),
+      },
+      correlationId: newCorrelationId(),
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+
+    return result.duplicate
+      ? 'That document is already recorded against this engagement; nothing was changed.'
+      : `Signature recorded. The engagement is now SIGNED, and the file shows it was signed outside this application.`;
   });
 }

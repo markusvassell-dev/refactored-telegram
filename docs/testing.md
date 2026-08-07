@@ -3,10 +3,10 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (496 tests)
-pnpm test:unit          # 238 — no external dependencies
-pnpm test:integration   # 258 — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 49  — needs a browser
+pnpm test               # unit + integration  (643 tests)
+pnpm test:unit          # 336 — no external dependencies
+pnpm test:integration   # 307 — needs Postgres and LibreOffice Writer
+pnpm test:e2e           # 58  — needs a browser
 pnpm build              # production build
 ```
 
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (238)
+## Unit tests (336)
 
 No database, no filesystem, no network.
 
@@ -134,7 +134,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (258)
+## Integration tests (307)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -740,6 +740,20 @@ Each was fixed in the code, not the test:
     true, useless, and pointing at the wrong errand. A value that cannot be an
     address is now called what it is, in the deploy log and on the Users screen,
     naming the command that prints the real addresses.
+70. The workflow had no route from an approved letter to a signed one except
+    the Adobe Sign API, and the firm holds a licence that has no API. That is
+    not a missing feature but a wall across the middle of the application:
+    every engagement would stop at `READY_TO_SEND` while the firm signed those
+    same letters in Acrobat with nowhere to say so. Recording a signature
+    obtained elsewhere is now possible, with the signed document required as
+    evidence, in a table of its own so it can never be read as a signature
+    Adobe witnessed.
+71. The duplicate check for a recorded signature ran *after* the workflow gate,
+    which made it unreachable in the one case it exists for: the second of two
+    clicks arrives when the engagement is already `SIGNED`, so the gate refused
+    it with "the engagement must be in READY_TO_SEND, not SIGNED" — true,
+    unhelpful, and alarming for what is simply a repeat. Found by the
+    integration test rather than by a person double-clicking in production.
 
 ## What is not covered
 

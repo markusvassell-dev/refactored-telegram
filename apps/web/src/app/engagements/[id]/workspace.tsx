@@ -20,6 +20,7 @@ import {
   requestChanges,
   resolveConflict,
   saveFieldGroup,
+  recordExternalSignature,
   sendForSignature,
   startGeneration,
   startReview,
@@ -1355,6 +1356,176 @@ function KarbonActivity({ engagement }: { engagement: any }): ReactNode {
   );
 }
 
+/** How a signature obtained elsewhere was obtained. Mirrors the database enum. */
+const EXTERNAL_SIGNATURE_METHODS = [
+  { value: 'ACROBAT_ESIGN', label: "Acrobat's e-sign feature" },
+  { value: 'WET_INK', label: 'Signed by hand and scanned' },
+  { value: 'OTHER_ELECTRONIC', label: 'Another e-signature service' },
+];
+
+/**
+ * Recording a signature this application did not collect.
+ *
+ * Without this the workflow simply stops: an approved letter can only become a
+ * signed one through the Adobe Sign API, and that API belongs to a licence the
+ * firm does not hold. Every engagement would sit at READY_TO_SEND for ever
+ * while the firm signed the letters somewhere else and had nowhere to say so.
+ *
+ * The panel is deliberately unglamorous and says exactly what it does. The
+ * failure worth designing against is somebody treating this as the ordinary
+ * way to finish an engagement without noticing that the resulting record is
+ * weaker than an Adobe one.
+ */
+function RecordSignedElsewhere({
+  csrfToken,
+  engagement,
+  approved,
+}: {
+  csrfToken: string;
+  engagement: any;
+  approved: any;
+}): ReactNode {
+  const signers = (engagement.participants ?? []).filter((participant: any) => participant.isSigner);
+  const recorded = engagement.externalSignatures ?? [];
+  const openAgreement = (engagement.adobeAgreements ?? []).some((agreement: any) =>
+    ['CREATED', 'OUT_FOR_SIGNATURE', 'PARTIALLY_SIGNED'].includes(agreement.status),
+  );
+
+  const blocked = !approved
+    ? 'An approved version is required.'
+    : engagement.status !== 'READY_TO_SEND'
+      ? `The engagement must be in READY_TO_SEND, not ${engagement.status.replace(/_/g, ' ').toLowerCase()}.`
+      : signers.length === 0
+        ? 'This engagement names nobody who must sign.'
+        : openAgreement
+          ? 'An Adobe Sign agreement is already open. Cancel it first, or the two records will disagree.'
+          : undefined;
+
+  return (
+    <Card
+      title="Record a signature obtained elsewhere"
+      description="For a letter signed outside this application — in Acrobat, or on paper. The signed document is required, and the file will show permanently that the signature was not collected here."
+    >
+      {recorded.length > 0 ? (
+        <div role="note" className="mb-4 rounded border border-emerald-300 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+          {recorded.map((signature: any) => (
+            <div key={signature.id}>
+              <p>
+                <strong className="font-semibold">Signed outside this application</strong> on{' '}
+                {new Date(signature.signedOn).toISOString().slice(0, 10)} —{' '}
+                {signature.method.replace(/_/g, ' ').toLowerCase()}. Recorded by{' '}
+                {signature.recorder?.displayName ?? 'a former user'} on{' '}
+                {new Date(signature.recordedAt).toISOString().slice(0, 10)}.
+              </p>
+              <p className="mt-1 text-xs">
+                Evidence: {signature.evidenceFileName}
+                {signature.evidencePageCount ? `, ${signature.evidencePageCount} page(s)` : ''}. Signed by{' '}
+                {signature.signers.map((signer: any) => signer.fullLegalName).join(', ') || 'nobody recorded'}.
+              </p>
+              <p className="mt-1 text-xs">Reason given: {signature.reason}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
+      <div role="note" className="mb-4 rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <p>
+          This is not the same as an Adobe Sign signature. Adobe holds its own audit trail and issues a signing
+          certificate; this records one person&rsquo;s account of a signature plus the document they attached. It is
+          kept in a separate part of the file for exactly that reason, and cannot be edited afterwards.
+        </p>
+      </div>
+
+      <ActionForm
+        action={recordExternalSignature}
+        csrfToken={csrfToken}
+        submitLabel="Record the signature"
+        confirm="This marks the engagement signed on the strength of the document you attached. Continue?"
+        disabled={Boolean(blocked)}
+        disabledReason={blocked}
+      >
+        <input type="hidden" name="engagementId" value={engagement.id} />
+        <input type="hidden" name="documentVersionId" value={approved?.id ?? ''} />
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="label" htmlFor="signature-method">
+              How was it signed?
+            </label>
+            <select id="signature-method" name="method" className="input" required defaultValue="ACROBAT_ESIGN">
+              {EXTERNAL_SIGNATURE_METHODS.map((method) => (
+                <option key={method.value} value={method.value}>
+                  {method.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="label" htmlFor="signature-date">
+              Date the client signed
+            </label>
+            <input id="signature-date" name="signedOn" type="date" className="input" required />
+          </div>
+        </div>
+
+        <div className="mt-3">
+          <label className="label" htmlFor="signature-evidence">
+            The signed document (PDF)
+          </label>
+          <input
+            id="signature-evidence"
+            name="evidence"
+            type="file"
+            accept=".pdf,application/pdf"
+            className="input"
+            required
+          />
+          <p className="mt-1 text-xs text-slate-500">
+            The contents are checked, not the file name. An unsigned copy of the same letter will be accepted as a PDF
+            but is not evidence of anything — attach the signed one.
+          </p>
+        </div>
+
+        {/* A joint T1 needs both spouses. Without a box each, a half-signed
+            letter is indistinguishable in the file from a complete one. */}
+        <fieldset className="mt-3">
+          <legend className="label">Confirm who signed</legend>
+          {signers.length === 0 ? (
+            <p className="text-sm text-slate-500">This engagement names nobody who must sign.</p>
+          ) : (
+            <ul className="space-y-1">
+              {signers.map((participant: any) => (
+                <li key={participant.id} className="flex items-center gap-2">
+                  <input
+                    id={`signer-${participant.id}`}
+                    type="checkbox"
+                    name="signer"
+                    value={participant.id}
+                    className="h-4 w-4"
+                  />
+                  <label htmlFor={`signer-${participant.id}`} className="text-sm">
+                    {participant.fullLegalName}
+                    <span className="ml-2 text-xs text-slate-500">
+                      {participant.role.replace(/_/g, ' ').toLowerCase()}
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+        </fieldset>
+
+        <div className="mt-3">
+          <label className="label" htmlFor="signature-reason">
+            Why was this not signed through the application?
+          </label>
+          <textarea id="signature-reason" name="reason" className="input" rows={2} required minLength={10} />
+        </div>
+      </ActionForm>
+    </Card>
+  );
+}
+
 function AdobeSign({ csrfToken, engagement }: { csrfToken: string; engagement: any }): ReactNode {
   const latest = engagement.documentVersions?.[0];
   const approved = engagement.documentVersions?.find((version: any) => version.status === 'APPROVED');
@@ -1380,6 +1551,8 @@ function AdobeSign({ csrfToken, engagement }: { csrfToken: string; engagement: a
           </ActionForm>
         </div>
       </Card>
+
+      <RecordSignedElsewhere csrfToken={csrfToken} engagement={engagement} approved={approved} />
 
       <Card title="Agreements">
         {engagement.adobeAgreements.length === 0 ? (

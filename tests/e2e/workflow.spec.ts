@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 import { PrismaClient } from '@element/database';
 import { createAuditLogger } from '@element/audit';
-import { DocumentStore, PricingService } from '@element/services';
+import { DocumentStore, PricingService, WorkflowService } from '@element/services';
 import type { E2EEnvironment } from '../../playwright.config';
 
 /**
@@ -205,6 +205,81 @@ async function seedRolloutFixture(environment: E2EEnvironment, taxYear: number):
         actorId: actor.id,
       });
     }
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+/**
+ * An engagement parked exactly where the external-signature bridge applies:
+ * past final approval, approved PDF in hand, waiting for a signature that
+ * cannot arrive through an API the firm has no licence for.
+ */
+async function seedReadyToSendFixture(environment: E2EEnvironment, taxYear: number): Promise<string> {
+  const prisma = clientFor(environment);
+  try {
+    const audit = createAuditLogger(prisma);
+    const workflow = new WorkflowService(prisma, audit);
+    const approver = await prisma.user.findFirstOrThrow({ where: { email: 'partner@example.test' } });
+
+    const client = await prisma.client.create({ data: { legalName: 'Signed Elsewhere Co', isTestFixture: true } });
+    const engagement = await prisma.engagement.create({
+      data: {
+        clientId: client.id,
+        engagementType: 'T2',
+        taxYear,
+        status: 'NOT_STARTED',
+        finalApproverId: approver.id,
+        isTestMode: true,
+      },
+    });
+
+    for (const to of [
+      'GENERATING',
+      'DRAFT_READY',
+      'REVIEW_REQUIRED',
+      'IN_REVIEW',
+      'APPROVED',
+      'READY_TO_SEND',
+    ] as const) {
+      await workflow.transition({ engagementId: engagement.id, to, reason: 'e2e fixture' });
+    }
+
+    const version = await prisma.documentVersion.create({
+      data: {
+        engagementId: engagement.id,
+        documentType: 'T2_ENGAGEMENT_LETTER',
+        versionNumber: 1,
+        status: 'APPROVED',
+        generatedPdfReference: 'fixture/approved.pdf',
+        approvedBy: approver.id,
+        approvedAt: new Date(),
+      },
+    });
+
+    await prisma.approval.create({
+      data: {
+        engagementId: engagement.id,
+        documentVersionId: version.id,
+        userId: approver.id,
+        actingRole: 'PARTNER_OR_FINAL_APPROVER',
+        type: 'FINAL_DOCUMENT',
+        decision: 'APPROVED',
+      },
+    });
+
+    await prisma.engagementParticipant.create({
+      data: {
+        engagementId: engagement.id,
+        role: 'AUTHORIZED_SIGNING_OFFICER',
+        fullLegalName: 'Dale Ziegeman',
+        email: 'dale@signed-elsewhere.test',
+        isSigner: true,
+        contactConfirmed: true,
+      },
+    });
+
+    return engagement.id;
   } finally {
     await prisma.$disconnect();
   }
@@ -1601,5 +1676,100 @@ test.describe('webhooks', () => {
 
     expect(response.ok()).toBe(true);
     expect((await response.json()).xAdobeSignClientId).toBe('test-client-id');
+  });
+});
+
+test.describe('recording a signature obtained elsewhere', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  // A year of its own so the fixture cannot collide with anything else.
+  const SIGNED_ELSEWHERE_YEAR = 2913;
+  let engagementId: string;
+
+  test.beforeAll(async ({}, worker) => {
+    engagementId = await seedReadyToSendFixture(environmentFor(worker), SIGNED_ELSEWHERE_YEAR);
+  });
+
+  test.afterAll(async ({}, worker) => {
+    await clearRolloutFixture(environmentFor(worker), SIGNED_ELSEWHERE_YEAR);
+  });
+
+  test('refuses a file that is not a PDF, whatever it is called', async ({ page }) => {
+    // The bytes decide. A .pdf that is really a Word file is not evidence of a
+    // signature, and this runs first because it must leave the engagement
+    // untouched for the test below.
+    await signIn(page, /Partner/);
+    await page.goto(`/engagements/${engagementId}`);
+    await page.getByRole('tab', { name: 'Adobe Sign' }).click();
+
+    const panel = page.getByRole('tabpanel');
+    await panel.getByLabel('Date the client signed').fill(new Date().toISOString().slice(0, 10));
+    await panel.getByLabel('The signed document (PDF)').setInputFiles({
+      name: 'Signed.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('PK actually a word file', 'latin1'),
+    });
+    await panel.getByLabel('Dale Ziegeman').check();
+    await panel
+      .getByLabel('Why was this not signed through the application?')
+      .fill('Testing that the bytes are what is checked.');
+
+    // Playwright dismisses dialogs by default, and this form asks before it
+    // marks an engagement signed.
+    page.once('dialog', (dialog) => void dialog.accept());
+    await panel.getByRole('button', { name: 'Record the signature' }).click();
+
+    // The reason is given as a blocker, not just a generic failure.
+    await expect(
+      page.getByRole('listitem').filter({ hasText: 'The signed document must be a PDF' }),
+    ).toBeVisible();
+
+    // And nothing happened: the engagement is still waiting to be sent.
+    await page.reload();
+    await page.getByRole('tab', { name: 'Adobe Sign' }).click();
+    await expect(page.getByRole('tabpanel').getByText(/Signed outside this application/)).toHaveCount(0);
+  });
+
+  test('records a signed PDF, advances the engagement, and says it was not collected here', async ({ page }) => {
+    // The whole reason this exists: the firm holds Acrobat Pro, which has no
+    // API, so without this an approved letter can never become a signed one and
+    // every engagement stops at READY_TO_SEND for ever.
+    await signIn(page, /Partner/);
+    await page.goto(`/engagements/${engagementId}`);
+    await page.getByRole('tab', { name: 'Adobe Sign' }).click();
+
+    const panel = page.getByRole('tabpanel');
+    await expect(panel.getByRole('heading', { name: 'Record a signature obtained elsewhere' })).toBeVisible();
+
+    // It never lets the reader think this is the same as an Adobe signature.
+    await expect(panel.getByText(/not the same as an Adobe Sign signature/i)).toBeVisible();
+
+    await panel.getByLabel('How was it signed?').selectOption('ACROBAT_ESIGN');
+    await panel.getByLabel('Date the client signed').fill(new Date().toISOString().slice(0, 10));
+    await panel.getByLabel('The signed document (PDF)').setInputFiles({
+      name: 'Signed Engagement Letter.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF-1.4 signed by the client', 'latin1'),
+    });
+    await panel.getByLabel('Dale Ziegeman').check();
+    await panel
+      .getByLabel('Why was this not signed through the application?')
+      .fill('Signed in Acrobat; the firm has no Acrobat Sign licence yet.');
+
+    // Marking an engagement signed asks first, and the wording matters: it is
+    // the moment the fee becomes binding on the strength of one attachment.
+    page.once('dialog', (dialog) => {
+      expect(dialog.message()).toContain('on the strength of the document you attached');
+      void dialog.accept();
+    });
+    await panel.getByRole('button', { name: 'Record the signature' }).click();
+
+    await expect(page.getByText(/Signature recorded/)).toBeVisible();
+
+    // The engagement really moved, and the provenance is on the screen.
+    await page.reload();
+    await page.getByRole('tab', { name: 'Adobe Sign' }).click();
+    await expect(page.getByRole('tabpanel').getByText(/Signed outside this application/)).toBeVisible();
+    await expect(page.getByRole('tabpanel').getByText(/Signed Engagement Letter\.pdf/)).toBeVisible();
   });
 });

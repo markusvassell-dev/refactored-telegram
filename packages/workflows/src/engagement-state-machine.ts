@@ -85,7 +85,13 @@ export const ALLOWED_TRANSITIONS: Readonly<Record<EngagementStatus, readonly Eng
 
   APPROVED: ['READY_TO_SEND', 'CHANGES_REQUESTED', 'NEEDS_ATTENTION'],
 
-  READY_TO_SEND: ['SENDING_FOR_SIGNATURE', 'CHANGES_REQUESTED', 'NEEDS_ATTENTION'],
+  // SIGNED without passing through SENDING_FOR_SIGNATURE is the bridge for a
+  // signature obtained outside this application — the only way an approved
+  // letter becomes a signed one while the firm has Acrobat Pro (no API) rather
+  // than Acrobat Sign Solutions (API). It is not a shortcut around review:
+  // READY_TO_SEND is already past final approval. The database refuses this
+  // transition unless an external_signature row with evidence exists.
+  READY_TO_SEND: ['SENDING_FOR_SIGNATURE', 'SIGNED', 'CHANGES_REQUESTED', 'NEEDS_ATTENTION'],
 
   SENDING_FOR_SIGNATURE: ['SENT_FOR_SIGNATURE', 'READY_TO_SEND', 'NEEDS_ATTENTION'],
 

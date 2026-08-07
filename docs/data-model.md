@@ -92,6 +92,8 @@ be able to see how a number was reached.
 | `AdobeAgreement` | Agreement id, deterministic idempotency key, status, signing attempt, expiry, CC list, and the returned signed PDF and certificate with their hashes. |
 | `AdobeSigner` | Per-signer status and timestamps. |
 | `AdobeEvent` | Raw webhook events, keyed by provider event id for exactly-once processing. |
+| `ExternalSignature` | A signature obtained outside this application and recorded here, with the signed document as required evidence, the method, the date the client signed, and who recorded it. Deliberately a separate table rather than a flag on `AdobeAgreement`: the two are different kinds of evidence, and a shared boolean is the kind of distinction that gets dropped in a join. Immutable once written, except for the Karbon document id. See `docs/signing-without-acrobat-sign.md`. |
+| `ExternalSignatureSigner` | Who the recorder confirmed had signed. A joint T1 needs both spouses; without a row each, a half-signed letter is indistinguishable from a complete one. |
 
 ### Cover letters
 

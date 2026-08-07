@@ -209,6 +209,20 @@ enum AdobeSignerStatus {
   EXPIRED
 }
 
+/**
+ * How a signature obtained outside this application was obtained.
+ * Not a free-text field: the method bears on how much the signature is worth if
+ * it is ever questioned, and a list can be reported on where prose cannot.
+ */
+enum ExternalSignatureMethod {
+  /// Sent from Acrobat's own e-sign feature. Adobe holds the audit trail.
+  ACROBAT_ESIGN
+  /// Printed, signed by hand, scanned back in.
+  WET_INK
+  /// Some other electronic signature service.
+  OTHER_ELECTRONIC
+}
+
 enum RepresentativeCapacity {
   TRUSTEE
   EXECUTOR
@@ -303,6 +317,7 @@ model User {
   confirmedFields       ExtractedField[]
   resolvedConflicts     FieldConflict[]
   feeCalculations       FeeCalculation[]
+  externalSignatures    ExternalSignature[]    @relation("ExternalSignatureRecordedBy")
 
   @@index([isActive])
   @@map("user")
@@ -447,24 +462,25 @@ model Engagement {
   reviewer            User?            @relation("EngagementReviewer", fields: [assignedReviewerId], references: [id], onDelete: SetNull)
   finalApprover       User?            @relation("EngagementFinalApprover", fields: [finalApproverId], references: [id], onDelete: SetNull)
 
-  participants      EngagementParticipant[]
-  notifications     Notification[]
-  sourceDocuments   SourceDocument[]
-  documentVersions  DocumentVersion[]
-  extractedFields   ExtractedField[]
-  fieldConflicts    FieldConflict[]
-  serviceSelections ServiceSelection[]
-  feeCalculations   FeeCalculation[]
-  calculatedDates   CalculatedDate[]
-  reviewAssignments ReviewAssignment[]
-  reviewComments    ReviewComment[]
-  approvals         Approval[]
-  wordingExceptions WordingException[]
-  adobeAgreements   AdobeAgreement[]
-  coverLetters      CoverLetterPackage[]
-  karbonActivities  KarbonActivity[]
-  workflowEvents    WorkflowEvent[]
-  jobs              BackgroundJob[]
+  participants       EngagementParticipant[]
+  notifications      Notification[]
+  sourceDocuments    SourceDocument[]
+  documentVersions   DocumentVersion[]
+  extractedFields    ExtractedField[]
+  fieldConflicts     FieldConflict[]
+  serviceSelections  ServiceSelection[]
+  feeCalculations    FeeCalculation[]
+  calculatedDates    CalculatedDate[]
+  reviewAssignments  ReviewAssignment[]
+  reviewComments     ReviewComment[]
+  approvals          Approval[]
+  wordingExceptions  WordingException[]
+  adobeAgreements    AdobeAgreement[]
+  externalSignatures ExternalSignature[]
+  coverLetters       CoverLetterPackage[]
+  karbonActivities   KarbonActivity[]
+  workflowEvents     WorkflowEvent[]
+  jobs               BackgroundJob[]
 
   /// One engagement per client + type + year.
   @@unique([clientId, engagementType, taxYear])
@@ -495,10 +511,11 @@ model EngagementParticipant {
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
 
-  engagement    Engagement           @relation(fields: [engagementId], references: [id], onDelete: Cascade)
-  clientContact ClientContact?       @relation(fields: [clientContactId], references: [id], onDelete: SetNull)
-  adobeSigners  AdobeSigner[]
-  coverLetters  CoverLetterPackage[]
+  engagement         Engagement                @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  clientContact      ClientContact?            @relation(fields: [clientContactId], references: [id], onDelete: SetNull)
+  adobeSigners       AdobeSigner[]
+  externalSignatures ExternalSignatureSigner[]
+  coverLetters       CoverLetterPackage[]
 
   @@unique([engagementId, role])
   @@index([engagementId])
@@ -668,12 +685,13 @@ model DocumentVersion {
   creator            User?               @relation("DocumentVersionCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
   approver           User?               @relation("DocumentVersionApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull)
 
-  approvals         Approval[]
-  wordingExceptions WordingException[]
-  adobeAgreements   AdobeAgreement[]
-  reviewComments    ReviewComment[]
-  karbonActivities  KarbonActivity[]
-  jobs              BackgroundJob[]
+  approvals          Approval[]
+  wordingExceptions  WordingException[]
+  adobeAgreements    AdobeAgreement[]
+  externalSignatures ExternalSignature[]
+  reviewComments     ReviewComment[]
+  karbonActivities   KarbonActivity[]
+  jobs               BackgroundJob[]
 
   @@unique([engagementId, documentType, versionNumber])
   @@index([engagementId, status])
@@ -1066,6 +1084,73 @@ model AdobeAgreement {
   @@map("adobe_agreement")
 }
 
+/**
+ * A signature obtained outside this application and recorded here.
+ * This is a deliberately separate table from `AdobeAgreement`, not a flag on
+ * it. An Adobe signature carries Adobe's audit trail, its certificate, and a
+ * per-signer record this application never touched. A signature recorded here
+ * carries one person's assertion plus the file they uploaded. Those are not the
+ * same evidence, and a boolean on a shared table is exactly the kind of
+ * distinction that gets dropped in a join, defaulted on an insert, or quietly
+ * ignored by a later query. Two tables cannot be confused for one another.
+ * It exists because Acrobat Pro with e-sign — which the firm has — offers no
+ * API, and Acrobat Sign Solutions — which does — is a separate paid product.
+ * Without this, an approved letter can never become a signed one, and the whole
+ * second half of the workflow is unreachable.
+ */
+model ExternalSignature {
+  id                String                  @id @default(uuid())
+  engagementId      String
+  /// The approved version this is a signature *of*. Never modified by this record.
+  documentVersionId String
+  /// The signed file. Required — an assertion with nothing behind it is not evidence.
+  evidenceReference String
+  evidenceHash      String
+  evidenceFileName  String
+  evidencePageCount Int?
+  method            ExternalSignatureMethod
+  /// The date the client signed, which is not the date somebody recorded it here.
+  signedOn          DateTime
+  /// Why this was not obtained through the application. Forces the thought.
+  reason            String
+  recordedBy        String?
+  recordedAt        DateTime                @default(now())
+  /// Filed back into Karbon by the same job that files an Adobe-signed document.
+  karbonDocumentId  String?
+
+  engagement      Engagement                @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  documentVersion DocumentVersion           @relation(fields: [documentVersionId], references: [id], onDelete: Cascade)
+  recorder        User?                     @relation("ExternalSignatureRecordedBy", fields: [recordedBy], references: [id], onDelete: SetNull)
+  signers         ExternalSignatureSigner[]
+
+  /// The same file recorded twice against one engagement is a mistake, not a second signature.
+  @@unique([engagementId, evidenceHash])
+  @@index([engagementId])
+  @@map("external_signature")
+}
+
+/**
+ * Who the recorder confirmed had signed.
+ * A joint T1 letter needs both spouses. Without a per-signer record, "signed"
+ * on a half-signed joint letter is indistinguishable from "signed" on a
+ * complete one — and the file would show a signature that does not bind one of
+ * the two people it names.
+ */
+model ExternalSignatureSigner {
+  id                  String          @id @default(uuid())
+  externalSignatureId String
+  participantId       String?
+  fullLegalName       String
+  role                ParticipantRole
+
+  signature   ExternalSignature      @relation(fields: [externalSignatureId], references: [id], onDelete: Cascade)
+  participant EngagementParticipant? @relation(fields: [participantId], references: [id], onDelete: SetNull)
+
+  @@unique([externalSignatureId, participantId])
+  @@index([externalSignatureId])
+  @@map("external_signature_signer")
+}
+
 model AdobeSigner {
   id               String            @id @default(uuid())
   agreementId      String
@@ -1359,9 +1444,9 @@ model Notification {
   /// Email delivery, tracked separately from the notice itself. An in-app
   /// notice that could not be emailed is still a notice; it must not vanish
   /// because a mail server was briefly unreachable.
-  emailedAt    DateTime?
-  emailError   String?
-  emailAttempts Int      @default(0)
+  emailedAt     DateTime?
+  emailError    String?
+  emailAttempts Int       @default(0)
 
   user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   engagement Engagement? @relation(fields: [engagementId], references: [id], onDelete: Cascade)

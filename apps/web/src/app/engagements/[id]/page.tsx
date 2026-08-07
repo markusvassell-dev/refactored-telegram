@@ -55,6 +55,10 @@ export default async function EngagementDetailPage({ params }: { params: Promise
           _count: { select: { events: true } },
         },
       },
+      externalSignatures: {
+        include: { signers: true, recorder: true },
+        orderBy: { recordedAt: 'desc' },
+      },
       coverLetters: { include: { documentVersions: true } },
       karbonActivities: { orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], take: 50 },
       // `workflowEvents` was fetched here and rendered nowhere — a join on every
