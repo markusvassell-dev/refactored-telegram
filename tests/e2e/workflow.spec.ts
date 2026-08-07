@@ -615,15 +615,39 @@ test.describe('configuring an integration', () => {
     await expect(page.getByLabel('Bearer token')).toHaveValue('');
   });
 
-  test('refuses to mark a connection production while Test Mode is on', async ({ page }) => {
+  test('lets Karbon be marked production honestly, because reads still work', async ({ page }) => {
+    // This used to be refused, which sounds stricter and was the opposite:
+    // Karbon has no sandbox host, so refusing the honest label left marking a
+    // production connection "Sandbox" as the only way to make the application
+    // work at all — and that is what was actually deployed. A production
+    // connection under Test Mode is now read-only rather than dead.
     await signIn(page, /Administrator/);
     await page.goto('/integrations');
 
-    await page.getByLabel('Environment').first().selectOption('false');
+    // Supplied rather than assumed. A sibling test clears the credentials, and
+    // saving an enabled connection without them fails validation — which would
+    // look exactly like the environment refusing to be marked production.
+    await page.getByLabel('Bearer token').fill('e2e-production-label-token');
+    await page.getByLabel('Access key').fill('e2e-production-label-key');
+    await page.locator('#KARBON-isSandbox').selectOption('false');
     await page.getByRole('button', { name: 'Save connection' }).first().click();
 
-    // Matched on the refusal itself: "Test Mode is on" also appears in the
-    // page's own explanation of what Test Mode does.
+    await expect(page.getByText(/cannot be marked as production/i)).toHaveCount(0);
+    await page.reload();
+    await expect(page.locator('#KARBON-isSandbox')).toHaveValue('false');
+
+    // Put it back, so the rest of the suite starts where it expects to.
+    await page.locator('#KARBON-isSandbox').selectOption('true');
+    await page.getByRole('button', { name: 'Save connection' }).first().click();
+  });
+
+  test('still refuses a production Adobe Sign connection, because a write e-mails a client', async ({ page }) => {
+    await signIn(page, /Administrator/);
+    await page.goto('/integrations');
+
+    await page.locator('#ADOBE_SIGN-isSandbox').selectOption('false');
+    await page.getByRole('button', { name: 'Save connection' }).nth(1).click();
+
     await expect(page.getByText(/cannot be marked as production/i)).toBeVisible();
   });
 

@@ -175,12 +175,23 @@ export class IntegrationConnectionService {
     });
     const stored = this.read(existing?.encryptedCredentials ?? null);
 
-    // Test Mode's guarantee is that no production integration is reachable. A
-    // connection that could quietly become production would make that a
-    // convention rather than a structural property.
-    if (input.testModeActive && !input.isSandbox) {
+    // Test Mode's guarantee is that nothing is written to a client's permanent
+    // file and no client is contacted. It used to be enforced here, by refusing
+    // to store a production label at all — which sounds stricter and was in
+    // fact the opposite: Karbon publishes no sandbox host, so a firm that
+    // wanted the application to do anything with Karbon had one lever, and it
+    // was to mark the production connection "Sandbox". A rule that can only be
+    // satisfied by lying produces a lie, and then the label means nothing
+    // anywhere.
+    //
+    // The guarantee now lives where it belongs, in the adapter: a production
+    // Karbon connection under Test Mode is wrapped so its reads work and its
+    // writes are refused. Adobe Sign is unchanged and still blocked outright —
+    // Adobe does offer real sandbox accounts, and an Adobe write is an e-mail
+    // to a client.
+    if (input.testModeActive && !input.isSandbox && input.provider === 'ADOBE_SIGN') {
       throw new PreconditionError(
-        'Test Mode is on, so a connection cannot be marked as production. Turn Test Mode off first — deliberately, in Settings — and understand that real client documents become reachable when you do.',
+        'Test Mode is on, so an Adobe Sign connection cannot be marked as production — creating an agreement e-mails a real person. Use a sandbox account, or turn Test Mode off deliberately in Settings.',
       );
     }
 

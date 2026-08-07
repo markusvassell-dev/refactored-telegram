@@ -3,6 +3,7 @@ import {
   AdobeSignRestClient,
   BlockedAdobeSignProvider,
   BlockedKarbonProvider,
+  ReadOnlyKarbonProvider,
   KarbonRestClient,
   MockAdobeSignProvider,
   MockKarbonProvider,
@@ -112,13 +113,31 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
     karbonConnection.credentials.bearerToken &&
     karbonConnection.credentials.accessKey;
 
-  if (testModeState.testMode && !karbonConnection?.isSandbox) {
+  if (testModeState.testMode && !karbonConnection?.isSandbox && karbonUsable) {
+    // Reads are allowed; writes are not. Karbon publishes no sandbox host, so
+    // refusing everything left a firm one lever to make the application work at
+    // all — marking the production connection "Sandbox" — which turned Test
+    // Mode's guarantee into a label. Reading a firm's own Karbon changes
+    // nothing on their side; writing is what Test Mode exists to prevent.
+    karbon =
+      overrides?.karbon ??
+      new ReadOnlyKarbonProvider(
+        new KarbonRestClient({
+          baseUrl: karbonConnection.baseUrl ?? env.KARBON_API_BASE_URL,
+          bearerToken: karbonConnection.credentials.bearerToken as string,
+          accessKey: karbonConnection.credentials.accessKey as string,
+          logger: options.logger,
+        }),
+        'Test Mode is active and this is a production Karbon connection, so nothing was written to Karbon.',
+      );
+    karbonDescription = 'Karbon production connection, reads only (test mode)';
+  } else if (testModeState.testMode && !karbonConnection?.isSandbox) {
     karbon =
       overrides?.karbon ??
       new BlockedKarbonProvider(
-        'Test Mode is active and no Karbon sandbox connection is configured, so nothing was written to Karbon.',
+        'Test Mode is active and no usable Karbon connection is configured, so nothing was written to Karbon.',
       );
-    karbonDescription = 'blocked (test mode, no sandbox configured)';
+    karbonDescription = 'blocked (test mode, no usable connection)';
   } else if (karbonUsable) {
     karbon = new KarbonRestClient({
       baseUrl: karbonConnection.baseUrl ?? env.KARBON_API_BASE_URL,

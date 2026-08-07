@@ -175,8 +175,35 @@ describe('rotating one credential', () => {
 });
 
 describe('what it refuses', () => {
-  it('refuses to mark a connection production while Test Mode is on', async () => {
-    await expect(saveKarbon({ isSandbox: false, testModeActive: true })).rejects.toThrow(/Test Mode is on/i);
+  it('lets Karbon be marked production under Test Mode, because the alternative was a lie', async () => {
+    // This used to be refused. It sounds stricter and was the opposite: Karbon
+    // publishes no sandbox host, so refusing the honest label left marking a
+    // production connection "Sandbox" as the only way to make the application
+    // work at all — which is what was deployed, and it turned Test Mode's only
+    // structural guarantee into a label. The guarantee now lives in the
+    // adapter, which serves reads and refuses writes.
+    await saveKarbon({ isSandbox: false, testModeActive: true });
+
+    const karbon = (await integrations.list()).find((entry) => entry.provider === 'KARBON');
+    expect(karbon?.isSandbox).toBe(false);
+  });
+
+  it('still refuses a production Adobe Sign connection, because a write e-mails a client', async () => {
+    // The asymmetry is the point: Adobe genuinely offers sandbox accounts, and
+    // an Adobe write is a signature request landing in somebody's inbox.
+    await expect(
+      integrations.save({
+        provider: 'ADOBE_SIGN',
+        baseUrl: 'https://api.na1.adobesign.com',
+        isSandbox: false,
+        isEnabled: false,
+        credentials: { clientId: 'a', clientSecret: 'b', refreshToken: 'c' },
+        testModeActive: true,
+        actor: admin,
+      }),
+    ).rejects.toThrow(/Test Mode is on/i);
+
+    await prisma.integrationConnection.deleteMany({ where: { provider: 'ADOBE_SIGN' } });
   });
 
   it('allows production once Test Mode is off, because that is then a deliberate act', async () => {

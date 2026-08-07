@@ -3,10 +3,10 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (694 tests)
-pnpm test:unit          # 354 — no external dependencies
+pnpm test               # unit + integration  (699 tests)
+pnpm test:unit          # 358 — no external dependencies
 pnpm test:integration   # 340 — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 58  — needs a browser
+pnpm test:e2e           # 59  — needs a browser
 pnpm build              # production build
 ```
 
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (354)
+## Unit tests (358)
 
 No database, no filesystem, no network.
 
@@ -823,6 +823,21 @@ Each was fixed in the code, not the test:
     would otherwise have written fictional sample clients into the real client
     list, where nothing would distinguish them from the firm's own and they
     would sit in the engagement list for ever.
+
+82. Test Mode refused to store a production label at all, which sounds stricter
+    and was the opposite. `BlockedKarbonProvider` refuses reads as well as
+    writes, and Karbon publishes no sandbox host — so a firm that wanted the
+    application to do anything with Karbon had exactly one lever, and it was to
+    mark the production connection "Sandbox". That is what was deployed. A rule
+    that can only be satisfied by lying produces a lie, and then the label means
+    nothing anywhere. A production Karbon connection under Test Mode is now
+    read-only: the client list and prior-year documents work, every write is
+    refused. Adobe Sign is still blocked outright — Adobe does offer sandbox
+    accounts, and an Adobe write is an e-mail to a client.
+83. The read-only adapter reports `isMock === false`, because what it returns is
+    the firm's real data. Claiming otherwise would make the client import refuse
+    the one case it exists for, and would let a signature filing be recorded
+    against a tenant it never reached.
 
 ## What is not covered
 

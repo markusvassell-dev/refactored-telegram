@@ -136,7 +136,10 @@ describe('a connection that says sandbox but is not', () => {
     });
 
     expect(problem).toMatch(/marked Sandbox but points at/i);
-    expect(problem).toMatch(/real client records are reachable/i);
+    expect(problem).toMatch(/could reach a real client record/i);
+    // And it says what the honest setting costs, which is nothing: reads keep
+    // working, so there is no reason left to mislabel it.
+    expect(problem).toMatch(/prior-year documents still work/i);
   });
 
   it('says nothing when the label is honest', () => {

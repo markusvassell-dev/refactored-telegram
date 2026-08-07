@@ -283,8 +283,15 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
             'READ_WORK_ITEM failed in the way that matters: the search returned this work',
             `item, but GET /WorkItems/${subject.workItemKey} does not find it. Every feature`,
             'that resolves a work item by key depends on this, so it is worth settling before',
-            'anything else. Most likely the field the search result is read from is not the',
-            'key the read endpoint expects.',
+            'anything else. Most likely the field this client reads as the key is not the one',
+            'the read endpoint expects.',
+            '',
+            'What the search actually returned for this work item:',
+            '',
+            ...describeKeyFields(subject.raw as Record<string, unknown> | undefined),
+            '',
+            'Send this list on. The field whose value the read endpoint accepts is the one',
+            'the client should be using, and that is a one-line change once it is known.',
             '',
           ].join('\n'),
         );
@@ -536,6 +543,35 @@ function minimalPdf(text: string): Buffer {
     '%%EOF',
   ].join('\n');
   return Buffer.from(body, 'latin1');
+}
+
+/**
+ * The identifier-shaped fields of a raw work item, and nothing else.
+ *
+ * Deliberately not a dump of the record. A Karbon work item carries client
+ * names, assignees and job details, and a verification run pasted into a chat
+ * or an issue must not carry a firm's client data with it. Field *names* are
+ * listed in full because the missing key might be any of them; values are shown
+ * only for fields whose name marks them as an identifier.
+ */
+function describeKeyFields(raw: Record<string, unknown> | undefined): string[] {
+  if (!raw) return ['  (the search result carried no raw record)'];
+
+  const names = Object.keys(raw);
+  const identifiers = names.filter((name) => /(^|[a-z])(key|id)$/i.test(name));
+
+  const lines = [`  fields present: ${names.join(', ')}`, ''];
+
+  if (identifiers.length === 0) {
+    lines.push('  no field name looks like an identifier, which is itself the answer.');
+    return lines;
+  }
+
+  for (const name of identifiers) {
+    const value = raw[name];
+    lines.push(`  ${name.padEnd(24)} ${typeof value === 'object' ? '(nested)' : String(value)}`);
+  }
+  return lines;
 }
 
 function summarise(): void {

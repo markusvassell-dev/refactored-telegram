@@ -268,3 +268,85 @@ export class BlockedKarbonProvider implements KarbonProvider {
     return { ok: false, detail: this.reason };
   }
 }
+
+/**
+ * The real Karbon, with every write refused.
+ *
+ * The gap this fills was doing real damage. `BlockedKarbonProvider` refuses
+ * reads as well as writes, so a connection honestly marked *production* did
+ * nothing at all while Test Mode was on — no client list, no prior-year letter,
+ * no work item. Karbon publishes no sandbox host, so a firm that wanted the
+ * application to do anything with Karbon had exactly one lever: mark the
+ * production connection "Sandbox". That is what was actually deployed, and it
+ * turned Test Mode's only structural guarantee into a label.
+ *
+ * Reading a firm's own Karbon changes nothing on the firm's side and is what a
+ * firm setting the application up genuinely needs to do. Writing is what Test
+ * Mode exists to prevent: nothing reaches a client's permanent file, and no
+ * client is contacted. Separating the two lets the label stay honest, which is
+ * the only way the guarantee means anything.
+ */
+export class ReadOnlyKarbonProvider implements KarbonProvider {
+  readonly name = 'karbon-read-only';
+  /**
+   * Not a mock: what it returns is the firm's real Karbon data, and anything
+   * deciding whether an answer can be trusted — the client import refusing to
+   * invent clients, the signature filing refusing to call a mock upload
+   * "filed" — must treat it as real.
+   */
+  readonly isMock = false;
+
+  constructor(
+    private readonly inner: KarbonProvider,
+    private readonly reason: string,
+  ) {}
+
+  capabilities(): CapabilityReport[] {
+    return this.inner.capabilities();
+  }
+
+  private blocked(): KarbonWriteResult {
+    return { outcome: 'SKIPPED_TEST_MODE', message: this.reason };
+  }
+
+  // ---- Reads: the firm's own data, unchanged by looking at it -------------
+  getClient(entityKey: string): Promise<KarbonClient | null> {
+    return this.inner.getClient(entityKey);
+  }
+  getWorkItem(workItemKey: string): Promise<KarbonWorkItem | null> {
+    return this.inner.getWorkItem(workItemKey);
+  }
+  searchWorkItems(query: KarbonWorkItemQuery): Promise<KarbonWorkItem[]> {
+    return this.inner.searchWorkItems(query);
+  }
+  listDocuments(scope: { workItemKey?: string; entityKey?: string }): Promise<KarbonDocument[]> {
+    return this.inner.listDocuments(scope);
+  }
+  downloadDocument(documentId: string): Promise<{ content: Buffer; fileName: string; mimeType: string }> {
+    return this.inner.downloadDocument(documentId);
+  }
+  healthCheck(): Promise<{ ok: boolean; detail?: string }> {
+    return this.inner.healthCheck();
+  }
+
+  // ---- Writes: what Test Mode exists to prevent ---------------------------
+  //
+  // Each takes its request and discards it. Declaring the parameters rather
+  // than omitting them keeps the refusal a deliberate no-op at every call site
+  // instead of a signature that merely happens to be assignable.
+  async uploadDocument(_request: KarbonUploadRequest): Promise<KarbonWriteResult> {
+    return this.blocked();
+  }
+  async addComment(_request: KarbonCommentRequest): Promise<KarbonWriteResult> {
+    return this.blocked();
+  }
+  async createTask(_request: KarbonTaskRequest): Promise<KarbonWriteResult> {
+    return this.blocked();
+  }
+  async completeTask(_taskId: string): Promise<KarbonWriteResult> {
+    return this.blocked();
+  }
+  async updateWorkItemStatus(_workItemKey: string, _status: string): Promise<KarbonWriteResult> {
+    return this.blocked();
+  }
+}

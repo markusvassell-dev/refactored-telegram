@@ -68,9 +68,12 @@ export default async function IntegrationsPage({
 
           {state.testMode ? (
             <p className="mt-3 text-sm text-slate-600">
-              While Test Mode is on, only a connection marked <strong>sandbox</strong> is used. A production connection
-              is replaced by an adapter that cannot reach the vendor at all — which is why nothing here can turn itself
-              into production while Test Mode is on.
+              While Test Mode is on, a production <strong>Karbon</strong> connection is used for reads only — the
+              client list and prior-year documents — and every write is refused. Karbon has no sandbox host, so
+              refusing reads too would leave marking a production connection &ldquo;sandbox&rdquo; as the only way to
+              make the application work, which is the one thing that would make the label meaningless.{' '}
+              <strong>Adobe Sign</strong> is blocked outright, because creating an agreement e-mails a real person and
+              Adobe does offer sandbox accounts.
             </p>
           ) : null}
         </div>

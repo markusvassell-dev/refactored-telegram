@@ -50,9 +50,9 @@ export function describeSandboxMislabel(input: {
 
   return (
     `This connection is marked Sandbox but points at ${input.baseUrl}, which is production. ` +
-    'Test Mode replaces a production connection with an adapter that cannot reach the vendor; a production ' +
-    'connection labelled Sandbox defeats that, and real client records are reachable while the application ' +
-    'still says TEST MODE. Karbon publishes no sandbox host, so the honest setting is Production — which ' +
-    'means the application uses the mock adapter until Test Mode is turned off deliberately.'
+    'Under Test Mode a production connection is used for reads only and every write is refused; a production ' +
+    'connection labelled Sandbox skips that, so a write could reach a real client record while the application ' +
+    'still says TEST MODE. Karbon publishes no sandbox host, so the honest setting is Production — and with it ' +
+    'the client list and prior-year documents still work, which is what marking it Sandbox was for.'
   );
 }
