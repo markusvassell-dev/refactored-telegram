@@ -14,10 +14,27 @@ list documents were run against a live tenant and are `Supported`.
 Everything else remains `Unverified`, and the reasons are worth stating rather
 than glossing:
 
-- The **writes** — add comment, create task, update status, upload document —
-  cannot be exercised by a read-only run, and the tenant available was the
-  firm's production Karbon. A verification script has no business writing
-  there.
+- The **writes** — add comment, create task, upload document — need a run that
+  writes. The tenant available is the firm's production Karbon, and there is no
+  Karbon sandbox to use instead, so refusing production writes outright would
+  have meant these were never verified at all. `upload document` is how a
+  signed engagement letter reaches a client's permanent file; leaving it
+  unverified indefinitely is its own risk.
+
+  What the script refuses is writing to production *by accident*, or to a work
+  item nobody chose. Create a work item you are willing to have test data
+  written to — an internal one, not a client's — and name it:
+
+  ```
+  pnpm verify:karbon --allow-writes --write-to-production --work-item THAT_KEY
+  ```
+
+  It writes a note, a task and a small PDF, all named
+  `ELEMENT ENGAGEMENTS VERIFICATION`, and tells you where to delete them.
+  `neverOverwrite` is set, so nothing already in the file can be replaced.
+
+- **Update work item status** stays unattempted even then: status values are
+  tenant-specific and changing one alters real workflow state.
 - **Download document** was skipped because the work item it landed on had no
   documents. Re-run with `--work-item` followed by the key of one that does;
   prior-year document discovery is the feature that depends on it.
@@ -89,15 +106,21 @@ Before relying on any row above:
 3. Run the verification harness:
 
    ```bash
-   pnpm verify:karbon                     # reads only
-   pnpm verify:karbon --work-item 3xKmQp9  # a key you have chosen; not a placeholder
-   pnpm verify:karbon --allow-writes      # includes a test note and task
+   pnpm verify:karbon                       # reads only
+   pnpm verify:karbon --work-item 3xKmQp9   # a key you have chosen; not a placeholder
+   pnpm verify:karbon --allow-writes --work-item 3xKmQp9
    ```
 
    It reads the credentials already stored on the Integrations screen — there
    is no second home for a Karbon credential, and none is passed on a command
-   line where it would land in a shell history. It performs no writes unless
-   asked, and **refuses to write at all** to a connection not marked sandbox.
+   line where it would land in a shell history.
+
+   It performs no writes unless asked, and never writes to a work item nobody
+   named: without `--work-item` it would write to whichever one the search
+   happened to return, which is somebody's live engagement. Against a
+   production tenant it additionally requires `--write-to-production`, so that
+   writing to real data is something an operator says rather than something
+   that happens.
 
    It prints one line per capability with the vendor's own error text where
    something failed. A failure is evidence, not necessarily a defect: an

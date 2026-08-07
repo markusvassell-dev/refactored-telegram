@@ -21,14 +21,21 @@ import { createLogger, decryptSecret, loadEnv } from '@element/shared';
  *   - It uses the credentials already stored on the Integrations screen. There
  *     is no second home for a Karbon credential, and no way to pass one on the
  *     command line where it would land in a shell history.
- *   - It performs **no writes** unless asked, and refuses to write at all
- *     against a connection not marked sandbox. Reading a production tenant is
- *     harmless; writing to one from a verification script is not.
+ *   - It performs **no writes** unless asked, never writes to a work item
+ *     nobody named, and needs a second explicit flag before writing to a
+ *     production tenant. Reading a production tenant is harmless; writing to
+ *     one by accident, or to whichever work item a search happened to return,
+ *     is not.
  *
  * Usage:
  *   pnpm verify:karbon                          # read-only
- *   pnpm verify:karbon --work-item <KEY>        # exercise a specific work item
- *   pnpm verify:karbon --allow-writes           # include writes (sandbox only)
+ *   pnpm verify:karbon --work-item KEY          # exercise a specific work item
+ *   pnpm verify:karbon --allow-writes --work-item KEY
+ *
+ * Writing to a production tenant additionally needs --write-to-production, and
+ * a work item you have chosen. Most firms have no Karbon sandbox, so refusing
+ * production writes outright would mean the write capabilities the application
+ * depends on could never be verified at all.
  */
 
 type Outcome = 'PASS' | 'FAIL' | 'SKIP';
@@ -66,6 +73,15 @@ function argument(name: string): string | undefined {
 }
 
 const allowWrites = process.argv.includes('--allow-writes');
+
+/**
+ * Saying out loud that this run writes to a real tenant.
+ *
+ * Separate from --allow-writes on purpose: the first says "include writes", the
+ * second says "yes, to production, and I have chosen where". A single flag
+ * meaning both is one someone passes without reading.
+ */
+const acknowledgedProduction = process.argv.includes('--write-to-production');
 
 /**
  * How many work items to consider when hunting for one with a document on it.
@@ -121,10 +137,38 @@ async function main(): Promise<void> {
       process.stdout.write('        Set it to Yes once these checks pass.\n\n');
     }
 
+    // Writing to production is not forbidden outright, because for most firms
+    // there is no Karbon sandbox to write to — and refusing outright means the
+    // write capabilities the application depends on can never be verified at
+    // all. UPLOAD_DOCUMENT is how a signed engagement letter reaches the
+    // client's permanent file; shipping it unverified for ever is its own risk.
+    //
+    // What is forbidden is writing to production *by accident*, or to a work
+    // item nobody chose. Both extra requirements exist to make the operator
+    // name the target and say out loud what they are doing.
     if (allowWrites && !connection.isSandbox) {
+      if (!acknowledgedProduction) {
+        fail(
+          'Refusing to write to a production Karbon tenant without an explicit acknowledgement.',
+          'Create a work item in Karbon you are willing to have test data written to — an internal one, not a client’s — then re-run with:\n' +
+            '  pnpm verify:karbon --allow-writes --write-to-production --work-item THAT_KEY',
+        );
+      }
+      if (!argument('work-item')) {
+        fail(
+          'Refusing to choose which production work item to write to.',
+          'Name it with --work-item. Without one this script writes to whichever work item the search happened to return, which is somebody’s live engagement.',
+        );
+      }
+    }
+
+    // The same rule in a sandbox, for a different reason: a run that writes to
+    // an arbitrary work item tells you the call succeeded but leaves the test
+    // data somewhere nobody is looking for it.
+    if (allowWrites && !argument('work-item')) {
       fail(
-        'Refusing to write to a production Karbon tenant.',
-        'This script writes test comments, tasks and documents. Point it at a sandbox connection, or run it without --allow-writes.',
+        'Refusing to write to a work item nobody chose.',
+        'Name the work item to write to with --work-item.',
       );
     }
 
@@ -145,7 +189,10 @@ async function main(): Promise<void> {
 
 function writeMode(isSandbox: boolean): string {
   if (!allowWrites) return 'read-only (pass --allow-writes to include them)';
-  return isSandbox ? 'ENABLED — this will create test data in the sandbox' : 'refused (not a sandbox connection)';
+  if (isSandbox) return 'ENABLED — this will create test data in the sandbox';
+  return acknowledgedProduction
+    ? 'ENABLED AGAINST PRODUCTION — real test data, on the work item you named'
+    : 'refused (production tenant; see --write-to-production)';
 }
 
 async function verify(client: KarbonProvider, workItemKey: string | undefined): Promise<void> {
@@ -325,14 +372,14 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
 
   // ---- Writes -------------------------------------------------------------
   if (!allowWrites) {
-    for (const capability of ['ADD_COMMENT', 'CREATE_TASK', 'UPDATE_WORK_ITEM_STATUS']) {
+    for (const capability of ['ADD_COMMENT', 'CREATE_TASK', 'UPLOAD_DOCUMENT', 'UPDATE_WORK_ITEM_STATUS']) {
       record(capability, 'SKIP', 'read-only run');
     }
     return;
   }
 
   if (!subject) {
-    for (const capability of ['ADD_COMMENT', 'CREATE_TASK', 'UPDATE_WORK_ITEM_STATUS']) {
+    for (const capability of ['ADD_COMMENT', 'CREATE_TASK', 'UPLOAD_DOCUMENT', 'UPDATE_WORK_ITEM_STATUS']) {
       record(capability, 'SKIP', 'no work item to write to');
     }
     return;
@@ -368,8 +415,67 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
         : `${result.outcome}${result.objectId ? ` (${result.objectId})` : ''}`,
   );
 
-  record('UPDATE_WORK_ITEM_STATUS', 'SKIP', 'not attempted: status values are tenant-specific and changing one alters real workflow state');
-  record('UPLOAD_DOCUMENT', 'SKIP', 'not attempted: verify uploads deliberately, against a work item you have chosen');
+  // The one that matters most. UPLOAD_DOCUMENT is how a signed engagement
+  // letter reaches the client's permanent file — it is the last step of the
+  // signing workflow and the only copy that outlives this application's own
+  // scratch space. Leaving it "verify deliberately" meant it was never
+  // verified at all, which is the weakest link left in the Karbon integration.
+  //
+  // The file is a valid, tiny PDF, named so nobody mistakes it for a client
+  // document.
+  const marker = `Element Engagements verification ${stamp}`;
+  const testPdf = minimalPdf(marker);
+
+  await attempt(
+    'UPLOAD_DOCUMENT',
+    () =>
+      client.uploadDocument({
+        workItemKey: subject.workItemKey,
+        fileName: `ELEMENT ENGAGEMENTS VERIFICATION - SAFE TO DELETE.pdf`,
+        content: testPdf,
+        mimeType: 'application/pdf',
+        idempotencyKey: `verify_upload_${stamp}`,
+        // Nothing here should ever replace a document already in a client's
+        // file, whatever it happens to be called.
+        neverOverwrite: true,
+      }),
+    (result) => `${result.outcome}${result.objectId ? ` (${result.objectId})` : ''}${result.message ? ` — ${result.message}` : ''}`,
+  );
+
+  record(
+    'UPDATE_WORK_ITEM_STATUS',
+    'SKIP',
+    'not attempted: status values are tenant-specific and changing one alters real workflow state',
+  );
+
+  process.stdout.write(
+    `\nTest data was written to work item ${subject.workItemKey}. Delete the note,\n` +
+      'task and document named "ELEMENT ENGAGEMENTS VERIFICATION" when you are done.\n',
+  );
+}
+
+/**
+ * The smallest thing Karbon will accept as a PDF.
+ *
+ * Written by hand rather than generated, because a verification run must not
+ * depend on the template engine or LibreOffice being available — and because a
+ * few hundred bytes is the right size for something that will be deleted.
+ */
+function minimalPdf(text: string): Buffer {
+  const escaped = text.replace(/[()\\]/g, '\\$&');
+  const body = [
+    '%PDF-1.4',
+    '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj',
+    '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj',
+    '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj',
+    `4 0 obj<</Length ${44 + escaped.length}>>stream`,
+    `BT /F1 12 Tf 72 720 Td (${escaped}) Tj ET`,
+    'endstream endobj',
+    '5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj',
+    'trailer<</Root 1 0 R/Size 6>>',
+    '%%EOF',
+  ].join('\n');
+  return Buffer.from(body, 'latin1');
 }
 
 function summarise(): void {

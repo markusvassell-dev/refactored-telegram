@@ -783,6 +783,15 @@ Each was fixed in the code, not the test:
     a caller passing something it never should have. Traversal was always
     blocked; only the reason given for it was wrong.
 
+76. The Karbon write verification wrote to whichever work item the search
+    happened to return — somebody's live engagement — and refused production
+    outright, which for a firm with no Karbon sandbox meant the write
+    capabilities could never be verified at all. `UPLOAD_DOCUMENT`, the step
+    that puts a signed engagement letter in a client's permanent file, was
+    skipped entirely and so was never exercised anywhere. Writes now require a
+    named work item always, and a second explicit flag against production, and
+    the upload is attempted rather than skipped.
+
 ## What is not covered
 
 Stated plainly rather than implied:
