@@ -124,7 +124,7 @@ the variable.
 If the address does not match, the result is a dead end that cannot be escaped
 from inside the application: you are signed in, you hold no roles, every screen
 that matters is read-only, and granting a role needs an administrator who does
-not exist. `pnpm admin:grant <email> ADMINISTRATOR` in the deployment's console
+not exist. `pnpm admin:grant you@yourfirm.ca ADMINISTRATOR` in the deployment's console
 is the way out. It needs shell access to the deployment, which is already the
 most privileged thing a person can have here, and it is audited.
 

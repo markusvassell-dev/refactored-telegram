@@ -19,8 +19,8 @@ than glossing:
   firm's production Karbon. A verification script has no business writing
   there.
 - **Download document** was skipped because the work item it landed on had no
-  documents. Re-run with `--work-item <KEY>` naming one that does; prior-year
-  document discovery is the feature that depends on it.
+  documents. Re-run with `--work-item` followed by the key of one that does;
+  prior-year document discovery is the feature that depends on it.
 - **Webhooks** need a subscription and an inbound request, which no script can
   arrange on its own.
 
@@ -90,7 +90,7 @@ Before relying on any row above:
 
    ```bash
    pnpm verify:karbon                     # reads only
-   pnpm verify:karbon --work-item <KEY>   # against a work item you have chosen
+   pnpm verify:karbon --work-item 3xKmQp9  # a key you have chosen; not a placeholder
    pnpm verify:karbon --allow-writes      # includes a test note and task
    ```
 

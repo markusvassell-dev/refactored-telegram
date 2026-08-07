@@ -178,7 +178,7 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
 
   if (!subject) {
     for (const capability of ['READ_WORK_ITEM', 'READ_CLIENT', 'LIST_DOCUMENTS', 'DOWNLOAD_DOCUMENT']) {
-      record(capability, 'SKIP', 'no work item available; pass --work-item <KEY> to name one');
+      record(capability, 'SKIP', 'no work item available; name one with --work-item followed by its key');
     }
   } else {
     if (!workItemKey) {
@@ -296,8 +296,30 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
         'SKIP',
         firstError
           ? `searched ${hunted} work item(s) and client record(s); at least one listing was refused (${firstError}), so "no documents" here is not trustworthy`
-          : `searched ${hunted + 1} work item(s) and client record(s) and none carries a document; pass --work-item <KEY> naming one that has an attachment`,
+          : `searched ${hunted + 1} work item(s) and client record(s) and none carries a document`,
       );
+
+      // A real key from this tenant, so the suggestion can be pasted. Written
+      // as `--work-item <KEY>` it could not: angle brackets are shell
+      // redirection, and the shell answers "syntax error near unexpected
+      // token" before the script ever runs.
+      if (!firstError) {
+        process.stdout.write(
+          [
+            '',
+            'Nothing was attached to any of the work items or clients that were searched,',
+            'which is ordinary for recent work. To verify the download, open a prior-year',
+            'work item in Karbon that has the engagement letter attached, take the key from',
+            'its URL, and run:',
+            '',
+            `  pnpm verify:karbon --work-item ${subject.workItemKey}`,
+            '',
+            '(that key is a real one from this tenant, so the command runs as written —',
+            'substitute the key of a work item you know has an attachment)',
+            '',
+          ].join('\n'),
+        );
+      }
     }
   }
 

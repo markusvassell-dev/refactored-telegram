@@ -119,7 +119,12 @@ async function listUsers(prisma: PrismaClient): Promise<void> {
     process.stdout.write(`  ${user.email.padEnd(40)} ${roles}\n`);
   }
   process.stdout.write(`\n${users.length} active user(s).\n`);
-  process.stdout.write('Grant a role with:  pnpm admin:grant <email> ADMINISTRATOR\n\n');
+
+  // A real address from the list above, not `<email>`. Angle brackets are shell
+  // redirection: an example written that way is not an example, it is a command
+  // that fails with "syntax error near unexpected token" for anyone who pastes
+  // it — and pasting it is exactly what an example invites.
+  process.stdout.write(`Grant a role with:  pnpm admin:grant ${users[0]!.email} ADMINISTRATOR\n\n`);
 }
 
 await main();
