@@ -371,6 +371,25 @@ describe('what the database itself refuses', () => {
 
 describe('filing the signed document into Karbon', () => {
   /**
+   * A stand-in for a genuinely connected tenant.
+   *
+   * `MockKarbonProvider` reports `isMock`, and the service treats a mock upload
+   * as not filed — deliberately, because a mock answers SUCCEEDED with an id
+   * from an in-memory map that dies with the process, and recording it would
+   * mark the signed letter as safely in Karbon when it is nowhere at all. These
+   * tests are about what happens against a real tenant, so they need a provider
+   * that behaves like the mock but does not claim to be one.
+   */
+  function connectedKarbon(): MockKarbonProvider {
+    // Delegates to a real MockKarbonProvider through the prototype chain, so
+    // every behaviour and the recorded `calls` are the mock's — only `isMock`
+    // differs. Subclassing cannot express this: `isMock` is typed as the
+    // literal `true` precisely so a mock cannot quietly claim to be real.
+    const inner = new MockKarbonProvider();
+    return Object.create(inner, { isMock: { value: false, enumerable: true } }) as MockKarbonProvider;
+  }
+
+  /**
    * Why this exists at all: until it did, the signed engagement letter lived in
    * exactly one place — this application's own document store, which on a
    * container platform is reclaimed on the next deploy unless a volume happens
@@ -382,7 +401,7 @@ describe('filing the signed document into Karbon', () => {
     const fixture = await readyToSendEngagement({ karbonWorkItem: true });
     await service.record(recordInput(fixture));
 
-    const karbon = new MockKarbonProvider();
+    const karbon = connectedKarbon();
     const result = await service.fileToKarbon({
       externalSignatureId: (await prisma.externalSignature.findFirstOrThrow({
         where: { engagementId: fixture.engagementId },
@@ -411,7 +430,7 @@ describe('filing the signed document into Karbon', () => {
     const fixture = await readyToSendEngagement({ karbonWorkItem: true });
     await service.record(recordInput(fixture));
 
-    const karbon = new MockKarbonProvider();
+    const karbon = connectedKarbon();
     await service.fileToKarbon({
       externalSignatureId: (await prisma.externalSignature.findFirstOrThrow({
         where: { engagementId: fixture.engagementId },
@@ -430,7 +449,7 @@ describe('filing the signed document into Karbon', () => {
     const fixture = await readyToSendEngagement({ karbonWorkItem: true });
     await service.record(recordInput(fixture));
 
-    const karbon = new MockKarbonProvider();
+    const karbon = connectedKarbon();
     await service.fileToKarbon({
       externalSignatureId: (await prisma.externalSignature.findFirstOrThrow({
         where: { engagementId: fixture.engagementId },
@@ -446,6 +465,65 @@ describe('filing the signed document into Karbon', () => {
     expect(body).toMatch(/Signer 1/);
   });
 
+
+  it('does not call a mock upload "filed", and leaves it to be retried', async () => {
+    // The bug this replaces: MockKarbonProvider answers SUCCEEDED with an id
+    // from an in-memory map that dies with the process. Recording that id
+    // marked the signature as safely in Karbon — and because a filed signature
+    // is never re-filed, it would never be retried once Karbon was genuinely
+    // connected. The one document proving a client agreed to a fee would sit on
+    // ephemeral disk, marked safe.
+    const fixture = await readyToSendEngagement({ karbonWorkItem: true });
+    await service.record(recordInput(fixture));
+    const signatureId = (
+      await prisma.externalSignature.findFirstOrThrow({ where: { engagementId: fixture.engagementId } })
+    ).id;
+
+    const result = await service.fileToKarbon({
+      externalSignatureId: signatureId,
+      karbon: new MockKarbonProvider(),
+      correlationId: 'mock-run',
+    });
+
+    expect(result.uploaded).toBe(false);
+    expect(result.messages.join(' ')).toMatch(/not connected/i);
+
+    const signature = await prisma.externalSignature.findUniqueOrThrow({ where: { id: signatureId } });
+    expect(signature.karbonDocumentId).toBeNull();
+
+    // And the retry actually happens once Karbon is real, rather than being
+    // skipped as already done.
+    const retry = await service.fileToKarbon({
+      externalSignatureId: signatureId,
+      karbon: connectedKarbon(),
+      correlationId: 'real-run',
+    });
+
+    expect(retry.uploaded).toBe(true);
+    expect(retry.skipped).toBe(false);
+    const after = await prisma.externalSignature.findUniqueOrThrow({ where: { id: signatureId } });
+    expect(after.karbonDocumentId).toBeTruthy();
+  });
+
+  it('does not leave a Karbon note claiming a filing that did not happen', async () => {
+    // The note tells whoever works in Karbon that this letter carries no Adobe
+    // certificate. Posting it when nothing was filed would describe a document
+    // that is not there.
+    const fixture = await readyToSendEngagement({ karbonWorkItem: true });
+    await service.record(recordInput(fixture));
+
+    const karbon = new MockKarbonProvider();
+    await service.fileToKarbon({
+      externalSignatureId: (
+        await prisma.externalSignature.findFirstOrThrow({ where: { engagementId: fixture.engagementId } })
+      ).id,
+      karbon,
+      correlationId: 'mock-run',
+    });
+
+    expect(karbon.calls.find((call) => call.operation === 'addComment')).toBeUndefined();
+  });
+
   it('does not file a second copy when run again', async () => {
     // A retry, a redeploy or an impatient click must never put two signed
     // documents in a client's permanent file.
@@ -455,7 +533,7 @@ describe('filing the signed document into Karbon', () => {
       await prisma.externalSignature.findFirstOrThrow({ where: { engagementId: fixture.engagementId } })
     ).id;
 
-    const karbon = new MockKarbonProvider();
+    const karbon = connectedKarbon();
     await service.fileToKarbon({ externalSignatureId: signatureId, karbon, correlationId: 'c1' });
     const second = await service.fileToKarbon({ externalSignatureId: signatureId, karbon, correlationId: 'c2' });
 
@@ -469,7 +547,7 @@ describe('filing the signed document into Karbon', () => {
     const fixture = await readyToSendEngagement();
     await service.record(recordInput(fixture));
 
-    const karbon = new MockKarbonProvider();
+    const karbon = connectedKarbon();
     const result = await service.fileToKarbon({
       externalSignatureId: (await prisma.externalSignature.findFirstOrThrow({
         where: { engagementId: fixture.engagementId },
@@ -512,7 +590,7 @@ describe('filing the signed document into Karbon', () => {
     const fixture = await readyToSendEngagement({ karbonWorkItem: true });
     await service.record(recordInput(fixture));
 
-    const karbon = new MockKarbonProvider();
+    const karbon = connectedKarbon();
     await service.fileToKarbon({
       externalSignatureId: (await prisma.externalSignature.findFirstOrThrow({
         where: { engagementId: fixture.engagementId },

@@ -362,11 +362,23 @@ export class ExternalSignatureService {
     const messages: string[] = [];
     if (upload.message) messages.push(upload.message);
 
-    if (upload.outcome === 'SUCCEEDED' && upload.objectId) {
+    // A mock adapter answers SUCCEEDED with an id from an in-memory map that
+    // dies with the process. Recording that id would mark the signature as
+    // filed in Karbon when nothing was filed anywhere — and because a filed
+    // signature is never re-filed, it would never be retried once Karbon was
+    // genuinely connected. The one document proving a client agreed to a fee
+    // would sit on ephemeral disk, marked safe.
+    const reallyFiled = upload.outcome === 'SUCCEEDED' && Boolean(upload.objectId) && !input.karbon.isMock;
+
+    if (reallyFiled) {
       await this.deps.prisma.externalSignature.update({
         where: { id: record.id },
         data: { karbonDocumentId: upload.objectId },
       });
+    } else if (upload.outcome === 'SUCCEEDED' && input.karbon.isMock) {
+      messages.push(
+        'Karbon is not connected, so this was filed to the mock adapter only. The signed document still exists nowhere but this application, and filing will be retried once Karbon is connected.',
+      );
     }
 
     await this.deps.prisma.karbonActivity
@@ -394,7 +406,7 @@ export class ExternalSignatureService {
     // other. The note is the only thing telling them it carries no Adobe
     // certificate. Best-effort: a failed note must never fail the filing, and
     // it is a note for a human, never a trigger for anything.
-    if (upload.outcome === 'SUCCEEDED') {
+    if (reallyFiled) {
       const signedBy = record.signers.map((signer) => signer.fullLegalName).join(', ');
       await input.karbon
         .addComment({
@@ -432,7 +444,7 @@ export class ExternalSignatureService {
       },
     });
 
-    return { uploaded: upload.outcome === 'SUCCEEDED', skipped: false, messages };
+    return { uploaded: reallyFiled, skipped: false, messages };
   }
 
   /**

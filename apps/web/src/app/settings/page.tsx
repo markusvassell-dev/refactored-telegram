@@ -12,12 +12,16 @@ export default async function SettingsPage() {
   const csrfToken = (await sessionCsrfToken()) ?? '';
   const configuration = env();
 
-  const [state, settings, storage] = await Promise.all([
+  const [state, settings, storage, unfiledSignatures] = await Promise.all([
     container.testModeState(),
     container.prisma.systemSetting.findMany({ orderBy: { key: 'asc' } }),
     // The deploy log said this too, once, and then scrolled away. Somebody
     // wondering where a document went needs to be able to find out now.
     inspectStorageDurability(configuration.DOCUMENT_STORAGE_DIRECTORY),
+    // A signed letter with no Karbon document id exists in exactly one place.
+    // A warning that can count them is one somebody acts on; "documents may be
+    // lost" is one they read past.
+    container.prisma.externalSignature.count({ where: { karbonDocumentId: null } }),
   ]);
 
   const isAdministrator = user.roles.includes('ADMINISTRATOR');
@@ -39,8 +43,30 @@ export default async function SettingsPage() {
             {storage.detail}
           </p>
           <p className="mt-2">
-            The signed engagement letters recorded in this application are the ones that matter here: until the Karbon
-            filing job has run, a signed letter exists in no other place.
+            {unfiledSignatures === 0
+              ? 'No signed letter is currently at risk: every one recorded here has reached Karbon. A new one is at risk from the moment it is recorded until the filing job has run.'
+              : `${unfiledSignatures} signed engagement letter${unfiledSignatures === 1 ? '' : 's'} ${
+                  unfiledSignatures === 1 ? 'has' : 'have'
+                } not reached Karbon and exist${unfiledSignatures === 1 ? 's' : ''} nowhere but this container. ${
+                  unfiledSignatures === 1 ? 'It' : 'They'
+                } will be lost on the next deploy.`}
+          </p>
+        </div>
+      ) : null}
+
+      {/* Worth saying even on a durable volume: a signature that never reaches
+          Karbon is one the firm cannot produce from its own system of record,
+          whatever the disk does. */}
+      {storage.durability !== 'EPHEMERAL' && unfiledSignatures > 0 ? (
+        <div role="note" className="mb-6 rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <p>
+            <strong className="font-semibold">
+              {unfiledSignatures} signed engagement letter{unfiledSignatures === 1 ? '' : 's'} not yet filed into
+              Karbon.
+            </strong>{' '}
+            Karbon is the system of record, and until filing succeeds these exist only here. This is expected while
+            Karbon is unconnected or Test Mode is on; if neither is true, check the system jobs for a failing
+            FILE_EXTERNAL_SIGNATURE.
           </p>
         </div>
       ) : null}

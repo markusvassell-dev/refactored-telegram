@@ -704,22 +704,26 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         select: { engagementId: true },
       });
 
-      // Same completion rule as the Adobe path: the engagement is complete once
-      // the signed document is where it belongs, not merely once it is signed.
-      // A run that could not upload leaves the engagement at SIGNED, which is
-      // honest — the work is not finished.
-      if (result.uploaded || result.skipped) {
-        const current = await context.workflow.currentStatus(record.engagementId);
-        if (current === 'SIGNED') {
-          await context.workflow.transition({
-            engagementId: record.engagementId,
-            to: 'COMPLETE',
-            reason: result.uploaded
-              ? 'Signed document recorded outside the application and filed into Karbon'
-              : `Signed document recorded outside the application; not filed (${result.messages.join(' ')})`,
-            correlationId: job.correlationId,
-          });
-        }
+      // The engagement completes either way, as it does on the Adobe path. A
+      // genuine upload failure throws, and the job retries; what reaches here
+      // is either a real filing or a deliberate non-filing — Test Mode, a mock
+      // adapter, or an engagement with no Karbon work item. Refusing to
+      // complete in those cases would leave every test engagement stuck at
+      // SIGNED and make Test Mode useless for exercising the workflow.
+      //
+      // Nothing is claimed by completing: whether the document actually reached
+      // Karbon is recorded separately, as `karbonDocumentId`, and a signature
+      // still lacking one is reported as at risk on the Settings screen.
+      const current = await context.workflow.currentStatus(record.engagementId);
+      if (current === 'SIGNED') {
+        await context.workflow.transition({
+          engagementId: record.engagementId,
+          to: 'COMPLETE',
+          reason: result.uploaded
+            ? 'Signed document recorded outside the application and filed into Karbon'
+            : `Signed document recorded outside the application; not filed into Karbon (${result.messages.join(' ') || 'no reason given'})`,
+          correlationId: job.correlationId,
+        });
       }
 
       return { ...result };

@@ -3,9 +3,9 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (643 tests)
-pnpm test:unit          # 336 — no external dependencies
-pnpm test:integration   # 307 — needs Postgres and LibreOffice Writer
+pnpm test               # unit + integration  (669 tests)
+pnpm test:unit          # 345 — no external dependencies
+pnpm test:integration   # 324 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 58  — needs a browser
 pnpm build              # production build
 ```
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (336)
+## Unit tests (345)
 
 No database, no filesystem, no network.
 
@@ -134,7 +134,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (307)
+## Integration tests (324)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -754,6 +754,17 @@ Each was fixed in the code, not the test:
     it with "the engagement must be in READY_TO_SEND, not SIGNED" — true,
     unhelpful, and alarming for what is simply a repeat. Found by the
     integration test rather than by a person double-clicking in production.
+
+72. The mock Karbon adapter answers an upload with SUCCEEDED and an id from an
+    in-memory map that dies with the process. The filing job recorded that id,
+    so a signed engagement letter was marked as safely in Karbon while sitting
+    on ephemeral disk and nowhere else — and because a filed signature is never
+    re-filed, it would never have been retried once Karbon was genuinely
+    connected. Filing now counts only against a non-mock adapter, and the
+    Karbon note is not posted for a filing that did not happen.
+73. The Settings screen counts the signed letters that have not reached Karbon
+    rather than warning in the abstract. "Documents may be lost" is read past;
+    "3 signed engagement letters exist nowhere but this container" is not.
 
 ## What is not covered
 
