@@ -1460,10 +1460,25 @@ export async function recordExternalSignature(formData: FormData): Promise<Actio
       correlationId: newCorrelationId(),
     });
 
+    // Filing it into Karbon is queued rather than done here: it is a network
+    // call to a vendor, it must survive a restart, and it must retry. Until it
+    // runs, the signed letter exists only in this application's document store
+    // — which on a container platform is reclaimed on the next deploy unless a
+    // volume is attached.
+    if (!result.duplicate) {
+      await container.queue.enqueue({
+        jobType: 'FILE_EXTERNAL_SIGNATURE',
+        idempotencyKey: `file_external_signature_${result.externalSignatureId}`,
+        payload: { externalSignatureId: result.externalSignatureId },
+        engagementId,
+        documentVersionId,
+      });
+    }
+
     revalidatePath(`/engagements/${engagementId}`);
 
     return result.duplicate
       ? 'That document is already recorded against this engagement; nothing was changed.'
-      : `Signature recorded. The engagement is now SIGNED, and the file shows it was signed outside this application.`;
+      : 'Signature recorded, and filing it into Karbon has been queued. The file shows it was signed outside this application.';
   });
 }

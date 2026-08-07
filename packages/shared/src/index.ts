@@ -11,3 +11,4 @@ export * from './ids.js';
 export * from './permissions.js';
 export * from './entra.js';
 export * from './address.js';
+export * from './storage-durability.js';

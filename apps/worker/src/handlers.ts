@@ -680,6 +680,51 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       return { synced };
     },
 
+    /**
+     * Files a signature obtained outside this application into Karbon.
+     *
+     * The counterpart to RETRIEVE_SIGNED_DOCUMENTS. Without it the signed
+     * engagement letter existed in exactly one place — this application's own
+     * document store, which on a container platform is reclaimed on the next
+     * deploy unless a volume is attached — and it is the document that proves a
+     * client agreed to a fee.
+     */
+    FILE_EXTERNAL_SIGNATURE: async ({ job }) => {
+      const externalSignatureId = requireString(job.payload, 'externalSignatureId');
+      const { karbon } = await context.providers();
+
+      const result = await context.externalSignature.fileToKarbon({
+        externalSignatureId,
+        karbon,
+        correlationId: job.correlationId,
+      });
+
+      const record = await context.prisma.externalSignature.findUniqueOrThrow({
+        where: { id: externalSignatureId },
+        select: { engagementId: true },
+      });
+
+      // Same completion rule as the Adobe path: the engagement is complete once
+      // the signed document is where it belongs, not merely once it is signed.
+      // A run that could not upload leaves the engagement at SIGNED, which is
+      // honest — the work is not finished.
+      if (result.uploaded || result.skipped) {
+        const current = await context.workflow.currentStatus(record.engagementId);
+        if (current === 'SIGNED') {
+          await context.workflow.transition({
+            engagementId: record.engagementId,
+            to: 'COMPLETE',
+            reason: result.uploaded
+              ? 'Signed document recorded outside the application and filed into Karbon'
+              : `Signed document recorded outside the application; not filed (${result.messages.join(' ')})`,
+            correlationId: job.correlationId,
+          });
+        }
+      }
+
+      return { ...result };
+    },
+
     RETRIEVE_SIGNED_DOCUMENTS: async ({ job }) => {
       const agreementId = requireString(job.payload, 'agreementId');
       const { adobeSign, karbon } = await context.providers();

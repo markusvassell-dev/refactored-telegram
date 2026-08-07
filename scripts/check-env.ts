@@ -1,4 +1,9 @@
-import { describeBootstrapAddressProblem, describeEntraConfigurationProblem, loadEnv } from '@element/shared';
+import {
+  describeBootstrapAddressProblem,
+  describeEntraConfigurationProblem,
+  inspectStorageDurability,
+  loadEnv,
+} from '@element/shared';
 
 /**
  * Pre-flight environment check.
@@ -55,6 +60,17 @@ try {
         process.stderr.write(`WARNING: BOOTSTRAP_ADMIN_EMAILS entry "${address}" ${problem}\n`);
       }
     }
+  }
+
+  // "Attach a volume" is a line in the deployment guide, and a line in a guide
+  // is exactly what gets skipped. Without one, every generated draft and every
+  // signed document not yet filed into Karbon is destroyed on the next deploy
+  // — on a schedule nobody thinks of as a schedule, and with nothing reporting
+  // it. Checked on every boot instead.
+  const storage = await inspectStorageDurability(env.DOCUMENT_STORAGE_DIRECTORY);
+  process.stdout.write(`      document storage         ${storage.durability.toLowerCase()}\n`);
+  if (storage.durability === 'EPHEMERAL') {
+    process.stderr.write(`\nWARNING: ${storage.detail}\n`);
   }
 
   // A placeholder is a valid string and a valid URL, so the schema has no

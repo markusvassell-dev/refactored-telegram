@@ -1,4 +1,4 @@
-import { env } from '@element/shared';
+import { env, inspectStorageDurability } from '@element/shared';
 import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
 import { PageHeader } from '@/components/shell';
@@ -12,9 +12,12 @@ export default async function SettingsPage() {
   const csrfToken = (await sessionCsrfToken()) ?? '';
   const configuration = env();
 
-  const [state, settings] = await Promise.all([
+  const [state, settings, storage] = await Promise.all([
     container.testModeState(),
     container.prisma.systemSetting.findMany({ orderBy: { key: 'asc' } }),
+    // The deploy log said this too, once, and then scrolled away. Somebody
+    // wondering where a document went needs to be able to find out now.
+    inspectStorageDurability(configuration.DOCUMENT_STORAGE_DIRECTORY),
   ]);
 
   const isAdministrator = user.roles.includes('ADMINISTRATOR');
@@ -25,6 +28,22 @@ export default async function SettingsPage() {
         title="Settings"
         description="Test Mode defaults to on. Production sending must be armed separately, by an administrator, and only when Test Mode is off."
       />
+
+      {storage.durability === 'EPHEMERAL' ? (
+        <div
+          role="note"
+          className="mb-6 rounded border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900"
+        >
+          <p>
+            <strong className="font-semibold">Stored documents will not survive the next deploy.</strong>{' '}
+            {storage.detail}
+          </p>
+          <p className="mt-2">
+            The signed engagement letters recorded in this application are the ones that matter here: until the Karbon
+            filing job has run, a signed letter exists in no other place.
+          </p>
+        </div>
+      ) : null}
 
       <section className="card mb-6">
         <div className="card-header"><h2 className="text-base font-semibold">Test Mode</h2></div>

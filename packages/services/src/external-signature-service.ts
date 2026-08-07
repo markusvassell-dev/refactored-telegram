@@ -1,8 +1,20 @@
 import type { ExternalSignatureMethod, PrismaClient } from '@element/database';
 import type { AuditLogger } from '@element/audit';
+import type { KarbonProvider } from '@element/integrations';
 import { countPdfPages, isPdf } from '@element/documents';
 import { assertGate, evaluateExternalSignatureGate, type GateResult } from '@element/workflows';
-import { ValidationError, assertCan, sha256Hex, type Logger, type Principal } from '@element/shared';
+import {
+  NotFoundError,
+  PreconditionError,
+  ValidationError,
+  assertCan,
+  buildFileName,
+  karbonCommentIdempotencyKey,
+  karbonUploadIdempotencyKey,
+  sha256Hex,
+  type Logger,
+  type Principal,
+} from '@element/shared';
 import type { DocumentStore } from './storage.js';
 import type { WorkflowService } from './workflow-service.js';
 import type { NotificationService } from './notification-service.js';
@@ -261,6 +273,166 @@ export class ExternalSignatureService {
       warnings: gate.warnings,
       duplicate: false,
     };
+  }
+
+  /**
+   * Files the signed document into Karbon.
+   *
+   * Until this existed the evidence lived in one place: this application's own
+   * document store, which on a container platform is reclaimed on the next
+   * deploy unless a volume happens to be attached. The signed engagement letter
+   * is the document that proves a client agreed to a fee, and it was the only
+   * thing in the system with no copy anywhere else — the Adobe path has always
+   * returned its signed PDF and certificate to Karbon, and the manual path
+   * returned nothing.
+   *
+   * Karbon remains the system of record. This makes that true for a signature
+   * recorded by hand as well.
+   */
+  async fileToKarbon(input: {
+    externalSignatureId: string;
+    karbon: KarbonProvider;
+    correlationId: string;
+  }): Promise<{ uploaded: boolean; skipped: boolean; messages: string[] }> {
+    const record = await this.deps.prisma.externalSignature.findUnique({
+      where: { id: input.externalSignatureId },
+      include: {
+        engagement: { include: { client: true, karbonWorkItem: true } },
+        documentVersion: true,
+        signers: true,
+        recorder: true,
+      },
+    });
+
+    if (!record) throw new NotFoundError(`External signature ${input.externalSignatureId}`);
+
+    // The signature must belong to the engagement it claims to. Same check the
+    // Adobe path makes, for the same reason: an upload is written to a client's
+    // permanent file and cannot be taken back.
+    if (record.documentVersion.engagementId !== record.engagementId) {
+      throw new PreconditionError('The signature does not belong to this engagement. Nothing was uploaded.');
+    }
+
+    // Already filed. Re-running must not produce a second copy of a signed
+    // document in a client's file.
+    if (record.karbonDocumentId) {
+      return { uploaded: false, skipped: true, messages: ['This signature is already filed in Karbon.'] };
+    }
+
+    const workItemKey = record.engagement.karbonWorkItem?.karbonKey;
+    if (!workItemKey) {
+      return {
+        uploaded: false,
+        skipped: true,
+        messages: ['This engagement has no linked Karbon work item, so the signed document was not uploaded.'],
+      };
+    }
+
+    const content = await this.deps.store.get(record.evidenceReference);
+
+    // The same naming as an Adobe-signed letter, because that is what it is —
+    // the firm's filing convention should not fork on how the signature was
+    // collected. Where it was collected is recorded in the note below, and
+    // permanently in this application.
+    const fileName = buildFileName({
+      year: record.engagement.taxYear,
+      documentType: record.documentVersion.documentType,
+      clientLegalName: record.engagement.client.legalName,
+      role: 'SIGNED_PDF',
+      testMode: record.engagement.isTestMode,
+    });
+
+    const idempotencyKey = karbonUploadIdempotencyKey({
+      karbonWorkItemKey: workItemKey,
+      documentVersionId: record.documentVersionId,
+      fileRole: 'SIGNED_PDF',
+    });
+
+    const upload = await input.karbon.uploadDocument({
+      workItemKey,
+      fileName,
+      content,
+      mimeType: 'application/pdf',
+      idempotencyKey,
+      // A signed document is never overwritten. If Adobe already filed one for
+      // this version, that one stands.
+      neverOverwrite: true,
+    });
+
+    const messages: string[] = [];
+    if (upload.message) messages.push(upload.message);
+
+    if (upload.outcome === 'SUCCEEDED' && upload.objectId) {
+      await this.deps.prisma.externalSignature.update({
+        where: { id: record.id },
+        data: { karbonDocumentId: upload.objectId },
+      });
+    }
+
+    await this.deps.prisma.karbonActivity
+      .create({
+        data: {
+          engagementId: record.engagementId,
+          documentVersionId: record.documentVersionId,
+          karbonWorkItemKey: workItemKey,
+          type: 'DOCUMENT_UPLOAD',
+          outcome:
+            upload.outcome === 'SUCCEEDED'
+              ? 'SUCCEEDED'
+              : upload.outcome === 'SKIPPED_TEST_MODE'
+                ? 'SKIPPED_TEST_MODE'
+                : 'SKIPPED_UNSUPPORTED',
+          idempotencyKey,
+          karbonObjectId: upload.objectId ?? null,
+          requestSummary: { fileRole: 'SIGNED_PDF', signedOutsideApplication: true } as never,
+          correlationId: input.correlationId,
+        },
+      })
+      .catch(() => undefined); // The unique idempotency key makes this a no-op on retry.
+
+    // Somebody working in Karbon sees a signed letter that looks like any
+    // other. The note is the only thing telling them it carries no Adobe
+    // certificate. Best-effort: a failed note must never fail the filing, and
+    // it is a note for a human, never a trigger for anything.
+    if (upload.outcome === 'SUCCEEDED') {
+      const signedBy = record.signers.map((signer) => signer.fullLegalName).join(', ');
+      await input.karbon
+        .addComment({
+          workItemKey,
+          body: [
+            `Signed engagement letter filed. Signed on ${record.signedOn.toISOString().slice(0, 10)} by ${signedBy || 'the client'}.`,
+            `Obtained outside Element Engagements (${record.method.replace(/_/g, ' ').toLowerCase()}), so there is no Adobe Sign certificate for it.`,
+            `Recorded in Element Engagements by ${record.recorder?.displayName ?? 'a former user'}.`,
+          ].join(' '),
+          idempotencyKey: karbonCommentIdempotencyKey({
+            karbonWorkItemKey: workItemKey,
+            documentVersionId: record.documentVersionId,
+            kind: 'external_signature_filed',
+          }),
+        })
+        .catch((error: unknown) => {
+          this.deps.logger.warn('Filed the signed document but could not add the Karbon note', {
+            externalSignatureId: record.id,
+            reason: error instanceof Error ? error.message : String(error),
+          });
+        });
+    }
+
+    await this.deps.audit.record({
+      eventType: 'KARBON_UPLOAD',
+      objectType: 'ExternalSignature',
+      objectId: record.id,
+      engagementId: record.engagementId,
+      correlationId: input.correlationId,
+      afterValue: {
+        outcome: upload.outcome,
+        fileName,
+        karbonDocumentId: upload.objectId ?? null,
+        evidenceHash: record.evidenceHash,
+      },
+    });
+
+    return { uploaded: upload.outcome === 'SUCCEEDED', skipped: false, messages };
   }
 
   /**

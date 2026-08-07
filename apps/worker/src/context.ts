@@ -17,6 +17,7 @@ import {
   PreparationService,
   PricingService,
   SettingsService,
+  ExternalSignatureService,
   SigningService,
   SourceDocumentService,
   WorkflowService,
@@ -53,6 +54,7 @@ export interface WorkerContext {
   generation: GenerationService;
   approvals: ApprovalService;
   signing: SigningService;
+  externalSignature: ExternalSignatureService;
   coverLetters: CoverLetterService;
   coverLetterNarratives: CoverLetterNarrativeService;
   notifications: KarbonNotificationService;
@@ -105,6 +107,14 @@ export function buildWorkerContext(): WorkerContext {
   const approvals = new ApprovalService({ prisma, audit, workflow, settings });
   const userNotifications = new NotificationService({ prisma });
   const signing = new SigningService({ notifications: userNotifications, prisma, audit, store, workflow, settings, logger });
+  const externalSignature = new ExternalSignatureService({
+    notifications: userNotifications,
+    prisma,
+    audit,
+    store,
+    workflow,
+    logger,
+  });
   const coverLetters = new CoverLetterService({
     prisma,
     audit,
@@ -153,6 +163,7 @@ export function buildWorkerContext(): WorkerContext {
     generation,
     approvals,
     signing,
+    externalSignature,
     coverLetters,
     coverLetterNarratives,
     notifications,

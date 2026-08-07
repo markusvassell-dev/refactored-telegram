@@ -8,6 +8,7 @@ import {
   NotificationService,
   WorkflowService,
 } from '@element/services';
+import { BlockedKarbonProvider, MockKarbonProvider } from '@element/integrations';
 import { createLogger, PermissionError, PreconditionError, type Principal } from '@element/shared';
 
 /**
@@ -71,12 +72,22 @@ async function makeUser(email: string, roles: Principal['roles']): Promise<Princ
  * an API the firm cannot call.
  */
 async function readyToSendEngagement(
-  options: { signers?: number; engagementType?: 'T2' | 'T1_JOINT' } = {},
-): Promise<{ engagementId: string; documentVersionId: string; participantIds: string[] }> {
+  options: { signers?: number; engagementType?: 'T2' | 'T1_JOINT'; karbonWorkItem?: boolean } = {},
+): Promise<{ engagementId: string; documentVersionId: string; participantIds: string[]; workItemKey: string | null }> {
   const client = await prisma.client.create({
     data: { legalName: `External Signature Co ${randomUUID().slice(0, 8)}`, isTestFixture: true },
   });
   clientIds.push(client.id);
+
+  let workItemKey: string | null = null;
+  let karbonWorkItemId: string | null = null;
+  if (options.karbonWorkItem) {
+    workItemKey = `wi-${randomUUID().slice(0, 8)}`;
+    const item = await prisma.karbonWorkItem.create({
+      data: { karbonKey: workItemKey, title: 'Year-end review', taxYear: TAX_YEAR },
+    });
+    karbonWorkItemId = item.id;
+  }
 
   const engagement = await prisma.engagement.create({
     data: {
@@ -86,6 +97,7 @@ async function readyToSendEngagement(
       status: 'NOT_STARTED',
       assignedPreparerId: preparer.id,
       finalApproverId: approver.id,
+      karbonWorkItemId,
     },
   });
 
@@ -136,7 +148,7 @@ async function readyToSendEngagement(
     participantIds.push(participant.id);
   }
 
-  return { engagementId: engagement.id, documentVersionId: version.id, participantIds };
+  return { engagementId: engagement.id, documentVersionId: version.id, participantIds, workItemKey };
 }
 
 function recordInput(fixture: Awaited<ReturnType<typeof readyToSendEngagement>>, overrides: Record<string, unknown> = {}) {
@@ -354,5 +366,165 @@ describe('what the database itself refuses', () => {
         data: { karbonDocumentId: 'karbon-doc-1' },
       }),
     ).resolves.toMatchObject({ karbonDocumentId: 'karbon-doc-1' });
+  });
+});
+
+describe('filing the signed document into Karbon', () => {
+  /**
+   * Why this exists at all: until it did, the signed engagement letter lived in
+   * exactly one place — this application's own document store, which on a
+   * container platform is reclaimed on the next deploy unless a volume happens
+   * to be attached. The Adobe path has always returned its signed PDF to
+   * Karbon. The manual path returned nothing, so the one document proving a
+   * client agreed to a fee was the one document with no second copy.
+   */
+  it('uploads the evidence and remembers where it went', async () => {
+    const fixture = await readyToSendEngagement({ karbonWorkItem: true });
+    await service.record(recordInput(fixture));
+
+    const karbon = new MockKarbonProvider();
+    const result = await service.fileToKarbon({
+      externalSignatureId: (await prisma.externalSignature.findFirstOrThrow({
+        where: { engagementId: fixture.engagementId },
+      })).id,
+      karbon,
+      correlationId: 'test-correlation',
+    });
+
+    expect(result.uploaded).toBe(true);
+
+    const upload = karbon.calls.find((call) => call.operation === 'uploadDocument');
+    expect(upload).toBeDefined();
+    expect((upload!.payload as { workItemKey: string }).workItemKey).toBe(fixture.workItemKey);
+
+    // The application knows where the copy is, so a later reader can find it.
+    const signature = await prisma.externalSignature.findFirstOrThrow({
+      where: { engagementId: fixture.engagementId },
+    });
+    expect(signature.karbonDocumentId).toBeTruthy();
+  });
+
+  it('files it under the ordinary signed-letter name the firm already uses', async () => {
+    // The filing convention must not fork on how the signature was collected.
+    // Where it came from is recorded in the note and permanently in this
+    // application; the file itself is simply the signed letter.
+    const fixture = await readyToSendEngagement({ karbonWorkItem: true });
+    await service.record(recordInput(fixture));
+
+    const karbon = new MockKarbonProvider();
+    await service.fileToKarbon({
+      externalSignatureId: (await prisma.externalSignature.findFirstOrThrow({
+        where: { engagementId: fixture.engagementId },
+      })).id,
+      karbon,
+      correlationId: 'test-correlation',
+    });
+
+    const upload = karbon.calls.find((call) => call.operation === 'uploadDocument');
+    expect((upload!.payload as { fileName: string }).fileName).toMatch(/SIGNED/);
+  });
+
+  it('leaves a note saying there is no Adobe certificate behind it', async () => {
+    // Somebody working in Karbon sees a signed letter that looks like any
+    // other. The note is the only thing telling them otherwise.
+    const fixture = await readyToSendEngagement({ karbonWorkItem: true });
+    await service.record(recordInput(fixture));
+
+    const karbon = new MockKarbonProvider();
+    await service.fileToKarbon({
+      externalSignatureId: (await prisma.externalSignature.findFirstOrThrow({
+        where: { engagementId: fixture.engagementId },
+      })).id,
+      karbon,
+      correlationId: 'test-correlation',
+    });
+
+    const comment = karbon.calls.find((call) => call.operation === 'addComment');
+    expect(comment).toBeDefined();
+    const body = (comment!.payload as { body: string }).body;
+    expect(body).toMatch(/no Adobe Sign certificate/i);
+    expect(body).toMatch(/Signer 1/);
+  });
+
+  it('does not file a second copy when run again', async () => {
+    // A retry, a redeploy or an impatient click must never put two signed
+    // documents in a client's permanent file.
+    const fixture = await readyToSendEngagement({ karbonWorkItem: true });
+    await service.record(recordInput(fixture));
+    const signatureId = (
+      await prisma.externalSignature.findFirstOrThrow({ where: { engagementId: fixture.engagementId } })
+    ).id;
+
+    const karbon = new MockKarbonProvider();
+    await service.fileToKarbon({ externalSignatureId: signatureId, karbon, correlationId: 'c1' });
+    const second = await service.fileToKarbon({ externalSignatureId: signatureId, karbon, correlationId: 'c2' });
+
+    expect(second.skipped).toBe(true);
+    expect(karbon.calls.filter((call) => call.operation === 'uploadDocument')).toHaveLength(1);
+  });
+
+  it('says plainly when there is no work item to file against', async () => {
+    // Not an error. An engagement that was never linked to Karbon has nowhere
+    // for the document to go, and pretending otherwise would hide it.
+    const fixture = await readyToSendEngagement();
+    await service.record(recordInput(fixture));
+
+    const karbon = new MockKarbonProvider();
+    const result = await service.fileToKarbon({
+      externalSignatureId: (await prisma.externalSignature.findFirstOrThrow({
+        where: { engagementId: fixture.engagementId },
+      })).id,
+      karbon,
+      correlationId: 'test-correlation',
+    });
+
+    expect(result.uploaded).toBe(false);
+    expect(result.skipped).toBe(true);
+    expect(result.messages.join(' ')).toMatch(/no linked Karbon work item/i);
+    expect(karbon.calls.filter((call) => call.operation === 'uploadDocument')).toHaveLength(0);
+  });
+
+  it('writes nothing to a real tenant when the adapter is blocked', async () => {
+    // Test Mode is structural: the blocked adapter is what is handed in, so
+    // there is no code path that could reach a production Karbon tenant.
+    const fixture = await readyToSendEngagement({ karbonWorkItem: true });
+    await service.record(recordInput(fixture));
+
+    const result = await service.fileToKarbon({
+      externalSignatureId: (await prisma.externalSignature.findFirstOrThrow({
+        where: { engagementId: fixture.engagementId },
+      })).id,
+      karbon: new BlockedKarbonProvider('Test Mode is on'),
+      correlationId: 'test-correlation',
+    });
+
+    expect(result.uploaded).toBe(false);
+
+    // And nothing is recorded as filed, so a later run will try again once the
+    // adapter is real.
+    const signature = await prisma.externalSignature.findFirstOrThrow({
+      where: { engagementId: fixture.engagementId },
+    });
+    expect(signature.karbonDocumentId).toBeNull();
+  });
+
+  it('records the attempt in the Karbon activity trail either way', async () => {
+    const fixture = await readyToSendEngagement({ karbonWorkItem: true });
+    await service.record(recordInput(fixture));
+
+    const karbon = new MockKarbonProvider();
+    await service.fileToKarbon({
+      externalSignatureId: (await prisma.externalSignature.findFirstOrThrow({
+        where: { engagementId: fixture.engagementId },
+      })).id,
+      karbon,
+      correlationId: 'test-correlation',
+    });
+
+    const activity = await prisma.karbonActivity.findFirstOrThrow({
+      where: { engagementId: fixture.engagementId, type: 'DOCUMENT_UPLOAD' },
+    });
+    expect(activity.outcome).toBe('SUCCEEDED');
+    expect(activity.karbonWorkItemKey).toBe(fixture.workItemKey);
   });
 });
