@@ -13,6 +13,7 @@ import {
   GenerationService,
   JobQueue,
   KarbonNotificationService,
+  NotificationService,
   PreparationService,
   PricingService,
   SettingsService,
@@ -102,7 +103,8 @@ export function buildWorkerContext(): WorkerContext {
 
   const sourceDocuments = new SourceDocumentService({ prisma, audit, store });
   const approvals = new ApprovalService({ prisma, audit, workflow, settings });
-  const signing = new SigningService({ prisma, audit, store, workflow, settings, logger });
+  const userNotifications = new NotificationService({ prisma });
+  const signing = new SigningService({ notifications: userNotifications, prisma, audit, store, workflow, settings, logger });
   const coverLetters = new CoverLetterService({
     prisma,
     audit,

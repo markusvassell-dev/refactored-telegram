@@ -687,7 +687,21 @@ Each was fixed in the code, not the test:
     token's own user, which is what lets the integration work with `:self`
     scopes rather than the `:account` scopes only an account administrator can
     approve.
-62. Activating a draft template was a decision made on a file name and a hash.
+62. **Nothing told anybody anything.** A client signed, the engagement
+    advanced, the signed PDF and its certificate were filed into Karbon, the
+    audit trail recorded all of it — and no human was told. The first anyone
+    knew was the next time they happened to open the page. Notifications now
+    reach the preparer, reviewer and final approver on signature, decline and
+    expiry.
+63. Written for that change and caught by its own test: the notification's
+    event type was derived from the vendor's word for the outcome
+    (`SIGNING_${status}`). Adobe says both `SIGNED` and `COMPLETED` for a
+    letter that has been signed, so those became two different kinds of news —
+    deduplication could not see one as the other, and a reconciliation poll
+    reporting `COMPLETED` after a webhook reported `SIGNED` would have told
+    everybody twice about one signature. The event type is now the meaning, not
+    the vendor's word.
+64. Activating a draft template was a decision made on a file name and a hash.
     The second administrator — required to be a different person precisely
     because a template version is a wording change to every future engagement
     at once — had no way to read the wording they were approving. Every version

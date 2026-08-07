@@ -17,7 +17,7 @@ import {
 import { factToken, type IntegrationProviderKey } from '@element/services';
 import type { FeeRuleLevel } from '@element/database';
 import { container } from '@/lib/container';
-import { assertCsrf, requirePermission, requestContext } from '@/lib/session';
+import { assertCsrf, requirePermission, requireUser, requestContext } from '@/lib/session';
 
 /**
  * Server actions.
@@ -1368,5 +1368,35 @@ export async function saveFeeRule(formData: FormData): Promise<ActionResult> {
     }
 
     return parts.join(' ');
+  });
+}
+
+/**
+ * Clearing a notification.
+ *
+ * Scoped to the reader in the service, not merely here: a notification id is
+ * not a capability, and one person must not be able to clear another's list by
+ * guessing one.
+ */
+export async function markNotificationRead(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requireUser();
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const notificationId = formData.get('notificationId')?.toString();
+    if (!notificationId) throw new ValidationError('A notification is required.');
+
+    await container.userNotifications.markRead(notificationId, actor.id);
+    revalidatePath('/notifications');
+    return { ok: true, message: 'Marked read.' };
+  });
+}
+
+export async function markAllNotificationsRead(): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requireUser();
+    const { cleared } = await container.userNotifications.markAllRead(actor.id);
+    revalidatePath('/notifications');
+    return { ok: true, message: cleared === 0 ? 'Nothing was unread.' : `Marked ${cleared} read.` };
   });
 }

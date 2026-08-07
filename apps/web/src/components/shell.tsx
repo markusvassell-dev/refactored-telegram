@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import type { Principal } from '@element/shared';
+import { UNREAD_BADGE_CEILING } from '@element/services';
 import { navigationFor } from '@/lib/navigation';
 
 /**
@@ -35,11 +36,13 @@ export function Shell({
   productName,
   banner,
   children,
+  unreadNotifications = 0,
 }: {
   user: Principal | null;
   productName: string;
   banner: string | null;
   children: ReactNode;
+  unreadNotifications?: number;
 }): ReactNode {
   return (
     <div className="min-h-screen">
@@ -81,6 +84,25 @@ export function Shell({
             <div className="text-sm">
               {user ? (
                 <div className="flex items-center gap-3">
+                  {/* A count nobody has to go looking for. Past the ceiling the
+                      exact number stops being useful, so it stops counting. */}
+                  <Link
+                    href="/notifications"
+                    className={
+                      unreadNotifications > 0
+                        ? 'rounded-full bg-brand-100 px-3 py-1 text-xs font-semibold text-brand-800 hover:bg-brand-200'
+                        : 'text-xs text-slate-500 hover:text-slate-700'
+                    }
+                    aria-label={
+                      unreadNotifications > 0
+                        ? `Notifications, ${unreadNotifications > UNREAD_BADGE_CEILING ? `more than ${UNREAD_BADGE_CEILING}` : unreadNotifications} unread`
+                        : 'Notifications, none unread'
+                    }
+                  >
+                    {unreadNotifications > 0
+                      ? `${unreadNotifications > UNREAD_BADGE_CEILING ? `${UNREAD_BADGE_CEILING}+` : unreadNotifications} new`
+                      : 'Notifications'}
+                  </Link>
                   <span className="text-slate-700">
                     {user.displayName}
                     {/* Rendered even when empty. A signed-in user holding no

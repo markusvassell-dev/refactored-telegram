@@ -23,3 +23,4 @@ export * from './engagement-service.js';
 export * from './source-document-service.js';
 export * from './date-rule-service.js';
 export * from './fee-rule-service.js';
+export * from './notification-service.js';

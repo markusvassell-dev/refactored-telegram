@@ -34,6 +34,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: '/date-rules', label: 'Date Rules', description: 'Deadline calculation' },
   { href: '/integrations', label: 'Integrations', description: 'Karbon and Adobe Sign' },
   { href: '/users', label: 'Users and Roles', description: 'Access control' },
+  { href: '/notifications', label: 'Notifications', description: 'Addressed to you' },
   { href: '/audit-log', label: 'Audit Log', description: 'Immutable history', permission: 'audit:view' },
   { href: '/system-jobs', label: 'System Jobs', description: 'Background processing' },
   { href: '/settings', label: 'Settings', description: 'System configuration' },

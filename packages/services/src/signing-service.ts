@@ -1,6 +1,6 @@
 import { isUniqueConstraintError, type Prisma, type PrismaClient } from '@element/database';
 import type { AuditLogger } from '@element/audit';
-import type { AdobeSignProvider, AgreementState, KarbonProvider } from '@element/integrations';
+import type { AdobeSignProvider, AgreementState, AgreementStatus, KarbonProvider } from '@element/integrations';
 import { DEFAULT_AGREEMENT_SETTINGS } from '@element/integrations';
 import {
   NotFoundError,
@@ -16,6 +16,7 @@ import {
 import { evaluateSendGate, type GateResult } from '@element/workflows';
 import type { DocumentStore } from './storage.js';
 import type { WorkflowService } from './workflow-service.js';
+import type { NotificationService } from './notification-service.js';
 import type { SettingsService } from './settings.js';
 
 /**
@@ -34,6 +35,7 @@ export interface SigningServiceDeps {
   workflow: WorkflowService;
   settings: SettingsService;
   logger: Logger;
+  notifications: NotificationService;
 }
 
 export interface SendForSignatureInput {
@@ -315,6 +317,10 @@ export class SigningService {
           reason: `Adobe Sign reported ${state.status}`,
           correlationId,
         });
+
+        // Only on the transition, so the reconciliation poll re-observing a
+        // signature it already saw does not announce it twice.
+        await this.announce(record.engagementId, state.status);
       }
     }
 
@@ -329,6 +335,83 @@ export class SigningService {
         signers: state.signers.map((signer) => ({ email: signer.email, status: signer.status })),
       },
     });
+  }
+
+
+  /**
+   * Tells the people responsible for an engagement that its signing state
+   * changed in a way they would want to know about.
+   *
+   * Silence was the previous behaviour: the client signed, the documents were
+   * filed, the audit trail recorded it, and the first a human knew was the next
+   * time somebody opened the engagement. A declined or expired agreement was
+   * worse — that is work that has stopped, and nothing said so.
+   *
+   * Failing to notify never fails the signing. A notice is a courtesy on top of
+   * the record; losing one must not roll back a signature that genuinely
+   * happened.
+   */
+  private async announce(engagementId: string, status: AgreementStatus): Promise<void> {
+    // Keyed on the vendor's word, but the event type is the *meaning*. Adobe
+    // says both SIGNED and COMPLETED for a letter that has been signed, and
+    // deriving the event type from the vendor's word (`SIGNING_${status}`)
+    // made those two different kinds of news: deduplication could not see one
+    // as the other, so a poll reporting COMPLETED after a webhook reported
+    // SIGNED told everybody a second time about one signature.
+    const signed = {
+      eventType: 'SIGNING_SIGNED',
+      title: 'Engagement letter signed',
+      body: 'The client has signed. The signed document and its certificate are being filed into Karbon.',
+    };
+
+    const announcements: Partial<Record<AgreementStatus, { eventType: string; title: string; body: string }>> = {
+      SIGNED: signed,
+      COMPLETED: signed,
+      DECLINED: {
+        eventType: 'SIGNING_DECLINED',
+        title: 'Engagement letter declined',
+        body: 'The client declined to sign. Nothing further happens automatically — this needs somebody to decide what to do.',
+      },
+      EXPIRED: {
+        eventType: 'SIGNING_EXPIRED',
+        title: 'Engagement letter expired',
+        body: 'The signature request expired before the client signed. It is not resent automatically.',
+      },
+    };
+
+    const announcement = announcements[status];
+    if (!announcement) return;
+
+    try {
+      const engagement = await this.deps.prisma.engagement.findUnique({
+        where: { id: engagementId },
+        select: {
+          assignedPreparerId: true,
+          assignedReviewerId: true,
+          finalApproverId: true,
+          taxYear: true,
+          engagementType: true,
+          client: { select: { legalName: true } },
+        },
+      });
+      if (!engagement) return;
+
+      await this.deps.notifications.notify({
+        userIds: [engagement.assignedPreparerId, engagement.assignedReviewerId, engagement.finalApproverId],
+        eventType: announcement.eventType,
+        title: `${announcement.title}: ${engagement.client.legalName}`,
+        body: `${engagement.engagementType} ${engagement.taxYear}. ${announcement.body}`,
+        link: `/engagements/${engagementId}`,
+        engagementId,
+        deduplicate: true,
+      });
+    } catch (error) {
+      this.deps.logger.error('Could not raise a signing notification', {
+        engagementId,
+        status,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**

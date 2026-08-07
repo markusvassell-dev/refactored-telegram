@@ -11,6 +11,7 @@ import {
   GenerationService,
   JobQueue,
   KarbonNotificationService,
+  NotificationService,
   PricingService,
   SettingsService,
   SigningService,
@@ -45,7 +46,8 @@ const templateDirectory = `${process.cwd()}/templates/normalized`;
 
 const generation = new GenerationService({ prisma, audit, store, pdfConverter, workflow, logger, templateDirectory });
 const approvals = new ApprovalService({ prisma, audit, workflow, settings });
-const signing = new SigningService({ prisma, audit, store, workflow, settings, logger });
+const userNotifications = new NotificationService({ prisma });
+const signing = new SigningService({ notifications: userNotifications, prisma, audit, store, workflow, settings, logger });
 const coverLetters = new CoverLetterService({
   prisma,
   audit,
@@ -386,6 +388,25 @@ describe('T2 with compilation selected', () => {
 
     const afterSigning = await prisma.engagement.findUniqueOrThrow({ where: { id: engagement.id } });
     expect(afterSigning.status).toBe('SIGNED');
+
+    // Somebody is told. The application used to advance the engagement, file
+    // the documents and write the audit trail in complete silence, so the first
+    // a human knew was the next time they opened the page.
+    const told = await prisma.notification.findMany({
+      where: { engagementId: engagement.id, eventType: 'SIGNING_SIGNED' },
+    });
+    expect(told.length).toBeGreaterThan(0);
+    expect(told[0]?.title).toMatch(/signed/i);
+    expect(told[0]?.link).toBe(`/engagements/${engagement.id}`);
+    expect(told.every((notice) => notice.readAt === null)).toBe(true);
+
+    // The reconciliation poll re-reads the same agreement on a schedule. Seeing
+    // the same signature again must not produce a second notice.
+    await signing.applyAgreementState(sent.agreementId, state!, 'test-correlation');
+    const afterSecondObservation = await prisma.notification.count({
+      where: { engagementId: engagement.id, eventType: 'SIGNING_SIGNED' },
+    });
+    expect(afterSecondObservation).toBe(told.length);
 
     const returned = await signing.returnSignedDocumentsToKarbon({
       agreementId: sent.agreementId,

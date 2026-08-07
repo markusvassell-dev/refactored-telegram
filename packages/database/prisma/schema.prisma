@@ -287,6 +287,7 @@ model User {
   updatedAt     DateTime  @updatedAt
 
   userRoles             UserRole[]
+  notifications         Notification[]
   preparerEngagements   Engagement[]           @relation("EngagementPreparer")
   reviewerEngagements   Engagement[]           @relation("EngagementReviewer")
   approverEngagements   Engagement[]           @relation("EngagementFinalApprover")
@@ -447,6 +448,7 @@ model Engagement {
   finalApprover       User?            @relation("EngagementFinalApprover", fields: [finalApproverId], references: [id], onDelete: SetNull)
 
   participants      EngagementParticipant[]
+  notifications     Notification[]
   sourceDocuments   SourceDocument[]
   documentVersions  DocumentVersion[]
   extractedFields   ExtractedField[]
@@ -1327,4 +1329,37 @@ model WorkflowTransition {
 
   @@id([fromStatus, toStatus])
   @@map("workflow_transition")
+}
+
+/// Something a person needs to know about, addressed to one person.
+///
+/// The application previously changed state silently: a client signed, the
+/// engagement advanced, documents were filed, and nobody was told. Work that
+/// nobody is told about is work that waits until somebody happens to look.
+///
+/// Deliberately per-recipient rather than per-event. Three people may care that
+/// a letter was signed and each reads it at a different time, so "read" belongs
+/// to the person, not to the thing that happened.
+model Notification {
+  id           String    @id @default(uuid())
+  /// Who is being told.
+  userId       String
+  /// What happened, for filtering and for the icon.
+  eventType    String
+  title        String
+  body         String
+  /// Where to go to act on it. Relative to this application.
+  link         String?
+  /// The engagement it concerns, when it concerns one.
+  engagementId String?
+  /// Null until the recipient has seen it.
+  readAt       DateTime?
+  createdAt    DateTime  @default(now())
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  engagement Engagement? @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  /// The unread list, newest first, is the query this table exists to serve.
+  @@index([userId, readAt, createdAt])
+  @@map("notification")
 }

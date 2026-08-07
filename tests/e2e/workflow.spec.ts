@@ -724,6 +724,57 @@ test.describe('managing roles', () => {
   });
 });
 
+test.describe('being told what happened', () => {
+  test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
+
+  test('shows a notice addressed to you, and clearing it is personal', async ({ page }, testInfo) => {
+    // The application used to change state in silence — a client signed, the
+    // engagement advanced, documents were filed, and the first a human knew
+    // was the next time they opened the page.
+    const environment = environmentFor(testInfo);
+    const prisma = clientFor(environment);
+
+    let noticeId: string;
+    try {
+      const viewer = await prisma.user.findFirstOrThrow({ where: { displayName: { contains: 'Administrator' } } });
+      const notice = await prisma.notification.create({
+        data: {
+          userId: viewer.id,
+          eventType: 'SIGNING_SIGNED',
+          title: 'Engagement letter signed: E2E Sample Client',
+          body: 'The client has signed.',
+          link: '/engagements',
+        },
+      });
+      noticeId = notice.id;
+    } finally {
+      await prisma.$disconnect();
+    }
+
+    await signIn(page, /Administrator/);
+
+    // The count is on every page, so nobody has to go looking for it.
+    const badge = page.getByRole('link', { name: /unread/i });
+    await expect(badge).toBeVisible();
+
+    await badge.click();
+    await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible();
+    await expect(page.getByText('Engagement letter signed: E2E Sample Client')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Mark read' }).first().click();
+    await expect(page.getByRole('link', { name: /none unread/i })).toBeVisible();
+
+    const after = clientFor(environment);
+    try {
+      const read = await after.notification.findUniqueOrThrow({ where: { id: noticeId } });
+      expect(read.readAt).not.toBeNull();
+      await after.notification.delete({ where: { id: noticeId } });
+    } finally {
+      await after.$disconnect();
+    }
+  });
+});
+
 test.describe('reading a template', () => {
   test.skip(Boolean(process.env.E2E_BASE_URL), 'Needs the database this run manages.');
 

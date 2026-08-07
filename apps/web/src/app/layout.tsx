@@ -36,10 +36,21 @@ export default async function RootLayout({ children }: { children: ReactNode }):
     container.settings.productName(configuration.APP_NAME).catch(() => configuration.APP_NAME),
   ]);
 
+  // Counted here so the badge appears on every page. Bounded, and tolerant of
+  // an unreachable database for the same reason the rest of this is.
+  const unreadNotifications = user
+    ? await container.userNotifications.unreadCount(user.id).catch(() => 0)
+    : 0;
+
   return (
     <html lang="en">
       <body>
-        <Shell user={user} productName={productBranding(productName).name} banner={state.banner}>
+        <Shell
+          user={user}
+          productName={productBranding(productName).name}
+          banner={state.banner}
+          unreadNotifications={unreadNotifications}
+        >
           {children}
         </Shell>
       </body>
