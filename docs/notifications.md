@@ -45,6 +45,25 @@ environment schema refuses the combination without them, and refuses a sender
 that is not set — there is no safe default mailbox to send a firm's notices
 from.
 
+### Proving it works
+
+```bash
+pnpm verify:email                        # credentials and mailbox only
+pnpm verify:email --to you@yourfirm.ca   # and send one real message
+```
+
+Without this the only way to find out is to wait for a client to sign and
+discover then that the mailbox does not exist or the permission was never
+consented. That is the wrong moment.
+
+The recipient is never defaulted: sending mail is an outbound side effect, and
+who receives it is a decision rather than a convenience.
+
+The health check alone catches the three things that actually go wrong — a
+wrong tenant or an expired secret, a mailbox that does not exist, and a
+`Mail.Send` **application** permission that was never granted or consented. It
+names which, rather than repeating a status code.
+
 ### The permission, and the trap in it
 
 Sign-in uses **delegated** scopes: the application acts as the person signing
@@ -55,8 +74,14 @@ granted with admin consent, and used through the client-credentials flow.
 **That permission lets the application send as any mailbox in the tenant.**
 That is far more than sending firm notices needs.
 
-Restrict it. This client only ever sends from `NOTIFICATION_EMAIL_SENDER`, so
-an Exchange application access policy costs nothing and removes the over-grant:
+Restricting it is a separate, optional step — mail works without it. The policy
+does not enable anything; it limits what the permission can reach. Skipping it
+is a defensible way to get working first, as long as it is a decision rather
+than an oversight: until it is in place, the client secret in the deployment
+can send mail as anybody in the firm.
+
+This client only ever sends from `NOTIFICATION_EMAIL_SENDER`, so the policy
+costs nothing:
 
 This is tenant configuration, not application configuration. It runs in
 **Exchange Online PowerShell**, by somebody holding the Exchange Administrator
