@@ -290,11 +290,29 @@ export class KarbonRestClient implements KarbonProvider {
   }
 
   async listDocuments(scope: { workItemKey?: string; entityKey?: string }): Promise<KarbonDocument[]> {
-    const path = scope.workItemKey
-      ? `/WorkItems/${encodeURIComponent(scope.workItemKey)}/Documents`
-      : `/Contacts/${encodeURIComponent(scope.entityKey ?? '')}/Documents`;
+    let response: { value?: Record<string, unknown>[] } | null;
 
-    const response = await this.request<{ value?: Record<string, unknown>[] } | null>({ path });
+    if (scope.workItemKey) {
+      response = await this.request<{ value?: Record<string, unknown>[] } | null>({
+        path: `/WorkItems/${encodeURIComponent(scope.workItemKey)}/Documents`,
+      });
+    } else {
+      // A client key names an Organization or a Contact, and only Karbon knows
+      // which. Asking `/Contacts` alone answered "no documents" for every
+      // organisation — a 404 on a GET is a legitimate "found nothing", so the
+      // wrong collection is indistinguishable from an empty one. Every
+      // corporate client is an Organization, so the entire client-level
+      // fallback in the prior-year search silently found nothing for T2 work.
+      // Same order as `getClient`, for the same reason.
+      const key = encodeURIComponent(scope.entityKey ?? '');
+      response = await this.request<{ value?: Record<string, unknown>[] } | null>({
+        path: `/Organizations/${key}/Documents`,
+      });
+      response ??= await this.request<{ value?: Record<string, unknown>[] } | null>({
+        path: `/Contacts/${key}/Documents`,
+      });
+    }
+
     return (response?.value ?? []).map((raw) => ({
       documentId: String(raw.DocumentId ?? raw.Id ?? ''),
       fileName: String(raw.FileName ?? raw.Name ?? ''),

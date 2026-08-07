@@ -195,6 +195,60 @@ describe('reading something that is not there', () => {
   });
 });
 
+describe('listing documents filed against a client rather than a work item', () => {
+  /**
+   * A client key names an Organization or a Contact, and only Karbon knows
+   * which. Because a 404 on a GET is a legitimate "found nothing", asking the
+   * wrong collection is indistinguishable from an empty one — so looking only
+   * in `/Contacts` reported "no documents" for every organisation. Every
+   * corporate client is an organisation, which made the client-level half of
+   * the prior-year search silently useless for all T2 work.
+   */
+  it('finds documents filed against an organisation', async () => {
+    const { client, calls } = clientWith([
+      { status: 200, body: { value: [{ DocumentId: 'doc-1', FileName: '2025 Engagement Letter.docx' }] } },
+    ]);
+
+    const documents = await client.listDocuments({ entityKey: 'org-key' });
+
+    expect(documents).toHaveLength(1);
+    expect(documents[0]).toMatchObject({ documentId: 'doc-1', entityKey: 'org-key' });
+    expect(calls[0]!.url).toContain('/Organizations/org-key/Documents');
+  });
+
+  it('falls back to contacts, because an individual client is not an organisation', async () => {
+    const { client, calls } = clientWith([
+      { status: 404 },
+      { status: 200, body: { value: [{ DocumentId: 'doc-2', FileName: '2025 T1 Letter.pdf' }] } },
+    ]);
+
+    const documents = await client.listDocuments({ entityKey: 'contact-key' });
+
+    expect(documents).toHaveLength(1);
+    expect(documents[0]).toMatchObject({ documentId: 'doc-2' });
+    expect(calls.map((call) => call.url)).toEqual([
+      expect.stringContaining('/Organizations/contact-key/Documents'),
+      expect.stringContaining('/Contacts/contact-key/Documents'),
+    ]);
+  });
+
+  it('reports nothing only when both collections say nothing', async () => {
+    const { client, calls } = clientWith([{ status: 404 }, { status: 404 }]);
+
+    await expect(client.listDocuments({ entityKey: 'nowhere' })).resolves.toEqual([]);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('does not go looking in client collections when a work item was named', async () => {
+    const { client, calls } = clientWith([{ status: 200, body: { value: [] } }]);
+
+    await client.listDocuments({ workItemKey: 'wi-1' });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain('/WorkItems/wi-1/Documents');
+  });
+});
+
 describe('being throttled', () => {
   it('waits at least as long as Karbon asked before retrying', async () => {
     const waits: number[] = [];

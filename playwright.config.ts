@@ -89,9 +89,14 @@ export default defineConfig({
           ENTRA_TENANT_ID: '11111111-2222-3333-4444-555555555555',
           ENTRA_CLIENT_ID: '66666666-7777-8888-9999-000000000000',
           ENTRA_CLIENT_SECRET: 'not-a-real-secret',
-          // One address that exists among the seeded users and one that does
-          // not, so the Users screen has both states to reconcile.
-          BOOTSTRAP_ADMIN_EMAILS: 'admin@example.test, nobody-signed-in@example.test',
+          // One address that exists among the seeded users, one that does not,
+          // and one that is instruction text pasted in place of a value — the
+          // three states the Users screen has to tell apart. The third is not
+          // hypothetical: it is what was actually deployed, and it read as
+          // "nobody has signed in with this address", sending the reader off to
+          // check sign-ins for a value that could never have matched anyone.
+          BOOTSTRAP_ADMIN_EMAILS:
+            'admin@example.test, nobody-signed-in@example.test, <your full name@firm.ca address>',
         },
       },
 });

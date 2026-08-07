@@ -205,43 +205,98 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
     // there left the download unverified for the commonest reason imaginable —
     // the newest work item in a tenant usually has no documents yet — and
     // asked whoever ran this to go and find a key by hand.
-    let carrier: { workItemKey: string; documentId: string; fileName: string } | null =
+    let carrier: { documentId: string; fileName: string; where: string } | null =
       documents && documents.length > 0
         ? {
-            workItemKey: subject.workItemKey,
             documentId: documents[0]!.documentId,
             fileName: documents[0]!.fileName,
+            where: `work item ${subject.workItemKey}`,
           }
         : null;
+
+    // A refusal and an empty shelf are not the same finding, and reporting the
+    // first as the second is how a harness ends up certifying an integration
+    // that does not work. Keep the first error so the skip can say which it was.
+    let hunted = 0;
+    let firstError: string | null = null;
+    const documentsOn = async (scope: { workItemKey: string } | { entityKey: string }) => {
+      hunted += 1;
+      try {
+        return await client.listDocuments(scope);
+      } catch (error) {
+        firstError ??= error instanceof Error ? error.message : String(error);
+        return [];
+      }
+    };
 
     if (!carrier && !workItemKey && found) {
       for (const candidate of found) {
         if (candidate.workItemKey === subject.workItemKey) continue;
 
-        const theirs = await client.listDocuments({ workItemKey: candidate.workItemKey }).catch(() => []);
+        const theirs = await documentsOn({ workItemKey: candidate.workItemKey });
         if (theirs.length > 0) {
           carrier = {
-            workItemKey: candidate.workItemKey,
             documentId: theirs[0]!.documentId,
             fileName: theirs[0]!.fileName,
+            where: `work item ${candidate.workItemKey}`,
           };
           break;
         }
       }
     }
 
+    // Karbon holds documents in two places, and the application searches both:
+    // on the work item, and on the client record itself. A firm that files
+    // last year's letter against the client rather than the work item would
+    // otherwise show nothing here while the real prior-year search found it
+    // perfectly well — a verification saying "unsupported" about something that
+    // works.
+    if (!carrier) {
+      // The named work item's own client comes first: someone who passed
+      // --work-item is pointing at the engagement they care about, and the
+      // letter is more likely filed against that client than any other.
+      const clientKeys = [
+        ...new Set([subject.clientKey, ...(found ?? []).map((item) => item.clientKey)].filter((key): key is string => Boolean(key))),
+      ];
+
+      for (const entityKey of clientKeys.slice(0, CANDIDATE_LIMIT)) {
+        const theirs = await documentsOn({ entityKey });
+        if (theirs.length > 0) {
+          carrier = {
+            documentId: theirs[0]!.documentId,
+            fileName: theirs[0]!.fileName,
+            where: `client ${entityKey}`,
+          };
+          record('LIST_DOCUMENTS_FOR_CLIENT', 'PASS', `${theirs.length} document(s) on client ${entityKey}`);
+          break;
+        }
+      }
+
+      if (!carrier && clientKeys.length > 0) {
+        record(
+          'LIST_DOCUMENTS_FOR_CLIENT',
+          firstError ? 'FAIL' : 'SKIP',
+          firstError
+            ? `listing documents by client was refused: ${firstError}`
+            : `no documents on any of ${clientKeys.length} client record(s) either`,
+        );
+      }
+    }
+
     if (carrier) {
-      const where = carrier.workItemKey === subject.workItemKey ? '' : ` (from work item ${carrier.workItemKey})`;
+      const found = carrier;
       await attempt(
         'DOWNLOAD_DOCUMENT',
-        () => client.downloadDocument(carrier.documentId),
-        (file) => `${file.fileName}, ${file.content.byteLength} bytes, ${file.mimeType}${where}`,
+        () => client.downloadDocument(found.documentId),
+        (file) => `${file.fileName}, ${file.content.byteLength} bytes, ${file.mimeType} (from ${found.where})`,
       );
     } else {
       record(
         'DOWNLOAD_DOCUMENT',
         'SKIP',
-        `none of the first ${CANDIDATE_LIMIT} work items carry a document; pass --work-item <KEY> naming one that does`,
+        firstError
+          ? `searched ${hunted} work item(s) and client record(s); at least one listing was refused (${firstError}), so "no documents" here is not trustworthy`
+          : `searched ${hunted + 1} work item(s) and client record(s) and none carries a document; pass --work-item <KEY> naming one that has an attachment`,
       );
     }
   }

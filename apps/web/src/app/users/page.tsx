@@ -1,4 +1,4 @@
-import { ROLE_PERMISSIONS, ROLES, can, env } from '@element/shared';
+import { ROLE_PERMISSIONS, ROLES, can, describeBootstrapAddressProblem, env } from '@element/shared';
 import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
 import { PageHeader } from '@/components/shell';
@@ -29,9 +29,14 @@ export default async function UsersPage() {
       address,
       matched: match !== undefined,
       isAdministrator: match?.roles.some((row) => row.role === 'ADMINISTRATOR') ?? false,
+      // A value that is not an address cannot match anyone, ever. Saying
+      // "nobody has signed in with this address" about it sends the reader off
+      // to check sign-ins, which is the wrong errand entirely.
+      problem: describeBootstrapAddressProblem(address),
     };
   });
   const unmatched = bootstrap.filter((entry) => !entry.matched);
+  const malformed = bootstrap.filter((entry) => entry.problem !== null);
 
   return (
     <>
@@ -44,9 +49,11 @@ export default async function UsersPage() {
         <div
           role="note"
           className={
-            unmatched.length > 0
-              ? 'mb-4 rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900'
-              : 'mb-4 rounded border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700'
+            malformed.length > 0
+              ? 'mb-4 rounded border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900'
+              : unmatched.length > 0
+                ? 'mb-4 rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900'
+                : 'mb-4 rounded border border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-700'
           }
         >
           <p>
@@ -58,17 +65,25 @@ export default async function UsersPage() {
             {bootstrap.map((entry) => (
               <li key={entry.address} className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-xs">{entry.address}</span>
-                {entry.matched ? (
+                {entry.problem ? (
+                  <span className="badge bg-red-100 text-red-800">not an address</span>
+                ) : entry.matched ? (
                   <span className="badge bg-emerald-100 text-emerald-800">
                     {entry.isAdministrator ? 'granted' : 'signed in, not yet an administrator'}
                   </span>
                 ) : (
                   <span className="badge bg-amber-100 text-amber-800">nobody has signed in with this address</span>
                 )}
+                {entry.problem ? <span className="w-full text-xs">This value {entry.problem}</span> : null}
               </li>
             ))}
           </ul>
-          {unmatched.length > 0 ? (
+          {malformed.length > 0 ? (
+            <p className="mt-2">
+              Until this is corrected the variable grants nothing at all, and anyone relying on it to get their first
+              role will sign in successfully and still have no access. The accounts below are the ones that exist.
+            </p>
+          ) : unmatched.length > 0 ? (
             <p className="mt-2">
               An address nobody has signed in with grants nothing. Entra ID may have authenticated a different address
               than the one in the variable — the accounts below are the ones that exist. Correct the variable to match

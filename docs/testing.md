@@ -726,6 +726,20 @@ Each was fixed in the code, not the test:
     because a template version is a wording change to every future engagement
     at once — had no way to read the wording they were approving. Every version
     now renders to a PDF in the application.
+68. Listing the documents filed against a *client* asked `/Contacts` and only
+    `/Contacts`. A client key names an Organization or a Contact and only Karbon
+    knows which — and because a 404 on a GET is a legitimate "found nothing",
+    asking the wrong collection is indistinguishable from an empty one. Every
+    corporate client is an Organization, so the client-level half of the
+    prior-year search returned "no documents" for all T2 work, silently and
+    always. It now asks both, in the same order `getClient` does.
+69. `BOOTSTRAP_ADMIN_EMAILS` was set, in a real deployment, to the instruction
+    text from the message explaining how to set it. It parsed, lower-cased and
+    stored like any other address, matched nobody, and the screen built for
+    exactly this problem reported "nobody has signed in with this address" —
+    true, useless, and pointing at the wrong errand. A value that cannot be an
+    address is now called what it is, in the deploy log and on the Users screen,
+    naming the command that prints the real addresses.
 
 ## What is not covered
 

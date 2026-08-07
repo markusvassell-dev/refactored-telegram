@@ -677,6 +677,27 @@ test.describe('the first administrator', () => {
     await expect(panel.getByText(/nobody has signed in with this address/)).toBeVisible();
     await expect(page.getByText(/grants nothing/)).toBeVisible();
   });
+
+  test('says a placeholder is a placeholder rather than an address nobody used', async ({ page }) => {
+    // What was actually deployed: the instruction text from a set-up message,
+    // pasted into the variable. It parses, lower-cases and stores like any
+    // other "address", and then matches nobody — so the honest-looking report
+    // was "nobody has signed in with this address", which sends the reader to
+    // check sign-ins for a value that could never have matched anyone.
+    await signIn(page, /Administrator/);
+    await page.goto('/users');
+
+    const panel = page.getByRole('note').filter({ hasText: 'BOOTSTRAP_ADMIN_EMAILS' });
+    const entry = panel.locator('li').filter({ hasText: 'your full name@firm.ca' });
+
+    await expect(entry.getByText('not an address', { exact: true })).toBeVisible();
+    await expect(entry.getByText(/placeholder text, not an address/)).toBeVisible();
+    // And it names the way out, which is a command that prints the real ones.
+    await expect(entry.getByText(/admin:users/)).toBeVisible();
+
+    // The wrong diagnosis must not also be on screen for this entry.
+    await expect(entry.getByText(/nobody has signed in with this address/)).toHaveCount(0);
+  });
 });
 
 test.describe('managing roles', () => {

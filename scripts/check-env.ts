@@ -1,4 +1,4 @@
-import { describeEntraConfigurationProblem, loadEnv } from '@element/shared';
+import { describeBootstrapAddressProblem, describeEntraConfigurationProblem, loadEnv } from '@element/shared';
 
 /**
  * Pre-flight environment check.
@@ -45,6 +45,16 @@ try {
     process.stdout.write(
       `      bootstrap administrators ${env.BOOTSTRAP_ADMIN_EMAILS.length} address(es) will be granted ADMINISTRATOR on sign-in\n`,
     );
+
+    // Printed here as well as on the Users screen, because the person who set
+    // the variable is looking at a deploy log, not at the application — and
+    // the whole failure mode is that they have no access to the application.
+    for (const address of env.BOOTSTRAP_ADMIN_EMAILS) {
+      const problem = describeBootstrapAddressProblem(address);
+      if (problem) {
+        process.stderr.write(`WARNING: BOOTSTRAP_ADMIN_EMAILS entry "${address}" ${problem}\n`);
+      }
+    }
   }
 
   // A placeholder is a valid string and a valid URL, so the schema has no
