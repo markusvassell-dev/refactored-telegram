@@ -424,6 +424,22 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
           : `searched ${hunted + 1} work item(s) and client record(s) and none carries a document`,
       );
 
+      // Zero documents everywhere is implausible for a working firm, and the
+      // list alone cannot tell "none attached" from "your API key cannot read
+      // documents". Ask the endpoints what they actually said.
+      if (!firstError && client instanceof KarbonRestClient) {
+        process.stdout.write('\nWhat the document endpoints actually answered:\n\n');
+        process.stdout.write(`${await client.describeDocumentAccess({ workItemKey: subject.workItemKey })}\n`);
+        if (subject.clientKey) {
+          process.stdout.write(`${await client.describeDocumentAccess({ entityKey: subject.clientKey })}\n`);
+        }
+        process.stdout.write(
+          '\n200 with 0 documents means there genuinely are none there. A 404 means the\n' +
+            'collection is not reachable — usually an API key without document scope — and\n' +
+            'the zero above is not a fact about the firm at all.\n',
+        );
+      }
+
       // A real key from this tenant, so the suggestion can be pasted. Written
       // as `--work-item <KEY>` it could not: angle brackets are shell
       // redirection, and the shell answers "syntax error near unexpected

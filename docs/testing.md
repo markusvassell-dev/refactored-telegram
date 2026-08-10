@@ -854,6 +854,15 @@ Each was fixed in the code, not the test:
     resolves. Printing the candidates and waiting for somebody to relay them
     turned a one-command answer into a round trip.
 
+87. `LIST_DOCUMENTS` was marked Supported on the strength of returning zero
+    documents. An empty list is not evidence the operation works: a 404 on a GET
+    is mapped to "found nothing", so a collection the API key cannot read is
+    indistinguishable from one with nothing in it. Forty-seven work items and
+    client records all returned zero, which is implausible for a working firm.
+    The row is demoted to Unverified until a run returns a document, and
+    `describeDocumentAccess` reports what the endpoints actually answered — 200
+    with an empty list, or 404 — so the difference is visible in one run.
+
 ## What is not covered
 
 Stated plainly rather than implied:

@@ -42,10 +42,17 @@ export const KARBON_CAPABILITY_MATRIX: readonly CapabilityReport[] = [
   },
   {
     capability: 'LIST_DOCUMENTS',
-    support: 'SUPPORTED',
+    // Demoted deliberately. Every observation of this so far has been an empty
+    // list, and an empty list is not evidence the operation works: a 404 on a
+    // GET is mapped to "found nothing", so a collection the API key cannot read
+    // is indistinguishable from one with nothing in it. Forty-seven work items
+    // and client records returned zero, which is implausible for a working firm.
+    // `describeDocumentAccess` reports what the endpoint actually answered; this
+    // row moves back to SUPPORTED when a run returns a document.
+    support: 'UNVERIFIED',
     operation: 'GET /v3/WorkItems/{WorkItemKey}/Documents',
     limitation:
-      'Document listings expose file names and identifiers. File names are never trusted on their own — every candidate prior-year document is verified against its content.',
+      'Document listings expose file names and identifiers. File names are never trusted on their own — every candidate prior-year document is verified against its content. Observed returning an empty list only, which does not distinguish "no documents" from "not readable by this API key".',
   },
   {
     capability: 'DOWNLOAD_DOCUMENT',

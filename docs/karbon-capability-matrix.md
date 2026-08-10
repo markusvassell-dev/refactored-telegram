@@ -8,8 +8,14 @@
 | **Unverified** | Implemented against Karbon's published documentation, but **not yet run against a live tenant from this project**. |
 | **Unsupported** | No officially supported API operation exists. The application uses the documented fallback and keeps the step visible in its own UI. |
 
-**Verified 2026-08-06.** Health check, search, read work item, read client and
-list documents were run against a live tenant and are `Supported`.
+**Verified 2026-08-06, revised 2026-08-10.** Health check, search, read work
+item and read client were run against a live tenant and are `Supported`.
+
+`List documents` was `Supported` and has been **demoted to `Unverified`**: every
+observation of it has been an empty list, and an empty list is not evidence the
+operation works. A 404 on a GET is mapped to "found nothing", so a collection
+the API key cannot read is indistinguishable from one with nothing in it. It
+moves back when a run returns a document.
 
 Everything else remains `Unverified`, and the reasons are worth stating rather
 than glossing:
@@ -54,7 +60,7 @@ Browser automation and scraping are not used anywhere, and will not be added.
 | Read work item | Supported | `GET /v3/WorkItems/{WorkItemKey}` | — | — |
 | Read client | Supported | `GET /v3/Organizations/{EntityKey}`, `GET /v3/Contacts/{EntityKey}` | Tries organisation, then contact | The entity type must be known in advance; it is stored on the client record. |
 | Read contacts | Unverified | `GET /v3/Contacts` and the organisation contact collection | — | — |
-| List documents | Supported | `GET /v3/WorkItems/{WorkItemKey}/Documents` | — | Returns names and identifiers. **File names are never trusted on their own** — every prior-year candidate is verified against its contents. |
+| List documents | Unverified | `GET /v3/WorkItems/{WorkItemKey}/Documents` | — | Returns names and identifiers. **File names are never trusted on their own** — every prior-year candidate is verified against its contents. **Observed returning an empty list only.** A 404 on a GET is mapped to "found nothing", so a collection this API key cannot read looks identical to one with nothing in it; forty-seven work items and client records all returned zero, which is implausible for a working firm. `pnpm verify:karbon` now reports what the endpoint actually answered. |
 | Download document | Unverified | `GET /v3/Documents/{DocumentId}/Content` | — | — |
 | Upload document | Unverified | `POST /v3/WorkItems/{WorkItemKey}/Documents` | — | Approved, signed and certificate files are uploaded with `neverOverwrite`. On a name collision the upload is skipped, the collision is recorded, and the reviewer is told. |
 | Add comment or note | Unverified | `POST /v3/Notes` | — | Comments are **notifications only**. They are never parsed as automation commands. |

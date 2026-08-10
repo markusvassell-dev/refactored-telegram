@@ -289,6 +289,46 @@ export class KarbonRestClient implements KarbonProvider {
     );
   }
 
+  /**
+   * What the document endpoints actually said, rather than what the list came
+   * back as.
+   *
+   * A 404 on a GET is treated as "found nothing", which is right for a missing
+   * record and wrong here: it makes "this work item has no documents"
+   * indistinguishable from "your API key cannot read documents" and from "that
+   * collection does not exist on this tenant". A real run reported zero
+   * documents across forty-seven work items and client records, which is
+   * implausible for a working firm and impossible to diagnose from the list
+   * alone.
+   *
+   * Diagnostic only — nothing in the workflow calls this. It exists so one
+   * verification run can answer the question instead of leaving somebody to
+   * guess at their Karbon permissions.
+   */
+  async describeDocumentAccess(scope: { workItemKey?: string; entityKey?: string }): Promise<string> {
+    const paths = scope.workItemKey
+      ? [`/WorkItems/${encodeURIComponent(scope.workItemKey)}/Documents`]
+      : [
+          `/Organizations/${encodeURIComponent(scope.entityKey ?? '')}/Documents`,
+          `/Contacts/${encodeURIComponent(scope.entityKey ?? '')}/Documents`,
+        ];
+
+    const findings: string[] = [];
+    for (const path of paths) {
+      try {
+        const response = await this.request<{ value?: unknown[] } | null>({ path });
+        findings.push(
+          response === null
+            ? `${path} -> 404 (the endpoint answered "not found", which is not the same as an empty list)`
+            : `${path} -> 200 with ${response.value?.length ?? 0} document(s)`,
+        );
+      } catch (error) {
+        findings.push(`${path} -> ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return findings.join('\n');
+  }
+
   async listDocuments(scope: { workItemKey?: string; entityKey?: string }): Promise<KarbonDocument[]> {
     let response: { value?: Record<string, unknown>[] } | null;
 
