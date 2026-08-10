@@ -269,6 +269,7 @@ Ranked by how often it is the cause:
 | --- | --- |
 | `DATABASE_URL` never added | `FATAL: DATABASE_URL is not set` |
 | `DATABASE_URL` added as a reference that did not resolve | `FATAL: DATABASE_URL is set but empty` |
+| `DATABASE_URL` resolving to a *different* database | `The table 'public.user' does not exist in the current database` (Prisma `P2021`) — see below |
 | `SERVICE_ROLE` missing on the worker | `NOTE: SERVICE_ROLE is not set; starting as the web service` |
 | Migrations cannot reach the database | `FATAL: database migrations failed; the web server was not started` |
 | A required variable missing or malformed — `ENCRYPTION_KEY`, `SESSION_SECRET`, Entra in production | `Invalid environment configuration:` and the failing key |
@@ -287,6 +288,34 @@ a service that actually exists.
 Copying the connection string from the database's Variables tab works too, and
 is the quickest way to get moving. It is a literal, so it goes stale if the
 database is ever recreated; swap it for a reference once the deployment is up.
+
+### A reference that resolves to the wrong database
+
+This is the one that is easy to miss, because nothing fails at start-up. The
+service connects, authenticates, and then every query fails with `P2021` —
+`The table 'public.user' does not exist in the current database`.
+
+It means the two services are not sharing a database. The web service applies
+migrations and the worker deliberately never does, so the worker sees an empty
+database and can claim no jobs at all: no generation, no filing into Karbon, no
+cover letters. The worker stays up and its liveness check passes throughout,
+which is why this can sit unnoticed.
+
+**The fix is to make the worker's `DATABASE_URL` identical to the web
+service's**, character for character. Read the web service's value in the raw
+variable editor and compare — the difference is usually one of:
+
+- two Postgres services in the project, with one service on each;
+- the same server but a different database name at the end of the path;
+- a different `?schema=` parameter.
+
+Do not retype it from memory, and do not assume the reference names match: a
+reference to a Postgres service that exists but is not the one holding the
+schema resolves perfectly and is still wrong.
+
+Afterwards, the worker's `/ready` is the check that it took: `processed` should
+climb and `lastSuccessAt` should be recent. Liveness passing proves nothing
+here — it passed the whole time it was pointed at the wrong database.
 
 ## Deploying
 
