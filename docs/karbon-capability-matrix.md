@@ -51,11 +51,20 @@ an observed one — that needs another write-enabled run.
 
   What the script refuses is writing to production *by accident*, or to a work
   item nobody chose. Create a work item you are willing to have test data
-  written to — an internal one, not a client's — and name it:
+  written to — an internal one, not a client's — open it in Karbon, and take
+  the key from the end of its URL. A key looks like `wfyFwlWGZms`: eleven or
+  twelve letters and digits, no underscores.
+
+  Then run the command with **that key in place of the last word**:
 
   ```
-  pnpm verify:karbon --allow-writes --write-to-production --work-item THAT_KEY
+  pnpm verify:karbon --allow-writes --write-to-production --work-item PasteTheKeyHere
   ```
+
+  `PasteTheKeyHere` is not a key and will not work — it is there to be replaced.
+  If it reaches the script the run stops before writing anything, because a key
+  that resolves to no work item used to fall through to whichever one the search
+  returned first, which is a real client's engagement.
 
   It writes a note and a small PDF, both named
   `ELEMENT ENGAGEMENTS VERIFICATION`, and tells you where to delete them.

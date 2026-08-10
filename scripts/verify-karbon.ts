@@ -179,8 +179,10 @@ async function main(): Promise<void> {
       if (!acknowledgedProduction) {
         fail(
           'Refusing to write to a production Karbon tenant without an explicit acknowledgement.',
-          'Create a work item in Karbon you are willing to have test data written to — an internal one, not a client’s — then re-run with:\n' +
-            '  pnpm verify:karbon --allow-writes --write-to-production --work-item THAT_KEY',
+          'Create a work item in Karbon you are willing to have test data written to — an internal one, not a client’s.\n' +
+            'Open it, and take the key from the end of its URL: eleven or twelve letters and digits, like wfyFwlWGZms.\n' +
+            'Then re-run with that key in place of the last word below — the word itself is not a key and will not work:\n' +
+            '  pnpm verify:karbon --allow-writes --write-to-production --work-item PasteTheKeyHere',
         );
       }
       if (!argument('work-item')) {
