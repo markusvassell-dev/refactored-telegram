@@ -3,9 +3,9 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (699 tests)
+pnpm test               # unit + integration  (706 tests)
 pnpm test:unit          # 358 — no external dependencies
-pnpm test:integration   # 340 — needs Postgres and LibreOffice Writer
+pnpm test:integration   # 348 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 59  — needs a browser
 pnpm build              # production build
 ```
@@ -134,7 +134,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-## Integration tests (340)
+## Integration tests (348)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -838,6 +838,21 @@ Each was fixed in the code, not the test:
     the firm's real data. Claiming otherwise would make the client import refuse
     the one case it exists for, and would let a signature filing be recorded
     against a tenant it never reached.
+
+84. The sandbox label is no longer trusted on its own. A connection pointing at
+    `api.karbonhq.com` is production whatever the box says, so a mislabelled
+    production connection is still served read-only under Test Mode. Correcting
+    the label is now cosmetic rather than load-bearing — which matters, because
+    the label was ticked wrong in a real deployment and nothing depending on it
+    could tell.
+85. `mapWorkItem` read `AssigneeEmail`. Karbon's field is
+    `AssigneeEmailAddress`, so every work item came back with no assignee — not
+    an error, just a blank where a name should be, on every screen that shows
+    one.
+86. When the work item read fails, the harness now tries each identifier-shaped
+    field from the search result against the read endpoint and reports which one
+    resolves. Printing the candidates and waiting for somebody to relay them
+    turned a one-command answer into a round trip.
 
 ## What is not covered
 

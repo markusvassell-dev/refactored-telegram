@@ -290,10 +290,21 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
             '',
             ...describeKeyFields(subject.raw as Record<string, unknown> | undefined),
             '',
-            'Send this list on. The field whose value the read endpoint accepts is the one',
-            'the client should be using, and that is a one-line change once it is known.',
-            '',
           ].join('\n'),
+        );
+
+        // Rather than print the candidates and wait for somebody to relay them,
+        // try them. Each is a single read against a tenant this run is already
+        // reading, and one run then answers the question outright instead of
+        // starting a round trip.
+        const working = await findWorkingKeyField(client, subject.raw as Record<string, unknown> | undefined);
+        process.stdout.write(
+          working
+            ? `  The read endpoint accepts the value of "${working}". That is the field this\n` +
+                '  client should read as the work item key — a one-line change.\n\n'
+            : '  None of those values resolve on the read endpoint either, so the key is not\n' +
+                '  the problem: the single-work-item read is unavailable to this API key, or is\n' +
+                '  not served by this tenant. Worth raising with Karbon rather than changing.\n\n',
         );
       }
     }
@@ -572,6 +583,30 @@ function describeKeyFields(raw: Record<string, unknown> | undefined): string[] {
     lines.push(`  ${name.padEnd(24)} ${typeof value === 'object' ? '(nested)' : String(value)}`);
   }
   return lines;
+}
+
+/**
+ * Which identifier-shaped field, if any, the read endpoint actually accepts.
+ *
+ * Read-only and bounded: a handful of GETs against work items this run has
+ * already listed. Cheap enough to be worth doing automatically, and it converts
+ * "send me the field names and I will tell you" into an answer.
+ */
+async function findWorkingKeyField(
+  client: KarbonProvider,
+  raw: Record<string, unknown> | undefined,
+): Promise<string | null> {
+  if (!raw) return null;
+
+  const candidates = Object.keys(raw).filter(
+    (name) => /(^|[a-z])(key|id)$/i.test(name) && typeof raw[name] === 'string' && (raw[name] as string).length > 0,
+  );
+
+  for (const name of candidates) {
+    const found = await client.getWorkItem(raw[name] as string).catch(() => null);
+    if (found) return name;
+  }
+  return null;
 }
 
 function summarise(): void {

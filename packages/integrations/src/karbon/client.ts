@@ -472,7 +472,10 @@ function mapWorkItem(raw: Record<string, unknown>): KarbonWorkItem {
     clientName: text(raw.ClientName),
     workType: text(raw.WorkType),
     workStatus: text(raw.WorkStatus),
-    assigneeEmail: text(raw.AssigneeEmail),
+    // Karbon's field is AssigneeEmailAddress. Reading only `AssigneeEmail`
+    // meant every work item came back with no assignee — not an error, just a
+    // blank where a name should be, on every screen that shows one.
+    assigneeEmail: text(raw.AssigneeEmailAddress) ?? text(raw.AssigneeEmail),
     dueDate: text(raw.DueDate),
     startDate: text(raw.StartDate),
     raw,

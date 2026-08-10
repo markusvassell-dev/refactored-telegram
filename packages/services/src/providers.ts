@@ -14,7 +14,7 @@ import {
   type EmailSender,
   type KarbonProvider,
 } from '@element/integrations';
-import { decryptSecret, type Env, type Logger } from '@element/shared';
+import { decryptSecret, isKnownProductionHost, type Env, type Logger } from '@element/shared';
 import type { TestModeState } from './settings.js';
 
 /**
@@ -113,7 +113,17 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
     karbonConnection.credentials.bearerToken &&
     karbonConnection.credentials.accessKey;
 
-  if (testModeState.testMode && !karbonConnection?.isSandbox && karbonUsable) {
+  // The label is not trusted on its own. A connection pointing at
+  // api.karbonhq.com is production whatever the box says, and the box was
+  // ticked wrong in a real deployment — not carelessly, but because it used to
+  // be the only way to make the application work at all. Deriving this from the
+  // host means correcting the label is now cosmetic rather than load-bearing:
+  // a mislabelled production connection is still treated as production.
+  const karbonIsProduction =
+    !karbonConnection?.isSandbox ||
+    isKnownProductionHost('KARBON', karbonConnection?.baseUrl ?? env.KARBON_API_BASE_URL);
+
+  if (testModeState.testMode && karbonIsProduction && karbonUsable) {
     // Reads are allowed; writes are not. Karbon publishes no sandbox host, so
     // refusing everything left a firm one lever to make the application work at
     // all — marking the production connection "Sandbox" — which turned Test
@@ -131,7 +141,7 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
         'Test Mode is active and this is a production Karbon connection, so nothing was written to Karbon.',
       );
     karbonDescription = 'Karbon production connection, reads only (test mode)';
-  } else if (testModeState.testMode && !karbonConnection?.isSandbox) {
+  } else if (testModeState.testMode && karbonIsProduction) {
     karbon =
       overrides?.karbon ??
       new BlockedKarbonProvider(
@@ -145,7 +155,7 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
       accessKey: karbonConnection.credentials.accessKey as string,
       logger: options.logger,
     });
-    karbonDescription = karbonConnection.isSandbox ? 'Karbon sandbox connection' : 'Karbon production connection';
+    karbonDescription = karbonIsProduction ? 'Karbon production connection' : 'Karbon sandbox connection';
   } else {
     karbon = overrides?.karbon ?? new MockKarbonProvider();
     karbonDescription = 'mock adapter (no Karbon connection configured)';
