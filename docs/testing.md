@@ -3,8 +3,8 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (720 tests)
-pnpm test:unit          # 372 — no external dependencies
+pnpm test               # unit + integration  (726 tests)
+pnpm test:unit          # 378 — no external dependencies
 pnpm test:integration   # 348 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 59  — needs a browser
 pnpm build              # production build
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (372)
+## Unit tests (378)
 
 No database, no filesystem, no network.
 
@@ -160,6 +160,17 @@ name the commit. The behaviour under test is the refusal: with no platform
 variables, or with `HEAD`, `latest`, an unexpanded `$RAILWAY_GIT_COMMIT_SHA` or
 a branch ref in the commit variable, it reports "unknown" rather than a version
 it does not have — a plausible-looking wrong answer here would be believed.
+
+**Naming a database failure (6)** — `pnpm admin:grant` was run on the worker
+service, whose `DATABASE_URL` pointed at a database the web service had never
+migrated. It printed the Prisma client's entire minified runtime and then, last,
+`The table 'public.user' does not exist` — accurate, invisible, and silent on
+what to do. The console scripts now name the cause: a missing schema, an
+unreachable server, or credentials that no longer work, each with the remedy
+that fits. A missing schema names the wrong-service cause first, because the
+worker deliberately never migrates. An unrecognised failure says nothing rather
+than guessing, since a wrong explanation sends someone to check the one thing
+that is fine.
 
 ## Integration tests (348)
 

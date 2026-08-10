@@ -1,5 +1,6 @@
 import { PrismaClient, type Role } from '@element/database';
 import { createAuditLogger } from '@element/audit';
+import { describeDatabaseProblem, formatDatabaseProblem } from '@element/shared';
 
 /**
  * Granting a role from the deployment's console.
@@ -18,9 +19,13 @@ import { createAuditLogger } from '@element/audit';
  * it is distinguishable from one made by an administrator in the application.
  *
  * Usage:
- *   pnpm admin:users                              # who exists, and what they hold
- *   pnpm admin:grant <email> ADMINISTRATOR        # grant
- *   pnpm admin:grant <email> ADMINISTRATOR --revoke
+ *   pnpm admin:users                                    # who exists, and what they hold
+ *   pnpm admin:grant person@firm.ca ADMINISTRATOR       # grant
+ *   pnpm admin:grant person@firm.ca ADMINISTRATOR --revoke
+ *
+ * An address from `admin:users`, never a placeholder in angle brackets — those
+ * are shell redirection, and an example written that way is a command that
+ * fails for anyone who pastes it.
  */
 
 const ROLES: Role[] = ['ADMINISTRATOR', 'PARTNER_OR_FINAL_APPROVER', 'REVIEWER', 'PREPARER', 'READ_ONLY'];
@@ -101,6 +106,27 @@ async function main(): Promise<void> {
   }
 }
 
+/**
+ * A database failure, said in one screen rather than fifty.
+ *
+ * Letting this throw printed the Prisma client's whole minified runtime before
+ * the sentence that mattered, on a console where scrolling back is awkward. The
+ * error that prompted this was a worker service pointed at a database the web
+ * service had never migrated — which the raw message describes accurately and
+ * unhelpfully.
+ */
+function reportFailure(error: unknown): never {
+  const problem = describeDatabaseProblem(error);
+
+  if (problem) {
+    process.stderr.write(`\n${formatDatabaseProblem(problem)}\n`);
+    process.exit(1);
+  }
+
+  process.stderr.write(`\n${error instanceof Error ? error.message : String(error)}\n\n`);
+  process.exit(1);
+}
+
 async function listUsers(prisma: PrismaClient): Promise<void> {
   const users = await prisma.user.findMany({
     where: { isActive: true },
@@ -127,4 +153,4 @@ async function listUsers(prisma: PrismaClient): Promise<void> {
   process.stdout.write(`Grant a role with:  pnpm admin:grant ${users[0]!.email} ADMINISTRATOR\n\n`);
 }
 
-await main();
+await main().catch(reportFailure);

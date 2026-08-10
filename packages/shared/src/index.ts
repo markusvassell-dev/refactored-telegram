@@ -13,4 +13,5 @@ export * from './entra.js';
 export * from './address.js';
 export * from './storage-durability.js';
 export * from './build-identity.js';
+export * from './database-problem.js';
 export * from './vendor-hosts.js';

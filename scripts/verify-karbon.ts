@@ -1,6 +1,14 @@
 import { PrismaClient } from '@element/database';
 import { KarbonRestClient, type KarbonProvider, type KarbonWorkItem } from '@element/integrations';
-import { createLogger, decryptSecret, describeBuild, describeSandboxMislabel, loadEnv } from '@element/shared';
+import {
+  createLogger,
+  decryptSecret,
+  describeBuild,
+  describeDatabaseProblem,
+  describeSandboxMislabel,
+  formatDatabaseProblem,
+  loadEnv,
+} from '@element/shared';
 
 /**
  * Exercising Karbon against a real tenant.
@@ -683,4 +691,13 @@ function fail(message: string, remedy: string): never {
   process.exit(1);
 }
 
-await main();
+// A database failure here is almost always "wrong service" or "not migrated
+// yet", and letting it throw prints the Prisma runtime before the one sentence
+// that matters.
+await main().catch((error: unknown) => {
+  const problem = describeDatabaseProblem(error);
+  process.stderr.write(
+    problem ? `\n${formatDatabaseProblem(problem)}\n` : `\n${error instanceof Error ? error.message : String(error)}\n\n`,
+  );
+  process.exit(1);
+});
