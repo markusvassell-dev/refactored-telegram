@@ -31,10 +31,14 @@ import {
  *   - **Nothing is logged.** The audit trail records that a credential changed,
  *     by whom, and its fingerprint — never the credential.
  *
- *   - **Turning a sandbox into production is a deliberate act**, and is refused
- *     while Test Mode is on. Test Mode's guarantee is that no production
- *     integration is reachable; a connection that could flip itself to
- *     production underneath it would make that guarantee a convention.
+ *   - **Marking an Adobe Sign connection as production is refused while Test
+ *     Mode is on** — creating an agreement e-mails a real person. Karbon is
+ *     different on purpose: a production Karbon connection under Test Mode is
+ *     served read-only by the adapter, so correcting a mislabelled Karbon
+ *     connection to Production is allowed at any time. It makes the record
+ *     honest and makes nothing more reachable. (An earlier rule refused that
+ *     correction too, which forced the one working configuration to carry a
+ *     false label — the guarantee lives in the adapter now, not the label.)
  */
 
 export interface IntegrationConnectionDeps {

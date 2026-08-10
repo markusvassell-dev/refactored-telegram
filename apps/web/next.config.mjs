@@ -1,7 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Standalone output keeps the Docker image small and self-contained.
-  output: 'standalone',
+  // No `output: 'standalone'`. The Docker image copies the whole workspace —
+  // the worker, the scripts and LibreOffice all need it — so the standalone
+  // bundle was built and then never used, and `next start` warned on every
+  // deploy that it "does not work with output: standalone" while serving
+  // anyway. A production warning that must be ignored trains people to ignore
+  // production warnings.
   outputFileTracingRoot: new URL('../../', import.meta.url).pathname,
   reactStrictMode: true,
   poweredByHeader: false,

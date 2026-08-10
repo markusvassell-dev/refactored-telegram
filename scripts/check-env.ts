@@ -35,6 +35,29 @@ try {
   // screen rather than for a start-up log.
   process.stdout.write(`      entra id configured      ${env.ENTRA_CLIENT_ID ? 'yes' : 'no'}\n`);
 
+  // Vendor credentials set as environment variables are IGNORED — the schema
+  // does not read them, deliberately (see env.ts for why). Saying nothing here
+  // is how a person ends up with a bearer token in their service variables,
+  // an Integrations screen saying "not configured", and no idea which of the
+  // two the application believes. Found set, in production, on a real
+  // deployment — so this is a warning that fires in practice, not in theory.
+  const ignoredCredentialVariables = [
+    'KARBON_BEARER_TOKEN',
+    'KARBON_ACCESS_KEY',
+    'ADOBE_SIGN_CLIENT_ID',
+    'ADOBE_SIGN_CLIENT_SECRET',
+    'ADOBE_SIGN_REFRESH_TOKEN',
+  ].filter((name) => (process.env[name] ?? '').trim().length > 0);
+
+  for (const name of ignoredCredentialVariables) {
+    process.stdout.write(
+      `      WARNING: ${name} is set in the environment and IGNORED. Vendor\n` +
+      `               credentials are read only from the Integrations screen, where\n` +
+      `               they are encrypted and carry the sandbox-or-production flag.\n` +
+      `               Enter the value there and remove this variable.\n`,
+    );
+  }
+
   // In development the schema does not require Entra, so a wrong-shaped value
   // reaches here rather than failing the boot. Named now, not at the first
   // attempt to sign in.

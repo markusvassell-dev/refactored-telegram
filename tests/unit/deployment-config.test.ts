@@ -88,6 +88,29 @@ describe('the image', () => {
   });
 });
 
+describe('how the web server is started', () => {
+  it('does not build a standalone bundle it will never serve', () => {
+    // The image ships the whole workspace, so `output: 'standalone'` produced
+    // a second copy of the server that nothing ran — and `next start` warned
+    // "does not work with output: standalone" on every deploy while serving
+    // anyway. A production warning that must be ignored teaches people to
+    // ignore production warnings; either the config or the start command had
+    // to go, and the config was the unused half.
+    // Anchored to a real config line: the comment explaining the removal is
+    // allowed to name the thing it removed.
+    expect(read('apps/web/next.config.mjs')).not.toMatch(/^\s*output:\s*['"]standalone['"]/m);
+  });
+
+  it('names every ignored vendor-credential variable, because they were found set', () => {
+    // A bearer token in the service variables and an Integrations screen
+    // saying "not configured" is two sources of truth, one of them dead.
+    const checkEnv = read('scripts/check-env.ts');
+    for (const name of ['KARBON_BEARER_TOKEN', 'KARBON_ACCESS_KEY', 'ADOBE_SIGN_REFRESH_TOKEN']) {
+      expect(checkEnv).toContain(name);
+    }
+  });
+});
+
 describe('what the application is allowed to frame', () => {
   const config = read('apps/web/next.config.mjs');
 
