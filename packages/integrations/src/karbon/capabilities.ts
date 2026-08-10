@@ -42,21 +42,27 @@ export const KARBON_CAPABILITY_MATRIX: readonly CapabilityReport[] = [
   },
   {
     capability: 'LIST_DOCUMENTS',
-    // The empty lists were not a permissions problem and not an empty firm:
-    // `/v3/WorkItems/{key}/Documents` does not exist, and a 404 on a GET is
-    // mapped to "found nothing", so every work item and client record reported
-    // zero. Karbon serves files from `/v3/FileList/{EntityType}`. Corrected
-    // against Karbon's published OpenAPI specification; still UNVERIFIED,
-    // because a corrected path is not the same as an observed one. This moves
-    // to SUPPORTED when a run returns a document.
-    support: 'UNVERIFIED',
+    // Observed 2026-08-10 against the live tenant: a listing returned a real
+    // file with a usable download token, which is what finally distinguished a
+    // working endpoint from the old one. `/v3/WorkItems/{key}/Documents` does
+    // not exist, and a 404 on a GET is mapped to "found nothing", so every work
+    // item and client record used to report zero.
+    //
+    // Only the WorkItem entity type has been observed returning a file. The
+    // Organization and Contact types are implemented from the same documented
+    // operation and are exercised by the same code path, but no run has yet had
+    // one return a document.
+    support: 'SUPPORTED',
     operation: 'GET /v3/FileList/{EntityType}?EntityKey=... (EntityType is WorkItem, Organization or Contact)',
     limitation:
-      'Document listings expose file names and identifiers. File names are never trusted on their own — every candidate prior-year document is verified against its content. A client key names either an Organization or a Contact, so both are tried in that order.',
+      'Document listings expose file names and identifiers. File names are never trusted on their own — every candidate prior-year document is verified against its content. A client key names either an Organization or a Contact, so both are tried in that order; those two entity types have not yet been observed returning a file.',
   },
   {
     capability: 'DOWNLOAD_DOCUMENT',
-    support: 'UNVERIFIED',
+    // Observed 2026-08-10: 31,118 bytes of application/pdf came back from a
+    // live work item. Both halves of the two-step are therefore exercised —
+    // the listing that issues the token, and the request that spends it.
+    support: 'SUPPORTED',
     operation: 'GET /v3/Files?token=... (the token comes from DownloadUrl on a current file listing)',
     limitation:
       'There is no download by document id. Karbon issues a signed token alongside a file listing and documents it as valid for fifteen minutes, so a download must first list the entity that holds the file. Tokens are never persisted.',

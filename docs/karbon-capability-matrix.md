@@ -9,7 +9,8 @@
 | **Unsupported** | No officially supported API operation exists. The application uses the documented fallback and keeps the step visible in its own UI. |
 
 **Verified 2026-08-06, revised 2026-08-10.** Health check, search, read work
-item and read client were run against a live tenant and are `Supported`.
+item, read client, list documents and download document have been run against a
+live tenant and are `Supported`. Everything that writes is still `Unverified`.
 
 ### What the write-enabled run found
 
@@ -36,9 +37,29 @@ prior-year document discovery would have found nothing for ever while looking
 entirely healthy. Forty-seven records returning zero is what finally gave it
 away.
 
-All of these are now corrected against the specification. They stay
-`Unverified` rather than moving to `Supported`, because a corrected path is not
-an observed one — that needs another write-enabled run.
+### What the corrected endpoints then did
+
+A read-only run on 2026-08-10 against the same tenant, on build `bbcefd6`:
+
+```
+[ ok ] LIST_DOCUMENTS      0 document(s)
+[ ok ] DOWNLOAD_DOCUMENT   APAgingDetail 2023.pdf, 31118 bytes, application/pdf
+                           (from work item QGMkCVvHTVD)
+```
+
+**A file came out of Karbon** — the first time in this project. That single line
+proves both halves of the two-step: the listing that issues the download token,
+and the request that spends it. `List documents` and `Download document` move to
+`Supported`.
+
+The `0 document(s)` above it is now an ordinary answer rather than a suspicious
+one. It is the subject work item, which genuinely has no files; the harness kept
+searching and found one three work items later. Before the fix, *every* record
+in the tenant read zero, which is what gave the broken path away.
+
+`Add comment` and `Upload document` stay `Unverified`. They are corrected
+against the specification but no run has written yet, and a corrected path is
+not an observed one.
 
 ### What is left, and why
 
@@ -82,10 +103,9 @@ an observed one — that needs another write-enabled run.
   in the Review Queue.
 - **Update work item status** stays unattempted: status values are
   tenant-specific and changing one alters real workflow state.
-- **Download document** needs a work item that has a file on it. The harness now
-  searches past the first one — through the other work items the search returned
-  and then through their client records — and reports whether a listing was
-  *refused* rather than *empty*, so a skip says which it was.
+- **Download document** is done — see above. The harness searching past the
+  first work item is what made it possible: the subject had no files, and giving
+  up there is what left this unverified for so long.
 - **Webhooks** need a subscription and an inbound request, which no script can
   arrange on its own.
 
@@ -102,8 +122,8 @@ Browser automation and scraping are not used anywhere, and will not be added.
 | Read work item | Supported | `GET /v3/WorkItems/{WorkItemKey}` | — | — |
 | Read client | Supported | `GET /v3/Organizations/{EntityKey}`, `GET /v3/Contacts/{EntityKey}` | Tries organisation, then contact | The entity type must be known in advance; it is stored on the client record. |
 | Read contacts | Unverified | `GET /v3/Contacts` and the organisation contact collection | — | — |
-| List documents | Unverified | `GET /v3/FileList/{EntityType}?EntityKey=…`, where `EntityType` is `WorkItem`, `Organization` or `Contact` | — | Returns names and identifiers. **File names are never trusted on their own** — every prior-year candidate is verified against its contents. A client key names an organisation or a contact and only Karbon knows which, so both are tried in that order; an empty list from a recognised entity is a real answer and stops the search, a 404 is not. |
-| Download document | Unverified | `GET /v3/Files?token=…` | — | There is no download by identifier. Karbon issues a signed token alongside a file listing, documented as valid for **fifteen minutes**, so a download first lists the entity holding the file. Tokens are never persisted, and only the token is taken from the vendor-supplied `DownloadUrl` — never the host. |
+| List documents | **Supported** | `GET /v3/FileList/{EntityType}?EntityKey=…`, where `EntityType` is `WorkItem`, `Organization` or `Contact` | — | Returns names and identifiers. **File names are never trusted on their own** — every prior-year candidate is verified against its contents. A client key names an organisation or a contact and only Karbon knows which, so both are tried in that order; an empty list from a recognised entity is a real answer and stops the search, a 404 is not. **Only `WorkItem` has been observed returning a file**; the other two entity types share the code path but have not yet produced one. |
+| Download document | **Supported** | `GET /v3/Files?token=…` | — | There is no download by identifier. Karbon issues a signed token alongside a file listing, documented as valid for **fifteen minutes**, so a download first lists the entity holding the file. Tokens are never persisted, and only the token is taken from the vendor-supplied `DownloadUrl` — never the host. |
 | Upload document | Unverified | `POST /v3/Files`, `multipart/form-data` with `file` and `workitem_keys` | — | Approved, signed and certificate files are uploaded with `neverOverwrite`. On a name collision the upload is skipped, the collision is recorded, and the reviewer is told. |
 | Add comment or note | Unverified | `POST /v3/Notes` with `AuthorEmailAddress`, `Subject`, `Body` and a `Timelines` entry naming the work item | — | Karbon **requires** an author who is a user on the tenant. Set `KARBON_NOTE_AUTHOR_EMAIL`; otherwise the first user the tenant lists is used. Comments are **notifications only** — never parsed as automation commands. |
 | Create task | **Unsupported** | — | Posts a note carrying the review title and deep link; the authoritative task stays in the app's Review Queue | Karbon publishes no task-creation operation. `/v3/IntegrationTasks` is `GET`-only. No request is attempted; the call returns `SKIPPED_UNSUPPORTED` so the limitation is visible in the Karbon Activity tab rather than silent. |

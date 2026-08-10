@@ -500,9 +500,13 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
 
   // ---- Writes -------------------------------------------------------------
   if (!allowWrites) {
-    for (const capability of ['ADD_COMMENT', 'CREATE_TASK', 'UPLOAD_DOCUMENT', 'UPDATE_WORK_ITEM_STATUS']) {
+    for (const capability of ['ADD_COMMENT', 'UPLOAD_DOCUMENT', 'UPDATE_WORK_ITEM_STATUS']) {
       record(capability, 'SKIP', 'read-only run');
     }
+    // Not a consequence of this being read-only: there is no task endpoint to
+    // call in either mode. Saying "read-only run" would imply a write run would
+    // exercise it.
+    record('CREATE_TASK', 'SKIP', 'Karbon publishes no task-creation operation; the review note carries the assignment');
     return;
   }
 
