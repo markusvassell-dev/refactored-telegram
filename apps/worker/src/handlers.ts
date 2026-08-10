@@ -186,7 +186,7 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         for (const document of documents) {
           if (!/\.(docx|pdf)$/i.test(document.fileName)) continue;
 
-          const downloaded = await karbon.downloadDocument(document.documentId).catch(() => null);
+          const downloaded = await karbon.downloadDocument(document.documentId, scope).catch(() => null);
           if (!downloaded) continue;
 
           // File names are a hint only; the text is what actually verifies it.

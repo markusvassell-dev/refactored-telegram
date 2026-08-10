@@ -6,6 +6,8 @@ import type {
   KarbonClient,
   KarbonCommentRequest,
   KarbonDocument,
+  KarbonEntityType,
+  KarbonFileList,
   KarbonProvider,
   KarbonTaskRequest,
   KarbonUploadRequest,
@@ -42,6 +44,12 @@ export interface KarbonClientConfig {
   requestsPerMinute?: number;
   /** Shared across clients when one is supplied, which is what a bulk rollout needs. */
   rateLimiter?: RateLimiter;
+  /**
+   * The Karbon user every note is attributed to. Karbon requires an author and
+   * rejects an address that is not a user on the tenant. Left unset, the first
+   * user the tenant lists is used instead — see `authorEmail`.
+   */
+  noteAuthorEmail?: string;
 }
 
 interface RequestOptions {
@@ -97,10 +105,11 @@ export class KarbonRestClient implements KarbonProvider {
   readonly isMock = false;
 
   private readonly config: Required<
-    Omit<KarbonClientConfig, 'logger' | 'fetchImpl' | 'rateLimiter'>
+    Omit<KarbonClientConfig, 'logger' | 'fetchImpl' | 'rateLimiter' | 'noteAuthorEmail'>
   > & {
     logger: Logger;
     fetchImpl: typeof fetch;
+    noteAuthorEmail?: string;
   };
 
   private readonly limiter: RateLimiter;
@@ -113,6 +122,7 @@ export class KarbonRestClient implements KarbonProvider {
       timeoutMs: config.timeoutMs ?? 30_000,
       maxRetries: config.maxRetries ?? 3,
       requestsPerMinute: config.requestsPerMinute ?? KARBON_DOCUMENTED_REQUESTS_PER_MINUTE,
+      noteAuthorEmail: config.noteAuthorEmail,
       logger: config.logger ?? createLogger({ base: { integration: 'karbon' } }),
       fetchImpl: config.fetchImpl ?? fetch,
     };
@@ -306,21 +316,21 @@ export class KarbonRestClient implements KarbonProvider {
    * guess at their Karbon permissions.
    */
   async describeDocumentAccess(scope: { workItemKey?: string; entityKey?: string }): Promise<string> {
-    const paths = scope.workItemKey
-      ? [`/WorkItems/${encodeURIComponent(scope.workItemKey)}/Documents`]
-      : [
-          `/Organizations/${encodeURIComponent(scope.entityKey ?? '')}/Documents`,
-          `/Contacts/${encodeURIComponent(scope.entityKey ?? '')}/Documents`,
-        ];
+    const entityTypes: KarbonEntityType[] = scope.workItemKey ? ['WorkItem'] : ['Organization', 'Contact'];
+    const entityKey = scope.workItemKey ?? scope.entityKey ?? '';
 
     const findings: string[] = [];
-    for (const path of paths) {
+    for (const entityType of entityTypes) {
+      const path = `/FileList/${entityType}?EntityKey=${encodeURIComponent(entityKey)}`;
       try {
-        const response = await this.request<{ value?: unknown[] } | null>({ path });
+        const response = await this.request<KarbonFileList | null>({
+          path: `/FileList/${entityType}`,
+          query: { EntityKey: entityKey },
+        });
         findings.push(
           response === null
             ? `${path} -> 404 (the endpoint answered "not found", which is not the same as an empty list)`
-            : `${path} -> 200 with ${response.value?.length ?? 0} document(s)`,
+            : `${path} -> 200 with ${response.Attachments?.length ?? 0} file(s)`,
         );
       } catch (error) {
         findings.push(`${path} -> ${error instanceof Error ? error.message : String(error)}`);
@@ -330,49 +340,77 @@ export class KarbonRestClient implements KarbonProvider {
   }
 
   async listDocuments(scope: { workItemKey?: string; entityKey?: string }): Promise<KarbonDocument[]> {
-    let response: { value?: Record<string, unknown>[] } | null;
+    // `/WorkItems/{key}/Documents` does not exist. Karbon serves files through
+    // `/FileList/{EntityType}?EntityKey=...`, and the endpoint we were asking
+    // for answered 404 — which this client maps to "found nothing", so every
+    // work item and client record reported zero documents. Confirmed against
+    // Karbon's published OpenAPI specification, not inferred.
+    const entityTypes: KarbonEntityType[] = scope.workItemKey ? ['WorkItem'] : ['Organization', 'Contact'];
+    const entityKey = scope.workItemKey ?? scope.entityKey ?? '';
 
-    if (scope.workItemKey) {
-      response = await this.request<{ value?: Record<string, unknown>[] } | null>({
-        path: `/WorkItems/${encodeURIComponent(scope.workItemKey)}/Documents`,
+    for (const entityType of entityTypes) {
+      const response = await this.request<KarbonFileList | null>({
+        path: `/FileList/${entityType}`,
+        query: { EntityKey: entityKey },
       });
-    } else {
-      // A client key names an Organization or a Contact, and only Karbon knows
-      // which. Asking `/Contacts` alone answered "no documents" for every
-      // organisation — a 404 on a GET is a legitimate "found nothing", so the
-      // wrong collection is indistinguishable from an empty one. Every
-      // corporate client is an Organization, so the entire client-level
-      // fallback in the prior-year search silently found nothing for T2 work.
-      // Same order as `getClient`, for the same reason.
-      const key = encodeURIComponent(scope.entityKey ?? '');
-      response = await this.request<{ value?: Record<string, unknown>[] } | null>({
-        path: `/Organizations/${key}/Documents`,
-      });
-      response ??= await this.request<{ value?: Record<string, unknown>[] } | null>({
-        path: `/Contacts/${key}/Documents`,
-      });
+
+      // A 404 here means the entity is not of this type. Only an actual list
+      // means "these are the files", so an empty one from the right endpoint is
+      // a real answer while a null is not.
+      if (!response) continue;
+
+      return (response.Attachments ?? []).map((raw): KarbonDocument => ({
+        documentId: String(raw.FileContextKey ?? ''),
+        fileName: String(raw.FileName ?? ''),
+        workItemKey: scope.workItemKey ?? null,
+        entityKey: scope.entityKey ?? null,
+        byteSize: typeof raw.FileSize === 'number' ? raw.FileSize : null,
+        mimeType: typeof raw.MimeType === 'string' ? raw.MimeType : null,
+        uploadedAt: typeof raw.DateCreated === 'string' ? raw.DateCreated : null,
+        uploadedBy: null,
+        // Short-lived: the token carries its own expiry, so it is never stored.
+        downloadUrl: typeof raw.DownloadUrl === 'string' ? raw.DownloadUrl : null,
+      }));
     }
 
-    return (response?.value ?? []).map((raw) => ({
-      documentId: String(raw.DocumentId ?? raw.Id ?? ''),
-      fileName: String(raw.FileName ?? raw.Name ?? ''),
-      workItemKey: scope.workItemKey ?? null,
-      entityKey: scope.entityKey ?? null,
-      byteSize: typeof raw.Size === 'number' ? raw.Size : null,
-      mimeType: typeof raw.ContentType === 'string' ? raw.ContentType : null,
-      uploadedAt: typeof raw.UploadedDate === 'string' ? raw.UploadedDate : null,
-      uploadedBy: typeof raw.UploadedBy === 'string' ? raw.UploadedBy : null,
-    }));
+    return [];
   }
 
-  async downloadDocument(documentId: string): Promise<{ content: Buffer; fileName: string; mimeType: string }> {
+  async downloadDocument(
+    documentId: string,
+    scope?: { workItemKey?: string; entityKey?: string },
+  ): Promise<{ content: Buffer; fileName: string; mimeType: string }> {
+    // Karbon downloads through a signed token handed out with the file list —
+    // `/Documents/{id}/Content` does not exist. Karbon documents the token as
+    // valid for fifteen minutes, so it is fetched fresh rather than stored: a
+    // persisted one would pass every test and then fail in production the first
+    // time a document was opened a quarter of an hour after it was listed.
+    const listing = scope ? await this.listDocuments(scope) : [];
+    const match = listing.find((document) => document.documentId === documentId);
+
+    if (!match?.downloadUrl) {
+      throw new IntegrationError(
+        'Karbon',
+        `No download URL is available for file ${documentId}. Karbon issues one only with a current file listing, so the file must be listed for the entity that holds it.`,
+        { retryable: false, context: { documentId, scope } },
+      );
+    }
+
+    // The vendor returns an API path, sometimes with a differently-cased
+    // prefix. Only the query is taken from it; the host is always ours.
+    const token = new URL(match.downloadUrl, this.config.baseUrl).searchParams.get('token');
     const content = await this.request<Buffer>({
-      path: `/Documents/${encodeURIComponent(documentId)}/Content`,
+      path: '/Files',
+      query: { token: token ?? undefined },
       binary: true,
       headers: { Accept: 'application/octet-stream' },
     });
 
-    return { content, fileName: documentId, mimeType: 'application/octet-stream' };
+    return {
+      content,
+      fileName: match.fileName || documentId,
+      mimeType: match.mimeType ?? 'application/octet-stream',
+    };
   }
 
   async uploadDocument(request: KarbonUploadRequest): Promise<KarbonWriteResult> {
@@ -396,25 +434,79 @@ export class KarbonRestClient implements KarbonProvider {
       request.fileName,
     );
 
+    // `POST /WorkItems/{key}/Documents` does not exist — it answered 404. Karbon
+    // uploads through `POST /Files` as multipart, carrying the entity key as a
+    // form field. Confirmed against Karbon's published OpenAPI specification.
+    form.append('workitem_keys', request.workItemKey);
+
     const response = await this.request<Record<string, unknown> | null>({
       method: 'POST',
-      path: `/WorkItems/${encodeURIComponent(request.workItemKey)}/Documents`,
+      path: '/Files',
       body: form,
       headers: { 'Idempotency-Key': request.idempotencyKey },
     });
 
-    return { outcome: 'SUCCEEDED', objectId: response ? String(response.DocumentId ?? response.Id ?? '') : null };
+    // Karbon answers an upload with `Id`; a file *listing* calls the same value
+    // `FileContextKey`. Both are read so the identifier survives either shape.
+    return {
+      outcome: 'SUCCEEDED',
+      objectId: response ? String(response.Id ?? response.FileContextKey ?? '') : null,
+    };
+  }
+
+  private discoveredAuthor: string | null = null;
+
+  /**
+   * The Karbon user a note is attributed to.
+   *
+   * Karbon requires `AuthorEmailAddress` on every note and refuses an address
+   * that is not a user on the tenant, so this cannot be left out or invented.
+   *
+   * `noteAuthorEmail` is the answer the firm gives deliberately, and it is
+   * preferred whenever it is set. Without it the first user the tenant returns
+   * is discovered once and cached — which keeps notes flowing rather than
+   * failing, but attributes them to whoever `/Users` happens to list first.
+   * Karbon's user listing carries no active flag and no ordering guarantee, so
+   * that may be a departed colleague. The Integrations screen says so, because
+   * a note in a client's timeline signed by the wrong person is a thing the
+   * firm should choose rather than discover.
+   */
+  private async authorEmail(): Promise<string> {
+    if (this.config.noteAuthorEmail) return this.config.noteAuthorEmail;
+    if (this.discoveredAuthor) return this.discoveredAuthor;
+
+    const users = await this.request<{ value?: Record<string, unknown>[] } | null>({
+      path: '/Users',
+      query: { $top: 1 },
+    });
+
+    const email = users?.value?.[0]?.EmailAddress;
+    if (typeof email !== 'string' || email.length === 0) {
+      throw new IntegrationError(
+        'Karbon',
+        'Karbon requires every note to name an author, and no user could be read from the tenant to attribute one to. Set a note author address on the Karbon connection.',
+        { retryable: false },
+      );
+    }
+
+    this.discoveredAuthor = email;
+    return email;
   }
 
   async addComment(request: KarbonCommentRequest): Promise<KarbonWriteResult> {
     const response = await this.request<Record<string, unknown> | null>({
       method: 'POST',
       path: '/Notes',
+      // Karbon requires AuthorEmailAddress, Subject and Body, and links a note
+      // through a Timelines array. The previous body carried none of the
+      // required fields and invented RelatedEntityKey/RelatedEntityType, which
+      // is why every note came back HTTP 400. Confirmed against Karbon's
+      // published OpenAPI specification.
       body: {
+        AuthorEmailAddress: await this.authorEmail(),
         Subject: 'Element Engagements',
         Body: request.body,
-        RelatedEntityKey: request.workItemKey,
-        RelatedEntityType: 'WorkItem',
+        Timelines: [{ EntityType: 'WorkItem', EntityKey: request.workItemKey }],
       },
       headers: { 'Idempotency-Key': request.idempotencyKey },
     });
@@ -422,43 +514,54 @@ export class KarbonRestClient implements KarbonProvider {
     return { outcome: 'SUCCEEDED', objectId: response ? String(response.NoteKey ?? response.Id ?? '') : null };
   }
 
+  /**
+   * Karbon publishes no operation that creates a task.
+   *
+   * This used to `POST /WorkItems/{key}/Tasks` and treat the 404 as "the tenant
+   * does not have the task feature", falling back to a note. The note is right;
+   * the diagnosis was not. There is no such path on any tenant — Karbon's v3
+   * surface has `GET /IntegrationTasks` and `PUT /IntegrationTasks/{key}`, both
+   * of which read and update tasks Karbon created for a registered integration
+   * partner, and neither of which creates one.
+   *
+   * So the 404 was not a signal about the tenant and there is nothing to retry.
+   * This reports the fact and performs no request.
+   *
+   * It deliberately does not post the substitute note itself. The caller posts
+   * one immediately afterwards carrying the same title and body, so a note here
+   * would put two near-identical entries in a client's timeline for every
+   * review — noise the firm would have to read past each time. The note is the
+   * caller's job; saying "unsupported" is this method's.
+   *
+   * The authoritative task lives in this application's Review Queue regardless.
+   */
   async createTask(request: KarbonTaskRequest): Promise<KarbonWriteResult> {
-    try {
-      const response = await this.request<Record<string, unknown> | null>({
-        method: 'POST',
-        path: `/WorkItems/${encodeURIComponent(request.workItemKey)}/Tasks`,
-        body: {
-          Name: request.title,
-          Description: request.description,
-          AssigneeEmail: request.assigneeEmail,
-          DueDate: request.dueDate,
-        },
-        headers: { 'Idempotency-Key': request.idempotencyKey },
-      });
-      return { outcome: 'SUCCEEDED', objectId: response ? String(response.TaskKey ?? response.Id ?? '') : null };
-    } catch (error) {
-      // Task APIs are not available on every tenant. Fall back to a note so the
-      // reviewer is still notified, and say plainly that we did so.
-      if (error instanceof IntegrationError && !error.retryable) {
-        const fallback = await this.addComment({
-          workItemKey: request.workItemKey,
-          body: `${request.title}\n\n${request.description ?? ''}`,
-          idempotencyKey: `${request.idempotencyKey}_note`,
-          assigneeEmail: request.assigneeEmail,
-        });
-        return {
-          outcome: 'SKIPPED_UNSUPPORTED',
-          objectId: fallback.objectId,
-          message: 'Karbon task creation is unavailable on this tenant; a note was posted instead.',
-        };
-      }
-      throw error;
-    }
+    this.config.logger.debug(
+      'Karbon publishes no task-creation operation; the review note carries the assignment instead',
+      { workItemKey: request.workItemKey },
+    );
+
+    return {
+      outcome: 'SKIPPED_UNSUPPORTED',
+      objectId: null,
+      message:
+        'Karbon has no API for creating a task. The review note carries the title and link, and the task itself is tracked in the Review Queue.',
+    };
   }
 
+  /**
+   * Nothing to complete: no task was created, so no task key exists.
+   *
+   * `PUT /Tasks/{id}` does not exist either. `taskId` here can only ever be the
+   * key of the note `createTask` posted, and completing a note is not a thing.
+   */
   async completeTask(taskId: string): Promise<KarbonWriteResult> {
-    await this.request({ method: 'PUT', path: `/Tasks/${encodeURIComponent(taskId)}`, body: { IsCompleted: true } });
-    return { outcome: 'SUCCEEDED', objectId: taskId };
+    return {
+      outcome: 'SKIPPED_UNSUPPORTED',
+      objectId: taskId,
+      message:
+        'Karbon has no API for completing a task. The review assignment was closed in the Review Queue, which is where it is tracked.',
+    };
   }
 
   async updateWorkItemStatus(workItemKey: string, status: string): Promise<KarbonWriteResult> {

@@ -19,12 +19,32 @@ interface Reply {
   headers?: Record<string, string>;
 }
 
+interface RecordedCall {
+  url: string;
+  method: string;
+  /** Parsed when the request carried JSON, so a body can be asserted on. */
+  json?: Record<string, unknown>;
+  /** Present when the request was multipart, which is how Karbon takes a file. */
+  form?: FormData;
+}
+
 /** A fetch that answers from a script and records what it was asked. */
 function scriptedFetch(replies: Reply[]) {
-  const calls: { url: string; method: string }[] = [];
+  const calls: RecordedCall[] = [];
 
   const impl = (async (input: URL | RequestInfo, init?: RequestInit) => {
-    calls.push({ url: String(input), method: init?.method ?? 'GET' });
+    const call: RecordedCall = { url: String(input), method: init?.method ?? 'GET' };
+    if (typeof init?.body === 'string') {
+      try {
+        call.json = JSON.parse(init.body) as Record<string, unknown>;
+      } catch {
+        // Not JSON; the url and method are still worth recording.
+      }
+    } else if (init?.body instanceof FormData) {
+      call.form = init.body;
+    }
+    calls.push(call);
+
     const reply = replies.shift() ?? { status: 200, body: {} };
 
     return new Response(reply.body === undefined ? '' : JSON.stringify(reply.body), {
@@ -34,6 +54,11 @@ function scriptedFetch(replies: Reply[]) {
   }) as typeof fetch;
 
   return { impl, calls };
+}
+
+/** `GET /v3/FileList/{EntityType}` answers with this shape. */
+function fileList(entityKey: string, entityType: string, files: Record<string, unknown>[]) {
+  return { status: 200, body: { EntityKey: entityKey, EntityType: entityType, Attachments: files } };
 }
 
 function clientWith(replies: Reply[], overrides: Partial<ConstructorParameters<typeof KarbonRestClient>[0]> = {}) {
@@ -147,16 +172,20 @@ describe('the rate limiter', () => {
   });
 });
 
-describe('a write the tenant does not support', () => {
-  it('falls back to a note instead of reporting a task it never created', async () => {
-    // The defect this covers: a 404 was turned into `null` for every method, so
-    // `createTask` returned SUCCEEDED with no task id. Karbon's task API
-    // availability varies by tenant and plan, so 404 is the *expected* shape of
-    // "not available here" — and it was the one shape reported as success.
-    const { client, calls } = clientWith([
-      { status: 404 },
-      { status: 200, body: { NoteKey: 'note-1' } },
-    ]);
+describe('an operation Karbon does not publish at all', () => {
+  /**
+   * Karbon's v3 surface has no operation that creates a task. There is no
+   * `/WorkItems/{key}/Tasks`; `/IntegrationTasks` is GET-only and
+   * `/IntegrationTasks/{key}` is GET and PUT, both of which act on tasks Karbon
+   * created for a registered integration partner.
+   *
+   * The client used to POST to the non-existent path and read the 404 as "this
+   * tenant does not have the task feature". The note it then posted was right,
+   * the diagnosis was not, and it cost a request and a 404 in the logs on every
+   * single review.
+   */
+  it('makes no request, because there is no endpoint to request', async () => {
+    const { client, calls } = clientWith([]);
 
     const result = await client.createTask({
       workItemKey: 'WI-1',
@@ -166,24 +195,74 @@ describe('a write the tenant does not support', () => {
     });
 
     expect(result.outcome).toBe('SKIPPED_UNSUPPORTED');
-    expect(result.objectId).toBe('note-1');
-    expect(result.message).toMatch(/note was posted instead/i);
-
-    expect(calls[0]).toMatchObject({ method: 'POST' });
-    expect(calls[0]?.url).toContain('/Tasks');
-    expect(calls[1]?.url).toContain('/Notes');
+    expect(result.message).toMatch(/no API for creating a task/i);
+    expect(calls).toHaveLength(0);
   });
 
-  it('still reports a genuine task as succeeded', async () => {
-    const { client } = clientWith([{ status: 200, body: { TaskKey: 'task-9' } }]);
+  it('reports no object id, so nothing downstream treats a note as a task handle', async () => {
+    // It used to return the substitute note's key here. Anything that stored
+    // that and later tried to complete "the task" would be holding a note key.
+    const { client } = clientWith([]);
 
-    const result = await client.createTask({
-      workItemKey: 'WI-1',
-      title: 'Review',
-      idempotencyKey: 'idem-2',
+    const result = await client.createTask({ workItemKey: 'WI-1', title: 'Review', idempotencyKey: 'idem-2' });
+
+    expect(result.objectId).toBeNull();
+  });
+
+  it('says the same about completing one, rather than PUTting to a path that is not there', async () => {
+    const { client, calls } = clientWith([]);
+
+    const result = await client.completeTask('task-9');
+
+    expect(result.outcome).toBe('SKIPPED_UNSUPPORTED');
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('posting a note', () => {
+  it('sends the fields Karbon requires, and links through Timelines', async () => {
+    // Every note came back HTTP 400: the body carried none of the three
+    // required fields and invented RelatedEntityKey/RelatedEntityType, which
+    // Karbon does not define. It links a note through a Timelines array.
+    const { client, calls } = clientWith([
+      { status: 200, body: { value: [{ Id: 'u1', Name: 'A Partner', EmailAddress: 'partner@firm.test' }] } },
+      { status: 200, body: { NoteKey: 'note-1' } },
+    ]);
+
+    const result = await client.addComment({ workItemKey: 'WI-1', body: 'Ready for review.', idempotencyKey: 'idem-3' });
+
+    expect(result).toMatchObject({ outcome: 'SUCCEEDED', objectId: 'note-1' });
+    expect(calls[1]?.url).toContain('/Notes');
+    expect(calls[1]?.json).toMatchObject({
+      AuthorEmailAddress: 'partner@firm.test',
+      Subject: expect.any(String),
+      Body: 'Ready for review.',
+      Timelines: [{ EntityType: 'WorkItem', EntityKey: 'WI-1' }],
+    });
+    expect(calls[1]?.json).not.toHaveProperty('RelatedEntityKey');
+  });
+
+  it('prefers the author the firm configured over whoever the tenant lists first', async () => {
+    // Discovery attributes notes to whichever user `/Users` returns first —
+    // there is no active flag and no ordering guarantee, so that can be someone
+    // who has left. A configured address must win, and must skip the lookup.
+    const { client, calls } = clientWith([{ status: 200, body: { NoteKey: 'note-2' } }], {
+      noteAuthorEmail: 'engagements@firm.test',
     });
 
-    expect(result).toMatchObject({ outcome: 'SUCCEEDED', objectId: 'task-9' });
+    await client.addComment({ workItemKey: 'WI-1', body: 'Ready.', idempotencyKey: 'idem-4' });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toContain('/Notes');
+    expect(calls[0]?.json).toMatchObject({ AuthorEmailAddress: 'engagements@firm.test' });
+  });
+
+  it('refuses rather than posting an unattributed note when no author can be found', async () => {
+    const { client } = clientWith([{ status: 200, body: { value: [] } }]);
+
+    await expect(
+      client.addComment({ workItemKey: 'WI-1', body: 'Ready.', idempotencyKey: 'idem-5' }),
+    ).rejects.toThrow(/author/i);
   });
 });
 
@@ -195,57 +274,175 @@ describe('reading something that is not there', () => {
   });
 });
 
-describe('listing documents filed against a client rather than a work item', () => {
+describe('listing the files on an entity', () => {
   /**
-   * A client key names an Organization or a Contact, and only Karbon knows
-   * which. Because a 404 on a GET is a legitimate "found nothing", asking the
-   * wrong collection is indistinguishable from an empty one — so looking only
-   * in `/Contacts` reported "no documents" for every organisation. Every
-   * corporate client is an organisation, which made the client-level half of
-   * the prior-year search silently useless for all T2 work.
+   * This asked `/v3/WorkItems/{key}/Documents` and `/v3/{Organizations,Contacts}
+   * /{key}/Documents`. None of those paths exist. Because a 404 on a GET is a
+   * legitimate "found nothing", every work item and every client record in the
+   * firm's tenant reported zero documents — a working integration by every
+   * signal the app had, finding nothing, for ever. Karbon serves files from
+   * `/v3/FileList/{EntityType}?EntityKey=...`.
    */
-  it('finds documents filed against an organisation', async () => {
+  it('asks the FileList endpoint for a work item, not a Documents sub-collection', async () => {
     const { client, calls } = clientWith([
-      { status: 200, body: { value: [{ DocumentId: 'doc-1', FileName: '2025 Engagement Letter.docx' }] } },
+      fileList('wi-1', 'WorkItem', [
+        {
+          FileContextKey: 'file-1',
+          FileName: '2025 Engagement Letter.docx',
+          FileSize: 7316,
+          MimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          DateCreated: '2025-07-18T23:44:26Z',
+          DownloadUrl: '/V3/Files?token=abc',
+        },
+      ]),
     ]);
 
-    const documents = await client.listDocuments({ entityKey: 'org-key' });
+    const documents = await client.listDocuments({ workItemKey: 'wi-1' });
 
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.url).toContain('/FileList/WorkItem');
+    expect(calls[0]!.url).toContain('EntityKey=wi-1');
     expect(documents).toHaveLength(1);
-    expect(documents[0]).toMatchObject({ documentId: 'doc-1', entityKey: 'org-key' });
-    expect(calls[0]!.url).toContain('/Organizations/org-key/Documents');
+    expect(documents[0]).toMatchObject({
+      documentId: 'file-1',
+      fileName: '2025 Engagement Letter.docx',
+      byteSize: 7316,
+      workItemKey: 'wi-1',
+    });
   });
 
-  it('falls back to contacts, because an individual client is not an organisation', async () => {
+  it('tries Organization before Contact, because a corporate client is an organisation', async () => {
+    // A client key names one or the other and only Karbon knows which. Asking
+    // just one made the client-level half of the prior-year search useless for
+    // whichever kind it did not ask about.
     const { client, calls } = clientWith([
       { status: 404 },
-      { status: 200, body: { value: [{ DocumentId: 'doc-2', FileName: '2025 T1 Letter.pdf' }] } },
+      fileList('contact-key', 'Contact', [{ FileContextKey: 'file-2', FileName: '2025 T1 Letter.pdf' }]),
     ]);
 
     const documents = await client.listDocuments({ entityKey: 'contact-key' });
 
     expect(documents).toHaveLength(1);
-    expect(documents[0]).toMatchObject({ documentId: 'doc-2' });
+    expect(documents[0]).toMatchObject({ documentId: 'file-2', entityKey: 'contact-key' });
     expect(calls.map((call) => call.url)).toEqual([
-      expect.stringContaining('/Organizations/contact-key/Documents'),
-      expect.stringContaining('/Contacts/contact-key/Documents'),
+      expect.stringContaining('/FileList/Organization'),
+      expect.stringContaining('/FileList/Contact'),
     ]);
   });
 
-  it('reports nothing only when both collections say nothing', async () => {
+  it('stops at the first entity type that answers, even when it answers empty', async () => {
+    // An empty list from the right endpoint is a real answer: the organisation
+    // has no files. Carrying on to Contact would be asking a question already
+    // answered, and would spend a request from a shared 120-a-minute budget.
+    const { client, calls } = clientWith([fileList('org-key', 'Organization', [])]);
+
+    await expect(client.listDocuments({ entityKey: 'org-key' })).resolves.toEqual([]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('reports nothing only when neither entity type recognises the key', async () => {
     const { client, calls } = clientWith([{ status: 404 }, { status: 404 }]);
 
     await expect(client.listDocuments({ entityKey: 'nowhere' })).resolves.toEqual([]);
     expect(calls).toHaveLength(2);
   });
+});
 
-  it('does not go looking in client collections when a work item was named', async () => {
-    const { client, calls } = clientWith([{ status: 200, body: { value: [] } }]);
+describe('downloading a file', () => {
+  /**
+   * There is no download-by-id operation. `/v3/Documents/{id}/Content` does not
+   * exist. Karbon issues a signed token alongside a file listing — documented
+   * as valid for fifteen minutes — and `GET /v3/Files?token=...` spends it.
+   */
+  it('lists the entity to get a fresh token, then spends it', async () => {
+    const { client, calls } = clientWith([
+      fileList('wi-1', 'WorkItem', [
+        { FileContextKey: 'file-1', FileName: 'Letter.pdf', MimeType: 'application/pdf', DownloadUrl: '/V3/Files?token=jwt-abc' },
+      ]),
+      { status: 200, body: {} },
+    ]);
 
-    await client.listDocuments({ workItemKey: 'wi-1' });
+    const file = await client.downloadDocument('file-1', { workItemKey: 'wi-1' });
 
+    expect(calls[0]!.url).toContain('/FileList/WorkItem');
+    expect(calls[1]!.url).toContain('/Files');
+    expect(calls[1]!.url).toContain('token=jwt-abc');
+    expect(file).toMatchObject({ fileName: 'Letter.pdf', mimeType: 'application/pdf' });
+  });
+
+  it('takes only the token from the vendor URL, never the host', async () => {
+    // DownloadUrl is vendor-supplied. Fetching it as given would let a response
+    // point this client, carrying the firm's credentials, at any host at all.
+    const { client, calls } = clientWith([
+      fileList('wi-1', 'WorkItem', [
+        { FileContextKey: 'file-1', FileName: 'Letter.pdf', DownloadUrl: 'https://attacker.example/v3/Files?token=jwt-abc' },
+      ]),
+      { status: 200, body: {} },
+    ]);
+
+    await client.downloadDocument('file-1', { workItemKey: 'wi-1' });
+
+    expect(calls.every((call) => call.url.startsWith('https://api.karbonhq.test/'))).toBe(true);
+  });
+
+  it('fails plainly when the file is not in the listing, rather than fetching nothing', async () => {
+    const { client } = clientWith([fileList('wi-1', 'WorkItem', [])]);
+
+    await expect(client.downloadDocument('file-missing', { workItemKey: 'wi-1' })).rejects.toThrow(/download URL/i);
+  });
+});
+
+describe('uploading a file', () => {
+  it('posts multipart to /Files, carrying the work item key as a form field', async () => {
+    // `POST /v3/WorkItems/{key}/Documents` answered 404: it does not exist. A
+    // signed engagement letter reaching a client's permanent file depends on
+    // this one being right.
+    const { client, calls } = clientWith([
+      // The collision check reads the existing files first.
+      fileList('WI-1', 'WorkItem', []),
+      { status: 201, body: { Id: 'file-9', Name: 'Signed.pdf' } },
+    ]);
+
+    const result = await client.uploadDocument({
+      workItemKey: 'WI-1',
+      fileName: 'Signed.pdf',
+      content: Buffer.from('%PDF-1.4'),
+      mimeType: 'application/pdf',
+      idempotencyKey: 'idem-6',
+      neverOverwrite: true,
+    });
+
+    expect(result).toMatchObject({ outcome: 'SUCCEEDED', objectId: 'file-9' });
+    expect(calls[1]).toMatchObject({ method: 'POST' });
+    expect(calls[1]!.url).toContain('/Files');
+    expect(calls[1]!.url).not.toContain('/WorkItems');
+    expect(calls[1]!.form?.get('workitem_keys')).toBe('WI-1');
+    expect(calls[1]!.form?.get('file')).toBeInstanceOf(Blob);
+  });
+
+  it('never replaces a file already on the work item', async () => {
+    // The collision check depends on the listing being real. While it pointed
+    // at a path that did not exist it returned an empty list every time, so
+    // `neverOverwrite` would have found no collision no matter what was there —
+    // a guard that could not fire, protecting signed documents.
+    const { client, calls } = clientWith([
+      fileList('WI-1', 'WorkItem', [{ FileContextKey: 'existing-1', FileName: 'Signed.pdf' }]),
+    ]);
+
+    const result = await client.uploadDocument({
+      workItemKey: 'WI-1',
+      fileName: 'Signed.pdf',
+      content: Buffer.from('%PDF-1.4'),
+      mimeType: 'application/pdf',
+      idempotencyKey: 'idem-7',
+      neverOverwrite: true,
+    });
+
+    expect(result).toMatchObject({ outcome: 'SKIPPED_DUPLICATE', objectId: 'existing-1' });
+    expect(result.message).toMatch(/already exists/i);
+    // One call: the listing. Nothing was uploaded.
     expect(calls).toHaveLength(1);
-    expect(calls[0]!.url).toContain('/WorkItems/wi-1/Documents');
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
   });
 });
 

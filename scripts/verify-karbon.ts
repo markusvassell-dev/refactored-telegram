@@ -205,6 +205,7 @@ async function main(): Promise<void> {
       baseUrl: connection.baseUrl ?? env.KARBON_API_BASE_URL,
       bearerToken: credentials.bearerToken,
       accessKey: credentials.accessKey,
+      noteAuthorEmail: env.KARBON_NOTE_AUTHOR_EMAIL,
       logger,
     });
 
@@ -247,17 +248,30 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
     (items) => `${items.length} work item(s) returned (asked for at most ${CANDIDATE_LIMIT})`,
   );
 
-  const subject: KarbonWorkItem | null =
-    (workItemKey
-      ? await attempt(
-          'READ_WORK_ITEM',
-          () => client.getWorkItem(workItemKey),
-          (item) => (item ? `"${item.title}"` : `no work item with key ${workItemKey}`),
-          (item) => item !== null,
-        )
-      : null) ??
-    found?.[0] ??
-    null;
+  const named = workItemKey
+    ? await attempt(
+        'READ_WORK_ITEM',
+        () => client.getWorkItem(workItemKey),
+        (item) => (item ? `"${item.title}"` : `no work item with key ${workItemKey}`),
+        (item) => item !== null,
+      )
+    : null;
+
+  // A named key that does not resolve must stop the run, not quietly fall back.
+  // The fallback existed for the read-only case, where landing on some other
+  // work item costs nothing. With writes enabled it silently retargeted them at
+  // whichever work item the search happened to return — somebody's live
+  // engagement — which is the exact outcome --work-item exists to prevent. It
+  // happened: a run passed the literal placeholder `KEY`, which resolved to
+  // nothing, and the writes went at a real client's work item instead.
+  if (workItemKey && !named && allowWrites) {
+    fail(
+      `No work item has the key "${workItemKey}", so there is nowhere you have chosen to write.`,
+      'Refusing to fall back to whichever work item the search returned first — that is somebody’s live engagement. Take the key from the Karbon URL of a work item you are willing to have test data written to.',
+    );
+  }
+
+  const subject: KarbonWorkItem | null = named ?? found?.[0] ?? null;
 
   if (!subject) {
     for (const capability of ['READ_WORK_ITEM', 'READ_CLIENT', 'LIST_DOCUMENTS', 'DOWNLOAD_DOCUMENT']) {
@@ -330,12 +344,24 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
     // there left the download unverified for the commonest reason imaginable —
     // the newest work item in a tenant usually has no documents yet — and
     // asked whoever ran this to go and find a key by hand.
-    let carrier: { documentId: string; fileName: string; where: string } | null =
+    // The scope travels with the document. Karbon's download is a two-step —
+    // list the entity to get a short-lived token, then spend it — so knowing
+    // the identifier is not enough; the download has to be able to ask the same
+    // shelf the listing came off.
+    type Carrier = {
+      documentId: string;
+      fileName: string;
+      where: string;
+      scope: { workItemKey?: string; entityKey?: string };
+    };
+
+    let carrier: Carrier | null =
       documents && documents.length > 0
         ? {
             documentId: documents[0]!.documentId,
             fileName: documents[0]!.fileName,
             where: `work item ${subject.workItemKey}`,
+            scope: { workItemKey: subject.workItemKey },
           }
         : null;
 
@@ -364,6 +390,7 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
             documentId: theirs[0]!.documentId,
             fileName: theirs[0]!.fileName,
             where: `work item ${candidate.workItemKey}`,
+            scope: { workItemKey: candidate.workItemKey },
           };
           break;
         }
@@ -391,6 +418,7 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
             documentId: theirs[0]!.documentId,
             fileName: theirs[0]!.fileName,
             where: `client ${entityKey}`,
+            scope: { entityKey },
           };
           record('LIST_DOCUMENTS_FOR_CLIENT', 'PASS', `${theirs.length} document(s) on client ${entityKey}`);
           break;
@@ -412,7 +440,7 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
       const found = carrier;
       await attempt(
         'DOWNLOAD_DOCUMENT',
-        () => client.downloadDocument(found.documentId),
+        () => client.downloadDocument(found.documentId, found.scope),
         (file) => `${file.fileName}, ${file.content.byteLength} bytes, ${file.mimeType} (from ${found.where})`,
       );
     } else {
@@ -492,21 +520,15 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
     (result) => `${result.outcome}${result.objectId ? ` (${result.objectId})` : ''}`,
   );
 
-  // The interesting outcome here is SKIPPED_UNSUPPORTED, not failure: task
-  // availability varies by tenant and plan, and the fallback is the design.
-  await attempt(
+  // Nothing to attempt. Karbon publishes no task-creation operation — this run
+  // used to POST to `/WorkItems/{key}/Tasks`, read the 404 as "this tenant does
+  // not have tasks", and report a tenant limitation that was really a wrong
+  // path. Writing to a work item to learn something already settled by reading
+  // the vendor's specification is not verification.
+  record(
     'CREATE_TASK',
-    () =>
-      client.createTask({
-        workItemKey: subject.workItemKey,
-        title: 'Element Engagements verification task',
-        description: `Created by a verification run at ${stamp}. Safe to delete.`,
-        idempotencyKey: `verify_task_${stamp}`,
-      }),
-    (result) =>
-      result.outcome === 'SKIPPED_UNSUPPORTED'
-        ? `tasks unavailable on this tenant; fell back to a note — ${result.message ?? ''}`
-        : `${result.outcome}${result.objectId ? ` (${result.objectId})` : ''}`,
+    'SKIP',
+    'not attempted: Karbon publishes no task-creation operation, so the review note carries the assignment',
   );
 
   // The one that matters most. UPLOAD_DOCUMENT is how a signed engagement
@@ -543,8 +565,8 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
   );
 
   process.stdout.write(
-    `\nTest data was written to work item ${subject.workItemKey}. Delete the note,\n` +
-      'task and document named "ELEMENT ENGAGEMENTS VERIFICATION" when you are done.\n',
+    `\nTest data was written to work item ${subject.workItemKey}. Delete the note and\n` +
+      'the document named "ELEMENT ENGAGEMENTS VERIFICATION" when you are done.\n',
   );
 }
 

@@ -42,55 +42,63 @@ export const KARBON_CAPABILITY_MATRIX: readonly CapabilityReport[] = [
   },
   {
     capability: 'LIST_DOCUMENTS',
-    // Demoted deliberately. Every observation of this so far has been an empty
-    // list, and an empty list is not evidence the operation works: a 404 on a
-    // GET is mapped to "found nothing", so a collection the API key cannot read
-    // is indistinguishable from one with nothing in it. Forty-seven work items
-    // and client records returned zero, which is implausible for a working firm.
-    // `describeDocumentAccess` reports what the endpoint actually answered; this
-    // row moves back to SUPPORTED when a run returns a document.
+    // The empty lists were not a permissions problem and not an empty firm:
+    // `/v3/WorkItems/{key}/Documents` does not exist, and a 404 on a GET is
+    // mapped to "found nothing", so every work item and client record reported
+    // zero. Karbon serves files from `/v3/FileList/{EntityType}`. Corrected
+    // against Karbon's published OpenAPI specification; still UNVERIFIED,
+    // because a corrected path is not the same as an observed one. This moves
+    // to SUPPORTED when a run returns a document.
     support: 'UNVERIFIED',
-    operation: 'GET /v3/WorkItems/{WorkItemKey}/Documents',
+    operation: 'GET /v3/FileList/{EntityType}?EntityKey=... (EntityType is WorkItem, Organization or Contact)',
     limitation:
-      'Document listings expose file names and identifiers. File names are never trusted on their own — every candidate prior-year document is verified against its content. Observed returning an empty list only, which does not distinguish "no documents" from "not readable by this API key".',
+      'Document listings expose file names and identifiers. File names are never trusted on their own — every candidate prior-year document is verified against its content. A client key names either an Organization or a Contact, so both are tried in that order.',
   },
   {
     capability: 'DOWNLOAD_DOCUMENT',
     support: 'UNVERIFIED',
-    operation: 'GET /v3/Documents/{DocumentId}/Content',
+    operation: 'GET /v3/Files?token=... (the token comes from DownloadUrl on a current file listing)',
+    limitation:
+      'There is no download by document id. Karbon issues a signed token alongside a file listing and documents it as valid for fifteen minutes, so a download must first list the entity that holds the file. Tokens are never persisted.',
   },
   {
     capability: 'UPLOAD_DOCUMENT',
     support: 'UNVERIFIED',
-    operation: 'POST /v3/WorkItems/{WorkItemKey}/Documents',
+    operation: 'POST /v3/Files (multipart/form-data: file plus workitem_keys)',
     limitation:
       'The application never overwrites an existing approved, signed, or certificate document. If a name collides it uploads under a suffixed name and records the collision.',
   },
   {
     capability: 'ADD_COMMENT',
     support: 'UNVERIFIED',
-    operation: 'POST /v3/Notes',
+    operation: 'POST /v3/Notes with AuthorEmailAddress, Subject, Body and a Timelines entry naming the Work Item',
     limitation:
-      'Comments are notifications only. They are never parsed as automation commands — generation is triggered by an explicit action, a bulk rollout, or a configured Work Item status.',
+      'Karbon requires every note to name an author who is a user on the tenant. Set a note author on the Karbon connection; otherwise the first user the tenant lists is used, which may not be who the firm would choose. Comments are notifications only — they are never parsed as automation commands.',
   },
   {
     capability: 'CREATE_TASK',
-    support: 'UNVERIFIED',
-    operation: 'POST /v3/WorkItems/{WorkItemKey}/Tasks (availability varies by tenant and plan)',
+    // Not "varies by tenant and plan" — that was a guess dressed as a fact.
+    // Karbon's v3 surface has no operation that creates a task on a work item.
+    // `/v3/IntegrationTasks` is GET-only and `/v3/IntegrationTasks/{key}` is
+    // GET and PUT: both read or update tasks Karbon created for a registered
+    // integration partner, and neither creates one.
+    support: 'UNSUPPORTED',
     fallback:
-      'When task creation is unavailable the application posts a note containing the review title and a deep link, and keeps the authoritative review task in its own Review Queue.',
+      'The application posts a note carrying the review title and a deep link, and keeps the authoritative review task in its own Review Queue. No request is made to a task endpoint, because there is none to make.',
+    limitation: 'Karbon publishes no task-creation operation. This is a property of the API, not of the tenant.',
   },
   {
     capability: 'UPDATE_TASK',
-    support: 'UNVERIFIED',
-    operation: 'PUT /v3/WorkItems/{WorkItemKey}/Tasks/{TaskId}',
+    support: 'UNSUPPORTED',
     fallback: 'A follow-up note is posted instead, and the app-side task is updated.',
+    limitation:
+      'PUT /v3/IntegrationTasks/{IntegrationTaskKey} updates only tasks Karbon created for a registered integration partner. Since no task can be created, no such key ever exists here.',
   },
   {
     capability: 'COMPLETE_TASK',
-    support: 'UNVERIFIED',
-    operation: 'PUT /v3/WorkItems/{WorkItemKey}/Tasks/{TaskId} with a completed state',
+    support: 'UNSUPPORTED',
     fallback: 'A completion note is posted and the app-side review assignment is closed.',
+    limitation: 'There is no task to complete, for the same reason task creation is unavailable.',
   },
   {
     capability: 'UPDATE_WORK_ITEM_STATUS',
@@ -102,17 +110,17 @@ export const KARBON_CAPABILITY_MATRIX: readonly CapabilityReport[] = [
   {
     capability: 'RECEIVE_WEBHOOKS',
     support: 'UNVERIFIED',
-    operation: 'Karbon webhook subscriptions',
+    operation: 'POST /v3/WebhookSubscriptions with a WebhookType of Work, Note, Contact, User, IntegrationTask, Invoice or EstimateSummary',
     limitation:
-      'Event coverage varies. The application does not depend on Karbon webhooks for correctness; it reconciles by polling on a schedule.',
+      'Those seven types are the whole published set. The application does not depend on Karbon webhooks for correctness; it reconciles by polling on a schedule.',
   },
   {
     capability: 'DOCUMENT_UPLOAD_EVENTS',
     support: 'UNSUPPORTED',
     fallback:
-      'The worker polls the Work Item document list on a schedule to detect new or replaced final documents, which is what drives stale-cover-letter detection.',
+      'The worker polls the file list on a schedule to detect new or replaced final documents, which is what drives stale-cover-letter detection.',
     limitation:
-      'A cover letter is never generated merely because a PDF appeared. All three trigger conditions must still be satisfied.',
+      'There is no file or document webhook type — the published set covers work items, notes, contacts, users, integration tasks, invoices and estimate summaries, and nothing else. A cover letter is never generated merely because a PDF appeared; all three trigger conditions must still be satisfied.',
   },
 ];
 

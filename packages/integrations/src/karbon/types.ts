@@ -60,6 +60,12 @@ export interface KarbonDocument {
   mimeType?: string | null;
   uploadedAt?: string | null;
   uploadedBy?: string | null;
+  /**
+   * The signed API path Karbon hands out with a file listing. Short-lived — the
+   * token carries its own expiry — so it is never persisted; a download fetches
+   * a current listing to obtain a fresh one.
+   */
+  downloadUrl?: string | null;
 }
 
 export interface KarbonWorkItemQuery {
@@ -139,6 +145,26 @@ export interface KarbonWriteResult {
   message?: string;
 }
 
+/** The entity kinds Karbon serves a file list for. */
+export type KarbonEntityType = 'WorkItem' | 'Contact' | 'Organization';
+
+/** `GET /v3/FileList/{EntityType}` — the shape Karbon actually returns. */
+export interface KarbonFileListItem {
+  FileContextKey?: string;
+  FileName?: string;
+  FileSize?: number;
+  MimeType?: string;
+  /** A signed, short-lived API path. Never stored: the token expires. */
+  DownloadUrl?: string;
+  DateCreated?: string;
+}
+
+export interface KarbonFileList {
+  EntityKey?: string;
+  EntityType?: KarbonEntityType;
+  Attachments?: KarbonFileListItem[];
+}
+
 export interface KarbonProvider {
   readonly name: string;
   /** True when this adapter is a mock and performs no real network calls. */
@@ -151,7 +177,14 @@ export interface KarbonProvider {
   searchWorkItems(query: KarbonWorkItemQuery): Promise<KarbonWorkItem[]>;
 
   listDocuments(scope: { workItemKey?: string; entityKey?: string }): Promise<KarbonDocument[]>;
-  downloadDocument(documentId: string): Promise<{ content: Buffer; fileName: string; mimeType: string }>;
+  /**
+   * `scope` names the entity whose listing carries the download token. Karbon
+   * issues one only alongside a file list, so a document id alone is not enough.
+   */
+  downloadDocument(
+    documentId: string,
+    scope?: { workItemKey?: string; entityKey?: string },
+  ): Promise<{ content: Buffer; fileName: string; mimeType: string }>;
 
   uploadDocument(request: KarbonUploadRequest): Promise<KarbonWriteResult>;
   addComment(request: KarbonCommentRequest): Promise<KarbonWriteResult>;

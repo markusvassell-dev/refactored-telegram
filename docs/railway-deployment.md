@@ -149,10 +149,15 @@ what Test Mode keys off; a credential supplied through the environment would
 have no flag, and Test Mode's guarantee would become a convention.
 
 What *is* environment configuration: `KARBON_API_BASE_URL`,
-`ADOBE_SIGN_API_BASE_URL` (region-specific), `ADOBE_SIGN_REDIRECT_URI`, and the
-two webhook secrets — `KARBON_WEBHOOK_SECRET` and `ADOBE_SIGN_WEBHOOK_SECRET` —
-which are values this application chooses and gives to the vendor, not
-credentials the vendor issues.
+`KARBON_NOTE_AUTHOR_EMAIL`, `ADOBE_SIGN_API_BASE_URL` (region-specific),
+`ADOBE_SIGN_REDIRECT_URI`, and the two webhook secrets —
+`KARBON_WEBHOOK_SECRET` and `ADOBE_SIGN_WEBHOOK_SECRET` — which are values this
+application chooses and gives to the vendor, not credentials the vendor issues.
+
+Set `KARBON_NOTE_AUTHOR_EMAIL` to a current user at the firm. Karbon requires
+every note to name an author; left unset, notes in clients' timelines are
+attributed to whichever user the tenant lists first, which may be someone who
+has left.
 
 See the full list in `.env.example`.
 

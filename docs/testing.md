@@ -3,8 +3,8 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (706 tests)
-pnpm test:unit          # 358 — no external dependencies
+pnpm test               # unit + integration  (715 tests)
+pnpm test:unit          # 367 — no external dependencies
 pnpm test:integration   # 348 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 59  — needs a browser
 pnpm build              # production build
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (358)
+## Unit tests (367)
 
 No database, no filesystem, no network.
 
@@ -133,6 +133,24 @@ type into: an email that is only nearly one, an incomplete telephone number,
 February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
+
+**The Karbon client (32)** — the behaviours that only appear against a real
+account, none of which the mock adapter exercises. The endpoints are asserted by
+path, because three of them used to be paths Karbon does not publish and the API
+answered each with an ordinary 404: files are listed from
+`/FileList/{EntityType}`, uploaded to `/Files` as multipart carrying
+`workitem_keys`, and downloaded from `/Files?token=` after a listing issues the
+token. A client key is tried as an organisation before a contact; an empty list
+from a recognised entity stops the search while a 404 does not. Only the token
+is taken from the vendor-supplied `DownloadUrl` — never the host — and the same
+for `@odata.nextLink`, so no response can point this client at another server.
+`neverOverwrite` refuses to replace a file already on the work item and uploads
+nothing. A note carries the three fields Karbon requires and links through
+`Timelines`; a configured author beats discovery and skips the lookup; no author
+at all is a refusal rather than an unattributed note. Task creation and
+completion make no request and report `SKIPPED_UNSUPPORTED`, because Karbon
+publishes no such operation. Plus `Retry-After` in both documented forms, the
+token bucket under a burst, and paging past the first 100 results.
 
 ## Integration tests (348)
 
@@ -616,11 +634,10 @@ Each was fixed in the code, not the test:
     `<iframe>` and fails when one appears that has not been considered.
 52. **A Karbon task that was never created was reported as created.** The client
     turned a 404 into `null` for every HTTP method, so `createTask` returned
-    `SUCCEEDED` with no task id. Karbon's task API availability varies by tenant
-    and plan, which makes 404 the *expected* shape of "not available here" — and
-    it was the one shape reported as success, defeating the fallback-to-a-note
-    design that exists precisely for it. A 404 is now an answer of "nothing"
-    only for a read.
+    `SUCCEEDED` with no task id. A 404 is now an answer of "nothing" only for a
+    read. *(The explanation originally given here — that Karbon's task API
+    "availability varies by tenant and plan" — was inferred from the 404 and is
+    wrong. Karbon publishes no task API at all. See entry 89.)*
 53. The client ignored `Retry-After`. Karbon documents 120 requests a minute per
     account per application and says exactly how long to wait when it throttles;
     the client backed off on its own schedule — 0.5s, 1s, 2s — and gave up after
@@ -862,6 +879,49 @@ Each was fixed in the code, not the test:
     The row is demoted to Unverified until a run returns a document, and
     `describeDocumentAccess` reports what the endpoints actually answered — 200
     with an empty list, or 404 — so the difference is visible in one run.
+
+88. **The document endpoints did not exist.** This is the answer to 87, and it
+    was worse than a permissions problem. `GET`/`POST
+    /v3/WorkItems/{key}/Documents`, the `/Organizations` and `/Contacts`
+    equivalents, and `GET /v3/Documents/{id}/Content` are not paths Karbon
+    publishes. Every one answered 404, and a 404 on a GET is mapped to "found
+    nothing" — so **every work item and every client record in the firm's tenant
+    reported zero documents**, and prior-year document discovery would have
+    found nothing for ever while every signal the application had said it was
+    healthy. Karbon serves files from `GET /v3/FileList/{EntityType}?EntityKey=`,
+    uploads through `POST /v3/Files` as multipart with `workitem_keys`, and
+    downloads through `GET /v3/Files?token=` using a signed token issued with a
+    listing and valid for fifteen minutes. All four corrected against Karbon's
+    published OpenAPI specification.
+
+    The `neverOverwrite` guard sat on top of the broken listing, so it could not
+    fire: it looked for a name collision in a list that was always empty. The
+    rule that a signed document is never replaced was, in practice, unenforced.
+89. **Karbon has no task API at all**, which makes entry 52 a misdiagnosis
+    worth correcting rather than quietly amending. The fallback there was right
+    and the reason given for it was wrong: "availability varies by tenant and
+    plan" was inferred from a 404 and stated as fact. There is no
+    `/WorkItems/{key}/Tasks` on any tenant, and `/v3/IntegrationTasks` is
+    `GET`-only. `CREATE_TASK`, `UPDATE_TASK` and `COMPLETE_TASK` are now
+    `UNSUPPORTED`, no request is attempted, and the review note carries the
+    assignment. The mock was changed to match: it used to answer `SUCCEEDED`
+    with a `task_1` identifier, so Test Mode showed a Karbon task created on
+    every run and production never could — a mock more capable than the vendor,
+    which hides the difference exactly where it is cheapest to see it.
+90. **Every note came back HTTP 400.** The body carried none of the three fields
+    Karbon requires — `AuthorEmailAddress`, `Subject`, `Body` — and invented
+    `RelatedEntityKey` and `RelatedEntityType`, which Karbon does not define; a
+    note links through a `Timelines` array. Karbon also rejects an author who is
+    not a user on the tenant, and nothing in this application held one, so
+    `KARBON_NOTE_AUTHOR_EMAIL` now names the author. Left unset the first user
+    the tenant lists is used, which keeps notes flowing but may sign a client's
+    timeline with someone who has left: Karbon's user listing carries no active
+    flag and no ordering guarantee.
+91. `createTask` briefly posted the substitute note itself, which would have put
+    two near-identical notes in a client's timeline for every review — the
+    caller already posts one. Caught before it shipped; recorded because the
+    fix for a missing endpoint is where a duplicate write is easiest to
+    introduce.
 
 ## What is not covered
 

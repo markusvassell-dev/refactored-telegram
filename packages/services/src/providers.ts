@@ -136,6 +136,7 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
           baseUrl: karbonConnection.baseUrl ?? env.KARBON_API_BASE_URL,
           bearerToken: karbonConnection.credentials.bearerToken as string,
           accessKey: karbonConnection.credentials.accessKey as string,
+          noteAuthorEmail: env.KARBON_NOTE_AUTHOR_EMAIL,
           logger: options.logger,
         }),
         'Test Mode is active and this is a production Karbon connection, so nothing was written to Karbon.',
@@ -153,6 +154,7 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
       baseUrl: karbonConnection.baseUrl ?? env.KARBON_API_BASE_URL,
       bearerToken: karbonConnection.credentials.bearerToken as string,
       accessKey: karbonConnection.credentials.accessKey as string,
+      noteAuthorEmail: env.KARBON_NOTE_AUTHOR_EMAIL,
       logger: options.logger,
     });
     karbonDescription = karbonIsProduction ? 'Karbon production connection' : 'Karbon sandbox connection';

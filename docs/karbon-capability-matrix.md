@@ -11,21 +11,43 @@
 **Verified 2026-08-06, revised 2026-08-10.** Health check, search, read work
 item and read client were run against a live tenant and are `Supported`.
 
-`List documents` was `Supported` and has been **demoted to `Unverified`**: every
-observation of it has been an empty list, and an empty list is not evidence the
-operation works. A 404 on a GET is mapped to "found nothing", so a collection
-the API key cannot read is indistinguishable from one with nothing in it. It
-moves back when a run returns a document.
+### What the write-enabled run found
 
-Everything else remains `Unverified`, and the reasons are worth stating rather
-than glossing:
+A run with `--allow-writes` against the firm's production tenant failed on
+notes, tasks and uploads. Tracing those failures against [Karbon's published
+OpenAPI specification](https://github.com/karbonhq/karbon-api-reference) showed
+the cause was not permissions or plan: **this application was calling endpoints
+Karbon does not publish.**
 
-- The **writes** — add comment, create task, upload document — need a run that
-  writes. The tenant available is the firm's production Karbon, and there is no
-  Karbon sandbox to use instead, so refusing production writes outright would
-  have meant these were never verified at all. `upload document` is how a
-  signed engagement letter reaches a client's permanent file; leaving it
-  unverified indefinitely is its own risk.
+| What this application called | What Karbon actually publishes |
+| --- | --- |
+| `GET`/`POST /v3/WorkItems/{key}/Documents` | `GET /v3/FileList/{EntityType}?EntityKey=`, `POST /v3/Files` |
+| `GET`/`POST /v3/{Organizations,Contacts}/{key}/Documents` | the same `FileList` endpoint, with `EntityType` |
+| `GET /v3/Documents/{id}/Content` | `GET /v3/Files?token=`, the token issued with a file listing |
+| `POST /v3/Notes` with `RelatedEntityKey`/`RelatedEntityType` | `AuthorEmailAddress`, `Subject` and `Body` are required; the link is a `Timelines` array |
+| `POST /v3/WorkItems/{key}/Tasks` | **nothing.** There is no task-creation operation |
+| `PUT /v3/Tasks/{id}` | **nothing.** `/v3/IntegrationTasks/{key}` updates only tasks Karbon created for a registered integration partner |
+
+The document listing is the one worth dwelling on. A 404 on a GET is mapped to
+"found nothing", which is right for a missing record and wrong here: the path
+did not exist, so **every work item and every client record in the tenant
+reported zero documents**. Nothing threw, nothing was logged as a fault, and
+prior-year document discovery would have found nothing for ever while looking
+entirely healthy. Forty-seven records returning zero is what finally gave it
+away.
+
+All of these are now corrected against the specification. They stay
+`Unverified` rather than moving to `Supported`, because a corrected path is not
+an observed one — that needs another write-enabled run.
+
+### What is left, and why
+
+- The **writes** — add comment, upload document — need a run that writes. The
+  tenant available is the firm's production Karbon, and there is no Karbon
+  sandbox, so refusing production writes outright would mean these were never
+  verified at all. `upload document` is how a signed engagement letter reaches
+  a client's permanent file; leaving it unverified indefinitely is its own
+  risk.
 
   What the script refuses is writing to production *by accident*, or to a work
   item nobody chose. Create a work item you are willing to have test data
@@ -35,15 +57,26 @@ than glossing:
   pnpm verify:karbon --allow-writes --write-to-production --work-item THAT_KEY
   ```
 
-  It writes a note, a task and a small PDF, all named
+  It writes a note and a small PDF, both named
   `ELEMENT ENGAGEMENTS VERIFICATION`, and tells you where to delete them.
   `neverOverwrite` is set, so nothing already in the file can be replaced.
 
-- **Update work item status** stays unattempted even then: status values are
+  Set `KARBON_NOTE_AUTHOR_EMAIL` first. Karbon requires every note to name an
+  author who is a user on the tenant; without it the first user the tenant
+  lists is used, and Karbon's user listing carries no active flag and no
+  ordering guarantee.
+
+- **Create, update and complete task** are now `Unsupported` and are no longer
+  attempted at all. This is a property of the API, not of the tenant: Karbon
+  publishes no operation that creates a task. The application posts a note
+  carrying the review title and a deep link, and the authoritative task lives
+  in the Review Queue.
+- **Update work item status** stays unattempted: status values are
   tenant-specific and changing one alters real workflow state.
-- **Download document** was skipped because the work item it landed on had no
-  documents. Re-run with `--work-item` followed by the key of one that does;
-  prior-year document discovery is the feature that depends on it.
+- **Download document** needs a work item that has a file on it. The harness now
+  searches past the first one — through the other work items the search returned
+  and then through their client records — and reports whether a listing was
+  *refused* rather than *empty*, so a skip says which it was.
 - **Webhooks** need a subscription and an inbound request, which no script can
   arrange on its own.
 
@@ -60,16 +93,16 @@ Browser automation and scraping are not used anywhere, and will not be added.
 | Read work item | Supported | `GET /v3/WorkItems/{WorkItemKey}` | — | — |
 | Read client | Supported | `GET /v3/Organizations/{EntityKey}`, `GET /v3/Contacts/{EntityKey}` | Tries organisation, then contact | The entity type must be known in advance; it is stored on the client record. |
 | Read contacts | Unverified | `GET /v3/Contacts` and the organisation contact collection | — | — |
-| List documents | Unverified | `GET /v3/WorkItems/{WorkItemKey}/Documents` | — | Returns names and identifiers. **File names are never trusted on their own** — every prior-year candidate is verified against its contents. **Observed returning an empty list only.** A 404 on a GET is mapped to "found nothing", so a collection this API key cannot read looks identical to one with nothing in it; forty-seven work items and client records all returned zero, which is implausible for a working firm. `pnpm verify:karbon` now reports what the endpoint actually answered. |
-| Download document | Unverified | `GET /v3/Documents/{DocumentId}/Content` | — | — |
-| Upload document | Unverified | `POST /v3/WorkItems/{WorkItemKey}/Documents` | — | Approved, signed and certificate files are uploaded with `neverOverwrite`. On a name collision the upload is skipped, the collision is recorded, and the reviewer is told. |
-| Add comment or note | Unverified | `POST /v3/Notes` | — | Comments are **notifications only**. They are never parsed as automation commands. |
-| Create task | Unverified | `POST /v3/WorkItems/{WorkItemKey}/Tasks` — availability varies by tenant and plan | Posts a note carrying the review title and deep link; the authoritative task stays in the app's Review Queue | The client catches a non-retryable failure, falls back, and returns `SKIPPED_UNSUPPORTED` so the outcome is visible rather than silent. |
-| Update task | Unverified | `PUT /v3/WorkItems/{WorkItemKey}/Tasks/{TaskId}` | Follow-up note; the app-side task is updated | — |
-| Complete task | Unverified | `PUT` with a completed state | Completion note; the app-side review assignment is closed | — |
+| List documents | Unverified | `GET /v3/FileList/{EntityType}?EntityKey=…`, where `EntityType` is `WorkItem`, `Organization` or `Contact` | — | Returns names and identifiers. **File names are never trusted on their own** — every prior-year candidate is verified against its contents. A client key names an organisation or a contact and only Karbon knows which, so both are tried in that order; an empty list from a recognised entity is a real answer and stops the search, a 404 is not. |
+| Download document | Unverified | `GET /v3/Files?token=…` | — | There is no download by identifier. Karbon issues a signed token alongside a file listing, documented as valid for **fifteen minutes**, so a download first lists the entity holding the file. Tokens are never persisted, and only the token is taken from the vendor-supplied `DownloadUrl` — never the host. |
+| Upload document | Unverified | `POST /v3/Files`, `multipart/form-data` with `file` and `workitem_keys` | — | Approved, signed and certificate files are uploaded with `neverOverwrite`. On a name collision the upload is skipped, the collision is recorded, and the reviewer is told. |
+| Add comment or note | Unverified | `POST /v3/Notes` with `AuthorEmailAddress`, `Subject`, `Body` and a `Timelines` entry naming the work item | — | Karbon **requires** an author who is a user on the tenant. Set `KARBON_NOTE_AUTHOR_EMAIL`; otherwise the first user the tenant lists is used. Comments are **notifications only** — never parsed as automation commands. |
+| Create task | **Unsupported** | — | Posts a note carrying the review title and deep link; the authoritative task stays in the app's Review Queue | Karbon publishes no task-creation operation. `/v3/IntegrationTasks` is `GET`-only. No request is attempted; the call returns `SKIPPED_UNSUPPORTED` so the limitation is visible in the Karbon Activity tab rather than silent. |
+| Update task | **Unsupported** | — | Follow-up note; the app-side task is updated | `PUT /v3/IntegrationTasks/{IntegrationTaskKey}` updates only tasks Karbon created for a registered integration partner. No task can be created here, so no such key exists. |
+| Complete task | **Unsupported** | — | Completion note; the app-side review assignment is closed | Nothing to complete, for the same reason. |
 | Update work item status | Unverified | `PUT /v3/WorkItems/{WorkItemKey}` | Skipped when unmapped | Status values are tenant-specific. The mapping is configuration (`karbon_status_map`), not code. An unmapped status is skipped, never guessed. |
-| Receive webhooks | Unverified | Karbon webhook subscriptions | Scheduled reconciliation poll | Event coverage varies, so **correctness never depends on a webhook arriving**. |
-| Document upload events | **Unsupported** | — | The worker polls the work item document list on a schedule | This is what drives stale-cover-letter detection. A cover letter is never generated merely because a PDF appeared — all three trigger conditions still apply. |
+| Receive webhooks | Unverified | `POST /v3/WebhookSubscriptions` | Scheduled reconciliation poll | The published types are `Work`, `Note`, `Contact`, `User`, `IntegrationTask`, `Invoice` and `EstimateSummary` — that is the whole set. **Correctness never depends on a webhook arriving.** |
+| Document upload events | **Unsupported** | — | The worker polls the file list on a schedule | There is no file or document webhook type. This is what drives stale-cover-letter detection. A cover letter is never generated merely because a PDF appeared — all three trigger conditions still apply. |
 
 ## Authentication
 
@@ -88,6 +121,15 @@ supplied through the environment would have no flag.
 Confirm what Karbon actually issues against their current documentation before
 production use. The field labels in this application are what it reads, not a
 claim about what Karbon calls them.
+
+## Where the endpoint shapes come from
+
+Karbon publishes an OpenAPI 3.1 specification at
+[github.com/karbonhq/karbon-api-reference](https://github.com/karbonhq/karbon-api-reference).
+Every path, request body and response shape in this document was read from it
+rather than inferred from behaviour. That distinction earned its keep: three of
+the endpoints this application called did not exist, and the API answered each
+of them with a 404 that was indistinguishable from an ordinary "not found".
 
 ## Behaviour when an operation is unavailable
 
@@ -137,10 +179,14 @@ Before relying on any row above:
    `UNVERIFIED` to `SUPPORTED` or `UNSUPPORTED`, with the fallback recorded.
 5. Update this table to match.
 
-`UPDATE_WORK_ITEM_STATUS` and `UPLOAD_DOCUMENT` are deliberately skipped by the
-harness. Both change real state in a way a firm would have to undo: a status
-value is tenant-specific and alters workflow, and an upload puts a file on a
-client's work item. Verify those two by hand, on a work item you have chosen.
+`UPDATE_WORK_ITEM_STATUS` is deliberately skipped by the harness: a status value
+is tenant-specific and changing one alters real workflow state, which a firm
+would then have to undo.
+
+`UPLOAD_DOCUMENT` **is** attempted under `--allow-writes`, on the work item you
+named and nowhere else. It was previously left to be "verified by hand", which
+meant it was never verified at all — and it is the step a signed engagement
+letter depends on to reach a client's permanent file.
 
 ## Rate limits
 

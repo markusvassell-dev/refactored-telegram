@@ -46,7 +46,6 @@ export class MockKarbonProvider implements KarbonProvider {
   private workItems = new Map<string, KarbonWorkItem>();
   private documents = new Map<string, KarbonDocument & { content: Buffer }>();
   private idempotencyLog = new Map<string, KarbonWriteResult>();
-  private taskCompletions = new Set<string>();
 
   /** Every write attempted, for assertions and for the Karbon Activity tab. */
   readonly calls: MockCall[] = [];
@@ -168,22 +167,36 @@ export class MockKarbonProvider implements KarbonProvider {
     return result;
   }
 
+  /**
+   * Karbon publishes no task-creation operation, so neither does this mock.
+   *
+   * It used to answer `SUCCEEDED` with a `task_1` identifier. A mock more
+   * capable than the vendor is worse than no mock at all: every run in Test
+   * Mode showed a review task created in Karbon, and every run in production
+   * showed it unsupported, so the difference only ever appeared where it was
+   * most expensive to find. The mock's job is to stand in for Karbon, not to be
+   * a better version of it.
+   */
   async createTask(request: KarbonTaskRequest): Promise<KarbonWriteResult> {
     this.record('createTask', { workItemKey: request.workItemKey, title: request.title });
 
-    const replayed = this.idempotencyLog.get(request.idempotencyKey);
-    if (replayed) return { ...replayed, outcome: 'SKIPPED_DUPLICATE' };
-
-    const result: KarbonWriteResult = { outcome: 'SUCCEEDED', objectId: `task_${this.calls.length}` };
-    this.idempotencyLog.set(request.idempotencyKey, result);
-    return result;
+    return {
+      outcome: 'SKIPPED_UNSUPPORTED',
+      objectId: null,
+      message:
+        'Karbon has no API for creating a task. The review note carries the title and link, and the task itself is tracked in the Review Queue.',
+    };
   }
 
   async completeTask(taskId: string): Promise<KarbonWriteResult> {
     this.record('completeTask', { taskId });
-    if (this.taskCompletions.has(taskId)) return { outcome: 'SKIPPED_DUPLICATE', objectId: taskId };
-    this.taskCompletions.add(taskId);
-    return { outcome: 'SUCCEEDED', objectId: taskId };
+
+    return {
+      outcome: 'SKIPPED_UNSUPPORTED',
+      objectId: taskId,
+      message:
+        'Karbon has no API for completing a task. The review assignment was closed in the Review Queue, which is where it is tracked.',
+    };
   }
 
   async updateWorkItemStatus(workItemKey: string, status: string): Promise<KarbonWriteResult> {
@@ -322,8 +335,11 @@ export class ReadOnlyKarbonProvider implements KarbonProvider {
   listDocuments(scope: { workItemKey?: string; entityKey?: string }): Promise<KarbonDocument[]> {
     return this.inner.listDocuments(scope);
   }
-  downloadDocument(documentId: string): Promise<{ content: Buffer; fileName: string; mimeType: string }> {
-    return this.inner.downloadDocument(documentId);
+  downloadDocument(
+    documentId: string,
+    scope?: { workItemKey?: string; entityKey?: string },
+  ): Promise<{ content: Buffer; fileName: string; mimeType: string }> {
+    return this.inner.downloadDocument(documentId, scope);
   }
   healthCheck(): Promise<{ ok: boolean; detail?: string }> {
     return this.inner.healthCheck();

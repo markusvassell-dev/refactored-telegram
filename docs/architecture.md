@@ -109,7 +109,9 @@ GENERATE_ENGAGEMENT_LETTER
   │  conditional sections removed · internal content removed · highlights
   │  stripped · checkboxes toggled · validated · converted to PDF
   ▼
-UPLOAD_TO_KARBON           draft .docx and .pdf, review task, review note
+UPLOAD_TO_KARBON           draft .docx and .pdf, review note
+                           (Karbon has no task API — the note carries the
+                           assignment; the task lives in the Review Queue)
   ▼
 REVIEW_REQUIRED → IN_REVIEW → APPROVED → READY_TO_SEND
   │  approval is explicit, records the file hash, and cannot be self-granted

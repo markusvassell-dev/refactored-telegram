@@ -93,6 +93,20 @@ export const envSchema = z
     // for one secret would also mean a screen that says "not configured" while
     // the application is happily writing to a live tenant.
     KARBON_API_BASE_URL: z.string().url().default('https://api.karbonhq.com/v3'),
+    /**
+     * The Karbon user every note this application posts is attributed to.
+     *
+     * Karbon requires an author on every note and rejects an address that is
+     * not a user on the tenant, so one is always sent. Left unset, the first
+     * user the tenant lists is used — Karbon's user listing carries no active
+     * flag and no ordering guarantee, so that may well be someone who has left
+     * the firm, signing notes in clients' timelines.
+     *
+     * This is configuration rather than a credential: it is not secret, it says
+     * nothing about sandbox or production, and none of the reasoning above
+     * about credentials belonging on the Integrations screen applies to it.
+     */
+    KARBON_NOTE_AUTHOR_EMAIL: optionalString,
     /** Shared secret this application chooses, for verifying inbound webhooks. */
     KARBON_WEBHOOK_SECRET: optionalString,
 

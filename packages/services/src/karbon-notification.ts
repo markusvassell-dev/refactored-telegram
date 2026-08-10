@@ -221,7 +221,11 @@ export class KarbonNotificationService {
       });
     }
 
-    // Review task, where the tenant supports it.
+    // Karbon publishes no task-creation operation, so this records the attempt
+    // and its `SKIPPED_UNSUPPORTED` outcome rather than expecting a task. The
+    // row is kept because the Karbon Activity tab should show that the step
+    // happened and what became of it — dropping the call would make the
+    // limitation invisible instead of visible.
     const title = reviewTitleFor(version.documentType);
     const body = await this.composeReviewComment(input.engagementId, version.documentType);
     const reviewerEmail = version.engagement.reviewer?.email ?? null;
@@ -253,8 +257,8 @@ export class KarbonNotificationService {
       summary: { title },
     });
 
-    // The note always goes out, so the reviewer is notified even when task
-    // creation is unavailable on this tenant.
+    // The note is how the reviewer is actually notified, since there is no task
+    // to assign. It always goes out.
     const commentKey = karbonCommentIdempotencyKey({
       karbonWorkItemKey: workItemKey,
       documentVersionId: input.documentVersionId,
