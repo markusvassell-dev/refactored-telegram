@@ -3,8 +3,8 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (715 tests)
-pnpm test:unit          # 367 — no external dependencies
+pnpm test               # unit + integration  (720 tests)
+pnpm test:unit          # 372 — no external dependencies
 pnpm test:integration   # 348 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 59  — needs a browser
 pnpm build              # production build
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (367)
+## Unit tests (372)
 
 No database, no filesystem, no network.
 
@@ -151,6 +151,15 @@ at all is a refusal rather than an unattributed note. Task creation and
 completion make no request and report `SKIPPED_UNSUPPORTED`, because Karbon
 publishes no such operation. Plus `Retry-After` in both documented forms, the
 token bucket under a burst, and paging past the first 100 results.
+
+**Which build is running (5)** — a verification run reported three failures
+that were already fixed and pushed; the container had not been redeployed and
+nothing in the output said so, so a stale container's failures were read as
+facts about a vendor's API. The health endpoint and the Karbon harness now both
+name the commit. The behaviour under test is the refusal: with no platform
+variables, or with `HEAD`, `latest`, an unexpanded `$RAILWAY_GIT_COMMIT_SHA` or
+a branch ref in the commit variable, it reports "unknown" rather than a version
+it does not have — a plausible-looking wrong answer here would be believed.
 
 ## Integration tests (348)
 

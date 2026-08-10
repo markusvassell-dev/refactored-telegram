@@ -221,6 +221,37 @@ while waiting for a database that is still coming up.
 The worker's `/ready` is the one to alert on: a rising `failed` with a stale
 `lastSuccessAt` means it is running but not draining work.
 
+## Which build is deployed
+
+`GET /api/health` names the commit answering the request:
+
+```json
+{ "status": "ok", "service": "web",
+  "build": { "commit": "a35d3d9", "branch": "claude/…", "deploymentId": "…" } }
+```
+
+Compare it against `git log --oneline -1`. If they differ, the deployment has
+not picked up the branch yet, and anything you observe against that container is
+a fact about old code.
+
+`pnpm verify:karbon` prints the same line first, for the same reason: a run once
+reported three failures that were already fixed and pushed, and nothing in its
+output distinguished "Karbon rejects this" from "this container is a week old".
+
+`commit` reads `RAILWAY_GIT_COMMIT_SHA`, which Railway injects on every deploy
+from a connected repository. Anywhere it is not set, the field is `null` — the
+endpoint reports what it knows and never guesses a version.
+
+**Redeploying is done in Railway, not from the repository.** Pushing to the
+deploy branch triggers a build only when the service is connected to that branch
+with automatic deploys on. Otherwise open the service, then **Deployments →
+Deploy** (or **Redeploy** on the latest).
+
+One trap: an SSH session opened from the Railway console stays attached to the
+container it connected to. After a redeploy that container is the *old* one.
+Close the shell and open a new one, then check `build` before trusting anything
+it tells you.
+
 ## "Healthcheck failed"
 
 Railway reports every start-up problem this way, and it is almost always the

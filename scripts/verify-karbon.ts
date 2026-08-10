@@ -1,6 +1,6 @@
 import { PrismaClient } from '@element/database';
 import { KarbonRestClient, type KarbonProvider, type KarbonWorkItem } from '@element/integrations';
-import { createLogger, decryptSecret, describeSandboxMislabel, loadEnv } from '@element/shared';
+import { createLogger, decryptSecret, describeBuild, describeSandboxMislabel, loadEnv } from '@element/shared';
 
 /**
  * Exercising Karbon against a real tenant.
@@ -142,6 +142,10 @@ async function main(): Promise<void> {
 
     const environment = connection.isSandbox ? 'SANDBOX' : 'PRODUCTION';
     process.stdout.write(`\nKarbon verification\n`);
+    // Which code is speaking. A run once reported three failures that were
+    // already fixed on the branch, and nothing in its output distinguished
+    // "Karbon rejects this" from "this container is a week old".
+    process.stdout.write(`  build        ${describeBuild()}\n`);
     process.stdout.write(`  base URL     ${connection.baseUrl ?? env.KARBON_API_BASE_URL}\n`);
     process.stdout.write(`  environment  ${environment}\n`);
     process.stdout.write(`  used by app  ${connection.isEnabled ? 'yes' : 'NO — the application is using the mock adapter'}\n`);
