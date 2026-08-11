@@ -1,6 +1,7 @@
 import { PrismaClient } from '@element/database';
 import { KarbonRestClient, type KarbonProvider, type KarbonWorkItem } from '@element/integrations';
 import {
+  AppError,
   createLogger,
   decryptSecret,
   describeBuild,
@@ -89,10 +90,25 @@ async function attempt<T>(
     record(capability, 'FAIL', `${detail} — the call succeeded but returned nothing, so this proves nothing`);
     return value;
   } catch (error) {
-    // The vendor's own message is the point of this script.
-    record(capability, 'FAIL', error instanceof Error ? error.message : String(error));
+    // The vendor's own message is the point of this script — and it was being
+    // thrown away. `HTTP 400 for /Notes` says a request was rejected and
+    // nothing about why; Karbon's body says which field it objected to, and
+    // that body was sitting in the error's context, unprinted. A verification
+    // harness that hides the vendor's explanation is a harness that turns one
+    // command into a guessing game.
+    record(capability, 'FAIL', describeFailure(error));
     return null;
   }
+}
+
+/** The vendor's own words, where it gave any. */
+function describeFailure(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const detail = error instanceof AppError ? error.context.detail : undefined;
+
+  if (typeof detail !== 'string' || detail.trim().length === 0) return message;
+  // Karbon answers with JSON; unwrap the human-readable part when it is there.
+  return `${message}\n${' '.repeat(37)}${detail.trim().replace(/\s*\n\s*/g, ' ').slice(0, 400)}`;
 }
 
 function argument(name: string): string | undefined {
@@ -527,7 +543,7 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
 
   const stamp = new Date().toISOString();
 
-  await attempt(
+  const comment = await attempt(
     'ADD_COMMENT',
     () =>
       client.addComment({
@@ -537,6 +553,31 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
       }),
     (result) => `${result.outcome}${result.objectId ? ` (${result.objectId})` : ''}`,
   );
+
+  // A note is rejected for exactly one reason in practice: the author is not a
+  // user on this tenant. Rather than say so and stop, show the addresses that
+  // would work — the answer and the way to apply it, in the same run.
+  if (comment === null && client instanceof KarbonRestClient) {
+    process.stdout.write(
+      `\n  ADD_COMMENT failed. Karbon requires every note to name an author who is a\n` +
+        `  user on this tenant, and refuses any other address.\n\n` +
+        `  KARBON_NOTE_AUTHOR_EMAIL is currently ${process.env.KARBON_NOTE_AUTHOR_EMAIL?.trim() || 'unset (the first user Karbon lists is used)'}.\n`,
+    );
+
+    const users = await client.listUsers().catch(() => null);
+    if (users && users.length > 0) {
+      process.stdout.write('\n  Addresses Karbon will accept as the author:\n\n');
+      for (const user of users) process.stdout.write(`    ${user.email.padEnd(40)} ${user.name}\n`);
+      process.stdout.write(
+        '\n  Set KARBON_NOTE_AUTHOR_EMAIL to one of these on both services, then re-run.\n\n',
+      );
+    } else {
+      process.stdout.write(
+        '\n  The user list could not be read either, so this API key may not be permitted\n' +
+          '  to read users — which would also explain the refusal. Worth raising with Karbon.\n\n',
+      );
+    }
+  }
 
   // Nothing to attempt. Karbon publishes no task-creation operation — this run
   // used to POST to `/WorkItems/{key}/Tasks`, read the 404 as "this tenant does

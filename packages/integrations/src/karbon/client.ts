@@ -454,6 +454,29 @@ export class KarbonRestClient implements KarbonProvider {
     };
   }
 
+  /**
+   * The users Karbon will accept as a note author.
+   *
+   * Karbon rejects `AuthorEmailAddress` for anyone who is not a user on the
+   * tenant, and answers with a 400 that names no alternative. Whoever is
+   * fixing that needs the list of addresses that would work, and asking them
+   * to go and read it out of Karbon by hand is how a one-command answer turns
+   * into a round trip.
+   */
+  async listUsers(limit = 25): Promise<{ name: string; email: string }[]> {
+    const response = await this.request<{ value?: Record<string, unknown>[] } | null>({
+      path: '/Users',
+      query: { $top: limit },
+    });
+
+    return (response?.value ?? [])
+      .map((raw) => ({
+        name: typeof raw.Name === 'string' ? raw.Name : '',
+        email: typeof raw.EmailAddress === 'string' ? raw.EmailAddress : '',
+      }))
+      .filter((user) => user.email.length > 0);
+  }
+
   private discoveredAuthor: string | null = null;
 
   /**
