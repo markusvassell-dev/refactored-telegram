@@ -3,8 +3,8 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (726 tests)
-pnpm test:unit          # 378 — no external dependencies
+pnpm test               # unit + integration  (735 tests)
+pnpm test:unit          # 385 — no external dependencies
 pnpm test:integration   # 348 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 59  — needs a browser
 pnpm build              # production build
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (378)
+## Unit tests (385)
 
 No database, no filesystem, no network.
 
@@ -134,7 +134,7 @@ February 31 rejected rather than silently shifted into March, money kept exact
 and never negative, a four-digit year, yes/no stored as a boolean, and an enum
 value matched case-insensitively against the permitted list.
 
-**The Karbon client (32)** — the behaviours that only appear against a real
+**The Karbon client (39)** — the behaviours that only appear against a real
 account, none of which the mock adapter exercises. The endpoints are asserted by
 path, because three of them used to be paths Karbon does not publish and the API
 answered each with an ordinary 404: files are listed from
@@ -171,6 +171,26 @@ that fits. A missing schema names the wrong-service cause first, because the
 worker deliberately never migrates. An unrecognised failure says nothing rather
 than guessing, since a wrong explanation sends someone to check the one thing
 that is fine.
+
+92. **Every imported client had no contacts, no address and no business
+    number** — the whole firm, on the clients screen, silently. Karbon returns
+    none of those from `GET /Organizations/{key}`: contacts require
+    `$expand=Contacts`, and the address, e-mail and telephone live on a
+    Business Card requiring `$expand=BusinessCards`. The mapper was reading
+    `AddressLines` and `BusinessNumber`, which Karbon does not publish on an
+    organisation at all. Nothing failed; the fields were simply absent from a
+    response nobody had asked to include them in — the same defect as the
+    document endpoints, and just as invisible. A client with no contact has
+    nobody to address an engagement letter to.
+
+    Karbon publishes no business-number field either. `UserDefinedIdentifier`
+    is the nearest candidate and is free text — usually a client code — so it
+    is returned only when it is number-shaped. A wrong CRA business number on a
+    T2 letter is worse than a blank one, because blank is visibly missing.
+
+    `PhoneNumber` is declared `oneOf` and can arrive as a string or an object,
+    so it is read defensively rather than stringified into `[object Object]` on
+    a client's letter.
 
 ## Integration tests (348)
 

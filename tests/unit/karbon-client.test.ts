@@ -266,6 +266,158 @@ describe('posting a note', () => {
   });
 });
 
+describe('reading a client', () => {
+  /**
+   * The defect this covers, seen on the clients screen for the whole firm:
+   * every imported client had zero contacts, no address and no business
+   * number. Nothing errored. `GET /Organizations/{key}` simply does not return
+   * any of those — contacts need `$expand=Contacts`, and the address, e-mail
+   * and telephone live on a Business Card, which needs `$expand=BusinessCards`.
+   * The mapper was reading `AddressLines` and `BusinessNumber`, which Karbon
+   * does not publish on an organisation at all.
+   *
+   * A client with no contact has nobody to address an engagement letter to.
+   */
+  it('asks Karbon to include the contacts and business cards', async () => {
+    const { client, calls } = clientWith([{ status: 200, body: { OrganizationKey: 'org-1', FullName: 'Astrella Resources Ltd.' } }]);
+
+    await client.getClient('org-1');
+
+    expect(calls[0]!.url).toContain('/Organizations/org-1');
+    expect(decodeURIComponent(calls[0]!.url)).toContain('$expand=Contacts,BusinessCards');
+  });
+
+  it('reads the address off the primary business card, not off the organisation', async () => {
+    const { client } = clientWith([
+      {
+        status: 200,
+        body: {
+          OrganizationKey: 'org-1',
+          FullName: 'Astrella Resources Ltd.',
+          BusinessCards: [
+            { IsPrimaryCard: false, Addresses: [{ AddressLine1: 'Wrong card' }] },
+            {
+              IsPrimaryCard: true,
+              Addresses: [{ AddressLine1: '100 Main St', City: 'Calgary', StateProvinceCounty: 'AB', ZipCode: 'T2P 1A1' }],
+            },
+          ],
+        },
+      },
+    ]);
+
+    const found = await client.getClient('org-1');
+
+    expect(found).toMatchObject({
+      legalName: 'Astrella Resources Ltd.',
+      addressLine1: '100 Main St',
+      city: 'Calgary',
+      province: 'AB',
+      postalCode: 'T2P 1A1',
+    });
+  });
+
+  it('maps the contacts Karbon returns, using the fields it actually sends', async () => {
+    const { client } = clientWith([
+      {
+        status: 200,
+        body: {
+          OrganizationKey: 'org-1',
+          FullName: 'Astrella Resources Ltd.',
+          Contacts: [
+            {
+              ContactKey: 'c-1',
+              FullName: 'Jane River',
+              PreferredName: 'Jane',
+              Salutation: 'Ms',
+              EmailAddress: 'jane@astrella.test',
+              PhoneNumber: '403-555-0100',
+            },
+          ],
+        },
+      },
+    ]);
+
+    const found = await client.getClient('org-1');
+
+    expect(found?.contacts).toHaveLength(1);
+    expect(found?.contacts[0]).toMatchObject({
+      contactKey: 'c-1',
+      fullName: 'Jane River',
+      firstName: 'Jane',
+      title: 'Ms',
+      email: 'jane@astrella.test',
+      telephone: '403-555-0100',
+      // The sole contact on a client is the one a letter is addressed to.
+      isPrimary: true,
+    });
+  });
+
+  it('never renders a structured phone number as [object Object]', async () => {
+    // Karbon declares PhoneNumber as `oneOf`, so it can arrive either way, and
+    // the wrong branch would put "[object Object]" on a client's letter.
+    const { client } = clientWith([
+      {
+        status: 200,
+        body: {
+          OrganizationKey: 'org-1',
+          FullName: 'Astrella Resources Ltd.',
+          Contacts: [{ ContactKey: 'c-1', FullName: 'Jane River', PhoneNumber: { Number: '403-555-0100' } }],
+        },
+      },
+    ]);
+
+    const found = await client.getClient('org-1');
+    expect(found?.contacts[0]?.telephone).toBe('403-555-0100');
+  });
+
+  it('refuses a business number that is not number-shaped', async () => {
+    // Karbon publishes no business-number field. UserDefinedIdentifier is free
+    // text and is usually a client code or the company name — putting that on a
+    // T2 engagement letter as the CRA business number would be worse than
+    // leaving it blank, because blank is visibly missing and wrong is not.
+    const { client } = clientWith([
+      { status: 200, body: { OrganizationKey: 'org-1', FullName: 'Astrella', UserDefinedIdentifier: 'ASTRELLA-01' } },
+    ]);
+
+    expect((await client.getClient('org-1'))?.businessNumber).toBeNull();
+  });
+
+  it('accepts one that is', async () => {
+    const { client } = clientWith([
+      { status: 200, body: { OrganizationKey: 'org-1', FullName: 'Astrella', UserDefinedIdentifier: '123456789RC0001' } },
+    ]);
+
+    expect((await client.getClient('org-1'))?.businessNumber).toBe('123456789RC0001');
+  });
+
+  it('falls back to the contact endpoint for an individual, expanding there too', async () => {
+    const { client, calls } = clientWith([
+      { status: 404 },
+      {
+        status: 200,
+        body: {
+          ContactKey: 'c-9',
+          FullName: 'Sam Taylor',
+          BusinessCards: [
+            {
+              IsPrimaryCard: true,
+              Addresses: [{ AddressLine1: '5 Elm Row', City: 'Edmonton' }],
+              EmailAddresses: ['sam@example.test'],
+              PhoneNumbers: ['780-555-0111'],
+            },
+          ],
+        },
+      },
+    ]);
+
+    const found = await client.getClient('c-9');
+
+    expect(decodeURIComponent(calls[1]!.url)).toContain('$expand=BusinessCards');
+    expect(found).toMatchObject({ entityType: 'Contact', legalName: 'Sam Taylor', city: 'Edmonton', businessNumber: null });
+    expect(found?.contacts[0]).toMatchObject({ email: 'sam@example.test', telephone: '780-555-0111', isPrimary: true });
+  });
+});
+
 describe('reading something that is not there', () => {
   it('is still an answer of "nothing", not an error', async () => {
     const { client } = clientWith([{ status: 404 }, { status: 404 }]);

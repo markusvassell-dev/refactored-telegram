@@ -217,14 +217,32 @@ export class KarbonRestClient implements KarbonProvider {
     });
   }
 
+  /**
+   * `$expand` is not optional here, it is the whole answer.
+   *
+   * A bare `GET /Organizations/{key}` returns the name, the keys and some
+   * metadata — and nothing else. No contacts, no address, no telephone, no
+   * e-mail. Those live on **Business Cards**, and contacts are a separate
+   * expansion again; without asking for both, every imported client came back
+   * with zero contacts and an empty address, which is exactly what the clients
+   * screen showed for the whole firm.
+   *
+   * Nothing failed to produce that. The fields simply were not in a response
+   * nobody had asked to include them in — the same shape of defect as the
+   * document endpoints, and just as invisible.
+   */
+  private static readonly CLIENT_EXPAND = 'Contacts,BusinessCards';
+
   async getClient(entityKey: string): Promise<KarbonClient | null> {
     const organization = await this.request<Record<string, unknown> | null>({
       path: `/Organizations/${encodeURIComponent(entityKey)}`,
+      query: { $expand: KarbonRestClient.CLIENT_EXPAND },
     });
     if (organization) return mapOrganization(organization);
 
     const contact = await this.request<Record<string, unknown> | null>({
       path: `/Contacts/${encodeURIComponent(entityKey)}`,
+      query: { $expand: 'BusinessCards' },
     });
     return contact ? mapContactEntity(contact) : null;
   }
@@ -648,29 +666,76 @@ function mapWorkItem(raw: Record<string, unknown>): KarbonWorkItem {
   };
 }
 
+/**
+ * Karbon's contact fields, as `$expand=Contacts` actually returns them.
+ *
+ * `PreferredName` is the given name a letter should open with, `Salutation`
+ * is the title. `PhoneNumber` is declared `oneOf`, so it may arrive as a bare
+ * string or as an object — read defensively rather than stringifying an object
+ * into `[object Object]` on a client's engagement letter.
+ */
 function mapContacts(raw: Record<string, unknown>): KarbonClient['contacts'] {
   const list = Array.isArray(raw.Contacts) ? (raw.Contacts as Record<string, unknown>[]) : [];
-  return list.map((contact) => ({
+  return list.map((contact, index) => ({
     contactKey: String(contact.ContactKey ?? contact.Key ?? ''),
     fullName: String(contact.FullName ?? contact.Name ?? ''),
-    firstName: text(contact.FirstName),
+    firstName: text(contact.PreferredName) ?? text(contact.FirstName),
     email: text(contact.EmailAddress) ?? text(contact.Email),
-    telephone: text(contact.PhoneNumber) ?? text(contact.Phone),
-    title: text(contact.JobTitle) ?? text(contact.Title),
-    isPrimary: contact.IsPrimary === true,
+    telephone: readPhone(contact.PhoneNumber) ?? readPhone(contact.Phone),
+    title: text(contact.Salutation) ?? text(contact.RoleOrTitle) ?? text(contact.JobTitle),
+    // Karbon marks no contact as primary on this expansion. Treating the first
+    // as primary is a guess, and a guess about who receives an engagement
+    // letter is one a person should confirm — so only a single contact is
+    // assumed, and any ambiguity is left for the reviewer to resolve.
+    isPrimary: contact.IsPrimary === true || (list.length === 1 && index === 0),
   }));
 }
 
+/** A phone number Karbon may send as a string or as a structured object. */
+function readPhone(value: unknown): string | null {
+  if (typeof value === 'string') return value.trim() || null;
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return text(record.Number) ?? text(record.PhoneNumber) ?? null;
+  }
+  return null;
+}
+
+/**
+ * The primary business card, where the address and contact details live.
+ *
+ * An Organization carries none of these itself, which is why every imported
+ * client showed an empty address.
+ */
+function primaryBusinessCard(raw: Record<string, unknown>): Record<string, unknown> {
+  const cards = Array.isArray(raw.BusinessCards) ? (raw.BusinessCards as Record<string, unknown>[]) : [];
+  return cards.find((card) => card.IsPrimaryCard === true) ?? cards[0] ?? {};
+}
+
+/** The first address on a business card, which is where Karbon puts it. */
+function cardAddress(card: Record<string, unknown>): Record<string, unknown> {
+  const addresses = Array.isArray(card.Addresses) ? (card.Addresses as Record<string, unknown>[]) : [];
+  return addresses[0] ?? {};
+}
+
 function mapOrganization(raw: Record<string, unknown>): KarbonClient {
-  const address = (raw.AddressLines ?? raw.Address ?? {}) as Record<string, unknown>;
+  const card = primaryBusinessCard(raw);
+  const address = cardAddress(card);
+
   return {
-    entityKey: String(raw.EntityKey ?? raw.OrganizationKey ?? raw.Key ?? ''),
+    entityKey: String(raw.OrganizationKey ?? raw.EntityKey ?? raw.Key ?? ''),
     entityType: 'Organization',
     legalName: String(raw.FullName ?? raw.Name ?? ''),
     displayName: text(raw.PreferredName),
-    businessNumber: text(raw.BusinessNumber) ?? text(raw.TaxNumber),
-    addressLine1: text(address.AddressLine1),
-    addressLine2: text(address.AddressLine2),
+    // Karbon has no business-number field on an Organization. `AccountingDetail`
+    // is the nearest thing and `UserDefinedIdentifier` is what a firm actually
+    // uses to carry its own identifier, so both are read — but neither is
+    // guaranteed to be a CRA business number, so a wrong value must never reach
+    // a T2 letter unreviewed. `describeClientDifferences` raises it as a
+    // conflict for a person to confirm, which is the only safe treatment.
+    businessNumber: readBusinessNumber(raw),
+    addressLine1: text(address.AddressLine1) ?? text(address.Line1),
+    addressLine2: text(address.AddressLine2) ?? text(address.Line2),
     city: text(address.City),
     province: text(address.StateProvinceCounty) ?? text(address.State),
     postalCode: text(address.ZipCode) ?? text(address.PostalCode),
@@ -679,16 +744,40 @@ function mapOrganization(raw: Record<string, unknown>): KarbonClient {
   };
 }
 
+/**
+ * A business number, if the firm records one anywhere Karbon exposes.
+ *
+ * Karbon publishes no such field. `AccountingDetail` holds accounting-package
+ * linkage and `UserDefinedIdentifier` is free text the firm controls, so a
+ * value here is a candidate rather than a fact — and it is treated as one.
+ */
+function readBusinessNumber(raw: Record<string, unknown>): string | null {
+  const detail = (raw.AccountingDetail ?? {}) as Record<string, unknown>;
+  const candidate = text(detail.BusinessNumber) ?? text(detail.TaxNumber) ?? text(raw.UserDefinedIdentifier);
+  if (!candidate) return null;
+
+  // A business number is nine digits, optionally with an RC/RT program suffix.
+  // The identifier field is free text and is frequently a client code or the
+  // company name, so anything that is not number-shaped is not returned as one.
+  return /\d{9}/.test(candidate.replace(/\s|-/g, '')) ? candidate : null;
+}
+
 function mapContactEntity(raw: Record<string, unknown>): KarbonClient {
-  const address = (raw.AddressLines ?? raw.Address ?? {}) as Record<string, unknown>;
+  // Same as an Organization: a Contact carries no address of its own either.
+  const card = primaryBusinessCard(raw);
+  const address = cardAddress(card);
+  const emails = Array.isArray(card.EmailAddresses) ? (card.EmailAddresses as unknown[]) : [];
+  const phones = Array.isArray(card.PhoneNumbers) ? (card.PhoneNumbers as unknown[]) : [];
+
   return {
-    entityKey: String(raw.EntityKey ?? raw.ContactKey ?? raw.Key ?? ''),
+    entityKey: String(raw.ContactKey ?? raw.EntityKey ?? raw.Key ?? ''),
     entityType: 'Contact',
     legalName: String(raw.FullName ?? raw.Name ?? ''),
     displayName: text(raw.PreferredName),
+    // An individual has no business number, which is a fact rather than a gap.
     businessNumber: null,
-    addressLine1: text(address.AddressLine1),
-    addressLine2: text(address.AddressLine2),
+    addressLine1: text(address.AddressLine1) ?? text(address.Line1),
+    addressLine2: text(address.AddressLine2) ?? text(address.Line2),
     city: text(address.City),
     province: text(address.StateProvinceCounty) ?? text(address.State),
     postalCode: text(address.ZipCode) ?? text(address.PostalCode),
@@ -697,10 +786,10 @@ function mapContactEntity(raw: Record<string, unknown>): KarbonClient {
       {
         contactKey: String(raw.ContactKey ?? raw.Key ?? ''),
         fullName: String(raw.FullName ?? raw.Name ?? ''),
-        firstName: text(raw.FirstName),
-        email: text(raw.EmailAddress) ?? text(raw.Email),
-        telephone: text(raw.PhoneNumber),
-        title: text(raw.JobTitle),
+        firstName: text(raw.PreferredName) ?? text(raw.FirstName),
+        email: text(raw.EmailAddress) ?? text(emails[0]),
+        telephone: readPhone(raw.PhoneNumber) ?? readPhone(phones[0]),
+        title: text(raw.Salutation) ?? text(card.RoleOrTitle),
         isPrimary: true,
       },
     ],
