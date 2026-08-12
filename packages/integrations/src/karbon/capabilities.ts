@@ -69,17 +69,26 @@ export const KARBON_CAPABILITY_MATRIX: readonly CapabilityReport[] = [
   },
   {
     capability: 'UPLOAD_DOCUMENT',
-    support: 'UNVERIFIED',
+    // Observed 2026-08-10 against the live tenant: a PDF was uploaded and came
+    // back with a file id. A later run on the same work item answered
+    // SKIPPED_DUPLICATE, which verifies the other half — the never-overwrite
+    // guard actually fires. That guard sat on top of a broken listing until the
+    // FileList correction, so it had never once been able to detect a collision.
+    support: 'SUPPORTED',
     operation: 'POST /v3/Files (multipart/form-data: file plus workitem_keys)',
     limitation:
-      'The application never overwrites an existing approved, signed, or certificate document. If a name collides it uploads under a suffixed name and records the collision.',
+      'The application never overwrites an existing approved, signed, or certificate document. On a name collision the upload is skipped, the collision is recorded, and the reviewer is told.',
   },
   {
     capability: 'ADD_COMMENT',
-    support: 'UNVERIFIED',
+    // Observed 2026-08-10: a note was posted and returned a note key. Getting
+    // there took two corrections — the body was missing all three required
+    // fields, and the author has to be a user on the tenant, which the address
+    // originally configured was not.
+    support: 'SUPPORTED',
     operation: 'POST /v3/Notes with AuthorEmailAddress, Subject, Body and a Timelines entry naming the Work Item',
     limitation:
-      'Karbon requires every note to name an author who is a user on the tenant. Set a note author on the Karbon connection; otherwise the first user the tenant lists is used, which may not be who the firm would choose. Comments are notifications only — they are never parsed as automation commands.',
+      'Karbon requires every note to name an author who is a user on the tenant and rejects any other address with a 400 that names no alternative. Set KARBON_NOTE_AUTHOR_EMAIL to a current Karbon user; otherwise the first user the tenant lists is used, which may not be who the firm would choose. Comments are notifications only — they are never parsed as automation commands.',
   },
   {
     capability: 'CREATE_TASK',

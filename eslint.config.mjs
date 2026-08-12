@@ -16,6 +16,10 @@ export default tseslint.config(
       'test-results/**',
       'apps/web/next-env.d.ts',
       'playwright-report/**',
+      // Skill eval fixtures are deliberately flawed sample inputs — the defects
+      // in them are the thing being tested. Linting them clean would remove the
+      // very code the fixture exists to present.
+      '.claude/skills/**/evals/fixtures/**',
     ],
   },
 

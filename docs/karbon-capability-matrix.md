@@ -8,9 +8,10 @@
 | **Unverified** | Implemented against Karbon's published documentation, but **not yet run against a live tenant from this project**. |
 | **Unsupported** | No officially supported API operation exists. The application uses the documented fallback and keeps the step visible in its own UI. |
 
-**Verified 2026-08-06, revised 2026-08-10.** Health check, search, read work
-item, read client, list documents and download document have been run against a
-live tenant and are `Supported`. Everything that writes is still `Unverified`.
+**Verified 2026-08-06, revised 2026-08-10.** Every capability this application
+depends on has now been run against the firm's live tenant and is `Supported`,
+including both writes. The three rows that are `Unsupported` are properties of
+Karbon's published API rather than of the tenant.
 
 ### What the write-enabled run found
 
@@ -57,26 +58,38 @@ one. It is the subject work item, which genuinely has no files; the harness kept
 searching and found one three work items later. Before the fix, *every* record
 in the tenant read zero, which is what gave the broken path away.
 
-`Add comment` and `Upload document` stay `Unverified`. They are corrected
-against the specification but no run has written yet, and a corrected path is
-not an observed one.
+### The write-enabled run, after the corrections
+
+```
+[ ok ] ADD_COMMENT        SUCCEEDED (3bGz9QbNmxZt)
+[ ok ] UPLOAD_DOCUMENT    SKIPPED_DUPLICATE — a document of that name already
+                          exists on this work item and was not replaced
+8 passed, 0 failed, 2 skipped
+```
+
+Both writes move to `Supported`. `UPLOAD_DOCUMENT` returned a real file id on
+the run before this one; this run returned `SKIPPED_DUPLICATE` against the file
+that upload created, which verifies the other half — **the never-overwrite guard
+actually fires**. That guard had never been able to detect a collision, because
+it looked for one in a listing that was always empty.
+
+Getting the note to post took two corrections. The body was missing all three
+fields Karbon requires, and the author address has to belong to a user on the
+tenant — the first address configured did not, which Karbon answers with a `400`
+naming no alternative. `KARBON_NOTE_AUTHOR_EMAIL` now names a current user.
 
 ### What is left, and why
 
-- The **writes** — add comment, upload document — need a run that writes. The
-  tenant available is the firm's production Karbon, and there is no Karbon
-  sandbox, so refusing production writes outright would mean these were never
-  verified at all. `upload document` is how a signed engagement letter reaches
-  a client's permanent file; leaving it unverified indefinitely is its own
-  risk.
+- The **writes** are done. There is no Karbon sandbox, so verifying them meant
+  writing to the firm's production tenant — and refusing that outright would
+  have meant `upload document`, the step a signed engagement letter depends on
+  to reach a client's permanent file, was never verified at all.
 
-  What the script refuses is writing to production *by accident*, or to a work
-  item nobody chose. Create a work item you are willing to have test data
-  written to — an internal one, not a client's — open it in Karbon, and take
-  the key from the end of its URL. A key looks like `wfyFwlWGZms`: eleven or
-  twelve letters and digits, no underscores.
-
-  Then run the command with **that key in place of the last word**:
+  To re-run it, create a work item you are willing to have test data written to
+  — an internal one, not a client's — open it in Karbon, and take the key from
+  the end of its URL. A key looks like `wfyFwlWGZms`: eleven or twelve letters
+  and digits, no underscores. Then run the command with **that key in place of
+  the last word**:
 
   ```
   pnpm verify:karbon --allow-writes --write-to-production --work-item PasteTheKeyHere
@@ -91,10 +104,9 @@ not an observed one.
   `ELEMENT ENGAGEMENTS VERIFICATION`, and tells you where to delete them.
   `neverOverwrite` is set, so nothing already in the file can be replaced.
 
-  Set `KARBON_NOTE_AUTHOR_EMAIL` first. Karbon requires every note to name an
-  author who is a user on the tenant; without it the first user the tenant
-  lists is used, and Karbon's user listing carries no active flag and no
-  ordering guarantee.
+  `KARBON_NOTE_AUTHOR_EMAIL` must name a current Karbon user. Karbon rejects any
+  other address with a `400` that names no alternative; a failed run now lists
+  the addresses it will accept.
 
 - **Create, update and complete task** are now `Unsupported` and are no longer
   attempted at all. This is a property of the API, not of the tenant: Karbon
@@ -124,8 +136,8 @@ Browser automation and scraping are not used anywhere, and will not be added.
 | Read contacts | Unverified | `GET /v3/Contacts` and the organisation contact collection | — | — |
 | List documents | **Supported** | `GET /v3/FileList/{EntityType}?EntityKey=…`, where `EntityType` is `WorkItem`, `Organization` or `Contact` | — | Returns names and identifiers. **File names are never trusted on their own** — every prior-year candidate is verified against its contents. A client key names an organisation or a contact and only Karbon knows which, so both are tried in that order; an empty list from a recognised entity is a real answer and stops the search, a 404 is not. **Only `WorkItem` has been observed returning a file**; the other two entity types share the code path but have not yet produced one. |
 | Download document | **Supported** | `GET /v3/Files?token=…` | — | There is no download by identifier. Karbon issues a signed token alongside a file listing, documented as valid for **fifteen minutes**, so a download first lists the entity holding the file. Tokens are never persisted, and only the token is taken from the vendor-supplied `DownloadUrl` — never the host. |
-| Upload document | Unverified | `POST /v3/Files`, `multipart/form-data` with `file` and `workitem_keys` | — | Approved, signed and certificate files are uploaded with `neverOverwrite`. On a name collision the upload is skipped, the collision is recorded, and the reviewer is told. |
-| Add comment or note | Unverified | `POST /v3/Notes` with `AuthorEmailAddress`, `Subject`, `Body` and a `Timelines` entry naming the work item | — | Karbon **requires** an author who is a user on the tenant. Set `KARBON_NOTE_AUTHOR_EMAIL`; otherwise the first user the tenant lists is used. Comments are **notifications only** — never parsed as automation commands. |
+| Upload document | **Supported** | `POST /v3/Files`, `multipart/form-data` with `file` and `workitem_keys` | — | Approved, signed and certificate files are uploaded with `neverOverwrite`. On a name collision the upload is skipped, the collision is recorded, and the reviewer is told. |
+| Add comment or note | **Supported** | `POST /v3/Notes` with `AuthorEmailAddress`, `Subject`, `Body` and a `Timelines` entry naming the work item | — | Karbon **requires** an author who is a user on the tenant. Set `KARBON_NOTE_AUTHOR_EMAIL`; otherwise the first user the tenant lists is used. Comments are **notifications only** — never parsed as automation commands. |
 | Create task | **Unsupported** | — | Posts a note carrying the review title and deep link; the authoritative task stays in the app's Review Queue | Karbon publishes no task-creation operation. `/v3/IntegrationTasks` is `GET`-only. No request is attempted; the call returns `SKIPPED_UNSUPPORTED` so the limitation is visible in the Karbon Activity tab rather than silent. |
 | Update task | **Unsupported** | — | Follow-up note; the app-side task is updated | `PUT /v3/IntegrationTasks/{IntegrationTaskKey}` updates only tasks Karbon created for a registered integration partner. No task can be created here, so no such key exists. |
 | Complete task | **Unsupported** | — | Completion note; the app-side review assignment is closed | Nothing to complete, for the same reason. |
