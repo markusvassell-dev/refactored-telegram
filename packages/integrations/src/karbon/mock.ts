@@ -210,6 +210,11 @@ export class MockKarbonProvider implements KarbonProvider {
     return { ok: true, detail: 'Mock adapter — no network calls are made.' };
   }
 
+  /** No tenant to interrogate, so the mock says only what it knows. */
+  async describeUnresolvedClient(entityKey: string): Promise<string> {
+    return `the mock adapter holds no client with the key ${entityKey}`;
+  }
+
   // ---- Test helpers -------------------------------------------------------
 
   callsFor(operation: string): MockCall[] {
@@ -280,6 +285,10 @@ export class BlockedKarbonProvider implements KarbonProvider {
   async healthCheck(): Promise<{ ok: boolean; detail?: string }> {
     return { ok: false, detail: this.reason };
   }
+
+  async describeUnresolvedClient(): Promise<string> {
+    return this.reason;
+  }
 }
 
 /**
@@ -343,6 +352,25 @@ export class ReadOnlyKarbonProvider implements KarbonProvider {
   }
   healthCheck(): Promise<{ ok: boolean; detail?: string }> {
     return this.inner.healthCheck();
+  }
+  /**
+   * Forwarded explicitly, like every other read.
+   *
+   * This wrapper lists the provider's methods by hand, so a capability added to
+   * the interface and not added here does not fail — it goes *missing*. That
+   * happened immediately: a diagnostic that names what an unreadable client key
+   * actually is was added, worked in every test, and then reported nothing at
+   * all in production, because under Test Mode the provider is this wrapper and
+   * the method it was calling was `undefined`.
+   *
+   * An optional method makes it worse: `provider.thing?.()` on a wrapper that
+   * forgot to forward is indistinguishable from a provider that legitimately
+   * does not implement it. `read-only-karbon.test.ts` now asserts this class
+   * covers the whole interface, so the next omission is a failing test rather
+   * than a silence.
+   */
+  describeUnresolvedClient(entityKey: string): Promise<string> {
+    return this.inner.describeUnresolvedClient(entityKey);
   }
 
   // ---- Writes: what Test Mode exists to prevent ---------------------------

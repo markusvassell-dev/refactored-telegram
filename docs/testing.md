@@ -3,8 +3,8 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (741 tests)
-pnpm test:unit          # 385 — no external dependencies
+pnpm test               # unit + integration  (743 tests)
+pnpm test:unit          # 387 — no external dependencies
 pnpm test:integration   # 354 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 59  — needs a browser
 pnpm build              # production build
@@ -34,7 +34,7 @@ export PLAYWRIGHT_CHROMIUM_PATH=/opt/pw-browsers/chromium-1194/chrome-linux/chro
 `tests/setup.ts` supplies a complete fake environment, so no `.env` is needed
 and Test Mode is forced on for the whole suite.
 
-## Unit tests (385)
+## Unit tests (387)
 
 No database, no filesystem, no network.
 
@@ -986,6 +986,20 @@ Each was fixed in the code, not the test:
     several. The reason is reported per key on the clients screen instead of a
     bare number, and a diagnosis that itself fails still leaves the client
     reported as unreadable rather than losing the run.
+
+95. **An optional interface method went missing in production while passing
+    every test.** The unresolved-client diagnostic from entry 94 was added to
+    the real Karbon client and to the interface as optional — and not to
+    `ReadOnlyKarbonProvider`, which is the provider under Test Mode. Every test
+    exercised the real client and passed; the live import printed the fallback
+    text, because `provider.thing?.()` on a wrapper that forgot to forward is
+    indistinguishable from a provider that legitimately does not implement it.
+
+    The fix is not a better runtime check — a first attempt compared prototypes
+    against the mock, caught the mock's own test helpers, and would have been
+    silenced with an ignore list, which is how a guard stops guarding. The
+    method is now **required** on `KarbonProvider`, so every provider must
+    implement it or the build fails. The compiler found the two that did not.
 
 ## What is not covered
 

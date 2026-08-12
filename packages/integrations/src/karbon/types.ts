@@ -187,12 +187,20 @@ export interface KarbonProvider {
   ): Promise<{ content: Buffer; fileName: string; mimeType: string }>;
 
   /**
-   * Optional diagnostic: what a client key is, when `getClient` returned null.
+   * What a client key is, when `getClient` returned null.
    *
-   * Implemented by the real client only. "Could not be read" names a symptom
-   * and no cause, and the cause is worth a request rather than a guess.
+   * "Could not be read" names a symptom and no cause, and the cause is worth a
+   * request rather than a guess.
+   *
+   * Required, not optional, and that distinction cost a deployment to learn.
+   * As an optional method it was added to the real client and forgotten on the
+   * read-only wrapper — which is the provider in Test Mode. `provider.thing?.()`
+   * then returned `undefined`, indistinguishable from an adapter that
+   * legitimately does not implement it, so the feature simply did not exist in
+   * production while passing every test. Required means the compiler finds the
+   * next omission instead of the operator.
    */
-  describeUnresolvedClient?(entityKey: string): Promise<string>;
+  describeUnresolvedClient(entityKey: string): Promise<string>;
 
   uploadDocument(request: KarbonUploadRequest): Promise<KarbonWriteResult>;
   addComment(request: KarbonCommentRequest): Promise<KarbonWriteResult>;

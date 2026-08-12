@@ -94,3 +94,40 @@ describe('what it reports itself as', () => {
     expect(karbon.name).toBe('karbon-read-only');
   });
 });
+
+describe('covering the whole provider interface', () => {
+  /**
+   * The wrapper forwards method by method, so anything added to the interface
+   * and not added here does not fail — it goes *missing*.
+   *
+   * That happened: a diagnostic naming what an unreadable client key actually
+   * is was added, passed every test against the real client, and then reported
+   * nothing in production. Under Test Mode the provider is this wrapper, and
+   * the method being called was `undefined`. An optional method hides it
+   * completely — `provider.thing?.()` on a wrapper that forgot to forward looks
+   * exactly like a provider that legitimately does not implement it.
+   *
+   * Comparing against the mock is what makes this self-maintaining: both
+   * implement `KarbonProvider`, so a new method reaches the mock and this test
+   * starts failing until the wrapper carries it too.
+   */
+  it('is held to the interface by the compiler, not by a scan of its prototype', () => {
+    // The first attempt at this test compared prototypes against the mock and
+    // caught the mock's own test helpers — a false alarm that would have been
+    // silenced with an ignore list, which is how a guard stops guarding.
+    //
+    // Making the method REQUIRED on KarbonProvider is the real fix: every
+    // provider must implement it or the build fails, which is a stronger
+    // guarantee than any runtime check and needs no maintenance. This assertion
+    // just pins the behaviour that required-ness buys.
+    const { karbon } = readOnly();
+    expect(typeof karbon.describeUnresolvedClient).toBe('function');
+  });
+
+  it('forwards the unresolved-client diagnostic rather than swallowing it', async () => {
+    const { inner, karbon } = readOnly();
+    Object.assign(inner, { describeUnresolvedClient: async (key: string) => `diagnosed ${key}` });
+
+    await expect(karbon.describeUnresolvedClient('ghost-1')).resolves.toBe('diagnosed ghost-1');
+  });
+});
