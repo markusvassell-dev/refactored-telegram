@@ -3,9 +3,9 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (739 tests)
+pnpm test               # unit + integration  (741 tests)
 pnpm test:unit          # 385 — no external dependencies
-pnpm test:integration   # 352 — needs Postgres and LibreOffice Writer
+pnpm test:integration   # 354 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 59  — needs a browser
 pnpm build              # production build
 ```
@@ -192,7 +192,7 @@ that is fine.
     so it is read defensively rather than stringified into `[object Object]` on
     a client's letter.
 
-## Integration tests (352)
+## Integration tests (354)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -977,6 +977,15 @@ Each was fixed in the code, not the test:
     nothing and a hand-entered contact is never duplicated or displaced. The
     result reports what was filled separately from what was left alone, because
     they are opposites.
+
+94. A live import reported **"2 could not be read"** and stopped there — a count
+    with no cause, for two clients no engagement can ever be started for. The
+    import now asks what the key actually is: Karbon publishes a third client
+    entity, `ClientGroup`, which this application deliberately does not model,
+    because an engagement letter is addressed to one legal entity and a group is
+    several. The reason is reported per key on the clients screen instead of a
+    bare number, and a diagnosis that itself fails still leaves the client
+    reported as unreadable rather than losing the run.
 
 ## What is not covered
 

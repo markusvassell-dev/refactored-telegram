@@ -130,7 +130,16 @@ export class ClientImportService {
         // Reported rather than skipped: it is the same shape of problem as a
         // work item key that does not read back, and it means something about
         // the tenant is not what this application assumes.
-        result.failed.push({ entityKey, reason: 'the work item names this client key, but no organisation or contact matched it' });
+        // "Could not be read" names a symptom and no cause. Ask what the key
+        // actually is, so the operator gets an answer rather than a mystery to
+        // take to the vendor.
+        const reason = input.karbon.describeUnresolvedClient
+          ? await input.karbon
+              .describeUnresolvedClient(entityKey)
+              .catch(() => 'no organisation or contact matched this key, and it could not be identified further')
+          : 'the work item names this client key, but no organisation or contact matched it';
+
+        result.failed.push({ entityKey, reason });
         continue;
       }
 

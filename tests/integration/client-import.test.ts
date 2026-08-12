@@ -258,6 +258,62 @@ describe('importing clients from Karbon', () => {
     expect(after.contacts).toHaveLength(0);
   });
 
+  it('says what an unreadable client key actually is, rather than only that it failed', async () => {
+    // A live import reported "2 could not be read" and stopped there — a count
+    // with no cause, for two clients no engagement can ever be started for.
+    // Karbon has a third client entity, ClientGroup, which this application
+    // deliberately does not model; whether that is the explanation is worth a
+    // request rather than a guess.
+    const karbon = connectedKarbon();
+    const ghostKey = `ci-ghost-${suffix}`;
+    if (!entityKeys.includes(ghostKey)) entityKeys.push(ghostKey);
+
+    const probed: string[] = [];
+    const withDiagnosis = Object.create(karbon, {
+      searchWorkItems: {
+        value: async () => [{ workItemKey: `ci-wi-ghost-${suffix}`, title: 'Orphan', clientKey: ghostKey }],
+      },
+      getClient: { value: async () => null },
+      describeUnresolvedClient: {
+        value: async (key: string) => {
+          probed.push(key);
+          return 'this key is a Karbon Client Group ("The Ziegeman Group"), not an organisation or a contact.';
+        },
+      },
+    }) as typeof karbon;
+
+    const result = await service.run({ karbon: withDiagnosis, actor: admin, dryRun: true });
+
+    expect(probed).toEqual([ghostKey]);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]!.reason).toMatch(/Client Group/i);
+  });
+
+  it('still reports a failure when the diagnosis itself fails', async () => {
+    // The diagnostic is a convenience. If it throws, the import must still
+    // report the client as unreadable rather than losing the whole run.
+    const karbon = connectedKarbon();
+    const ghostKey = `ci-ghost2-${suffix}`;
+    if (!entityKeys.includes(ghostKey)) entityKeys.push(ghostKey);
+
+    const withBrokenDiagnosis = Object.create(karbon, {
+      searchWorkItems: {
+        value: async () => [{ workItemKey: `ci-wi-ghost2-${suffix}`, title: 'Orphan', clientKey: ghostKey }],
+      },
+      getClient: { value: async () => null },
+      describeUnresolvedClient: {
+        value: async () => {
+          throw new Error('the tenant refused the lookup');
+        },
+      },
+    }) as typeof karbon;
+
+    const result = await service.run({ karbon: withBrokenDiagnosis, actor: admin, dryRun: true });
+
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]!.entityKey).toBe(ghostKey);
+  });
+
   it('refuses to import from a mock, which would invent clients', async () => {
     // The failure this prevents: fictional sample clients in the real client
     // list, indistinguishable from the firm's own and sitting in the

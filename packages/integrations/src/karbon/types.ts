@@ -186,6 +186,14 @@ export interface KarbonProvider {
     scope?: { workItemKey?: string; entityKey?: string },
   ): Promise<{ content: Buffer; fileName: string; mimeType: string }>;
 
+  /**
+   * Optional diagnostic: what a client key is, when `getClient` returned null.
+   *
+   * Implemented by the real client only. "Could not be read" names a symptom
+   * and no cause, and the cause is worth a request rather than a guess.
+   */
+  describeUnresolvedClient?(entityKey: string): Promise<string>;
+
   uploadDocument(request: KarbonUploadRequest): Promise<KarbonWriteResult>;
   addComment(request: KarbonCommentRequest): Promise<KarbonWriteResult>;
   createTask(request: KarbonTaskRequest): Promise<KarbonWriteResult>;

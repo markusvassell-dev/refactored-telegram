@@ -1529,6 +1529,12 @@ export async function importClientsFromKarbon(formData: FormData): Promise<Actio
     if (result.differing.length > 0) parts.push(`${result.differing.length} differ and were left alone.`);
     if (result.failed.length > 0) parts.push(`${result.failed.length} could not be read.`);
 
-    return { ok: true, message: parts.join(' '), blockers: result.notes };
+    // The reasons, not just the count. A number with no explanation is a
+    // mystery somebody has to come back and investigate; the client that could
+    // not be read is a client no engagement can be started for, and the cause
+    // is usually specific and actionable.
+    const blockers = [...result.notes, ...result.failed.map((entry) => `${entry.entityKey}: ${entry.reason}`)];
+
+    return { ok: true, message: parts.join(' '), blockers };
   });
 }

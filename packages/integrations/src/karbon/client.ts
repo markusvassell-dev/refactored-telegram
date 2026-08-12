@@ -247,6 +247,33 @@ export class KarbonRestClient implements KarbonProvider {
     return contact ? mapContactEntity(contact) : null;
   }
 
+  /**
+   * What a client key actually is, when `getClient` could not resolve it.
+   *
+   * A work item names a client key that neither `/Organizations` nor
+   * `/Contacts` will return, and "could not be read" is where the investigation
+   * stops — it says something is wrong and nothing about what. Karbon has a
+   * third client entity, `ClientGroup`, which this application does not model:
+   * an engagement letter is addressed to one legal entity, and a group is
+   * several. Whether that is the explanation is a question worth answering with
+   * a request rather than a guess.
+   *
+   * Diagnostic only. Nothing here decides behaviour; it decides what the
+   * operator is told.
+   */
+  async describeUnresolvedClient(entityKey: string): Promise<string> {
+    const group = await this.request<Record<string, unknown> | null>({
+      path: `/ClientGroups/${encodeURIComponent(entityKey)}`,
+    }).catch(() => null);
+
+    if (group) {
+      const name = typeof group.FullName === 'string' ? group.FullName : entityKey;
+      return `this key is a Karbon Client Group ("${name}"), not an organisation or a contact. A group is several legal entities and an engagement letter is addressed to one, so this application does not import them — the individual members can be imported instead.`;
+    }
+
+    return 'no organisation, contact or client group matched this key. It may name a record that has since been deleted or archived in Karbon.';
+  }
+
   async getWorkItem(workItemKey: string): Promise<KarbonWorkItem | null> {
     const raw = await this.request<Record<string, unknown> | null>({
       path: `/WorkItems/${encodeURIComponent(workItemKey)}`,
