@@ -6,21 +6,55 @@
       "name": "diagnose-silently-empty-fields",
       "prompt": "Our clients screen shows every company we've imported from the Acme CRM with zero people attached and a blank address. Nothing errors, the import job reports success, and the company names and keys all come through fine. crm-client.ts is the integration and openapi.json is Acme's published spec. Can you work out what's going on and fix it?",
       "expected_output": "Identifies that GET /v3/Companies/{key} returns People and ContactCards only when $expand is supplied, and that the mapper reads AddressLines/Address and person.FirstName which the vendor does not publish. Fixes getCompany to request $expand=People,ContactCards and to read the address off the primary ContactCard and PreferredName/Salutation off the person. Ideally also handles PhoneNumber arriving as a string or an object, and states the fix is not yet verified against a live account.",
-      "files": ["fixtures/empty-contacts/crm-client.ts", "fixtures/empty-contacts/openapi.json"]
+      "files": [
+        "fixtures/empty-contacts/crm-client.ts",
+        "fixtures/empty-contacts/openapi.json"
+      ],
+      "assertions": [
+        "Reads the vendor's openapi.json rather than only inspecting the client code",
+        "Identifies that People and ContactCards are returned only when $expand is supplied",
+        "Adds $expand requesting both People and ContactCards to the getCompany request",
+        "Identifies that the mapper reads AddressLines/Address, which the spec does not define on a Company",
+        "Reads the address from the ContactCards array, preferring the card flagged IsPrimaryCard",
+        "Identifies that person.FirstName is not a published field and uses PreferredName instead",
+        "Handles PhoneNumber arriving either as a string or as an object, rather than assigning the raw value",
+        "States explicitly that the fix is not yet verified against a live account"
+      ]
     },
     {
       "id": 1,
       "name": "review-integration-and-mock",
       "prompt": "Give billing.ts a review before we ship it. It's our Fizz billing integration and the mock next to it is what runs in Test Mode and in all our tests.",
-      "expected_output": "Flags that voidInvoice calls POST /v2/Invoices/{key}/Void which the vendor does not publish, and that the mock returns SUCCEEDED with a fabricated id for it — so Test Mode shows voids succeeding that production can never do. Flags VOID_INVOICE being listed as UNVERIFIED when it should be UNSUPPORTED. Ideally also notes the mock's recordPayment fabricates an id and that a 404 mapped to null on a POST turns a missing endpoint into a false success.",
-      "files": ["fixtures/mock-review/billing.ts"]
+      "expected_output": "Flags that voidInvoice calls POST /v2/Invoices/{key}/Void which the vendor does not publish, and that the mock returns SUCCEEDED with a fabricated id for it \u2014 so Test Mode shows voids succeeding that production can never do. Flags VOID_INVOICE being listed as UNVERIFIED when it should be UNSUPPORTED. Ideally also notes the mock's recordPayment fabricates an id and that a 404 mapped to null on a POST turns a missing endpoint into a false success.",
+      "files": [
+        "fixtures/mock-review/billing.ts"
+      ],
+      "assertions": [
+        "Flags that voidInvoice calls POST /v2/Invoices/{key}/Void, which the vendor does not publish",
+        "Flags that the mock's voidInvoice returns SUCCEEDED for an operation the real API cannot perform",
+        "Explains that this makes Test Mode more capable than production, hiding the difference",
+        "Flags that VOID_INVOICE is recorded as UNVERIFIED when it should be UNSUPPORTED",
+        "Flags that mapping a 404 to null on a POST turns a missing endpoint into a false success",
+        "Flags that the mock's recordPayment fabricates a payment id",
+        "Ranks the void/mock divergence above cosmetic or stylistic issues"
+      ]
     },
     {
       "id": 2,
       "name": "add-capability-against-spec",
       "prompt": "Add a listPayments method to the Fizz billing client in billing.ts so we can show a customer's payment history, then update BILLING_CAPABILITIES for it.",
-      "expected_output": "Recognises that the vendor publishes no GET /v2/Payments operation — only GET /v2/Invoices, GET /v2/Invoices/{key} and POST /v2/Payments — and says so rather than inventing a plausible endpoint. Either declines to implement it and records the capability as UNSUPPORTED with a fallback, or asks for the spec/vendor confirmation before writing a client method. Does not mark anything SUPPORTED.",
-      "files": ["fixtures/mock-review/billing.ts"]
+      "expected_output": "Recognises that the vendor publishes no GET /v2/Payments operation \u2014 only GET /v2/Invoices, GET /v2/Invoices/{key} and POST /v2/Payments \u2014 and says so rather than inventing a plausible endpoint. Either declines to implement it and records the capability as UNSUPPORTED with a fallback, or asks for the spec/vendor confirmation before writing a client method. Does not mark anything SUPPORTED.",
+      "files": [
+        "fixtures/mock-review/billing.ts"
+      ],
+      "assertions": [
+        "Establishes which operations the vendor actually publishes before writing client code",
+        "Recognises that no GET /v2/Payments (or equivalent list-payments) operation is published",
+        "Does NOT invent a plausible-looking endpoint such as GET /v2/Payments and present it as working",
+        "Says plainly that the requested capability is not supported by the published API",
+        "Records the capability as UNSUPPORTED, or asks for the spec/vendor confirmation, rather than marking it SUPPORTED or UNVERIFIED",
+        "Offers a fallback or the information needed to proceed, rather than only refusing"
+      ]
     }
   ]
 }
