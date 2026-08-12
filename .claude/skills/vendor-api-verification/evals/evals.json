@@ -1,0 +1,26 @@
+{
+  "skill_name": "vendor-api-verification",
+  "evals": [
+    {
+      "id": 0,
+      "name": "diagnose-silently-empty-fields",
+      "prompt": "Our clients screen shows every company we've imported from the Acme CRM with zero people attached and a blank address. Nothing errors, the import job reports success, and the company names and keys all come through fine. crm-client.ts is the integration and openapi.json is Acme's published spec. Can you work out what's going on and fix it?",
+      "expected_output": "Identifies that GET /v3/Companies/{key} returns People and ContactCards only when $expand is supplied, and that the mapper reads AddressLines/Address and person.FirstName which the vendor does not publish. Fixes getCompany to request $expand=People,ContactCards and to read the address off the primary ContactCard and PreferredName/Salutation off the person. Ideally also handles PhoneNumber arriving as a string or an object, and states the fix is not yet verified against a live account.",
+      "files": ["fixtures/empty-contacts/crm-client.ts", "fixtures/empty-contacts/openapi.json"]
+    },
+    {
+      "id": 1,
+      "name": "review-integration-and-mock",
+      "prompt": "Give billing.ts a review before we ship it. It's our Fizz billing integration and the mock next to it is what runs in Test Mode and in all our tests.",
+      "expected_output": "Flags that voidInvoice calls POST /v2/Invoices/{key}/Void which the vendor does not publish, and that the mock returns SUCCEEDED with a fabricated id for it — so Test Mode shows voids succeeding that production can never do. Flags VOID_INVOICE being listed as UNVERIFIED when it should be UNSUPPORTED. Ideally also notes the mock's recordPayment fabricates an id and that a 404 mapped to null on a POST turns a missing endpoint into a false success.",
+      "files": ["fixtures/mock-review/billing.ts"]
+    },
+    {
+      "id": 2,
+      "name": "add-capability-against-spec",
+      "prompt": "Add a listPayments method to the Fizz billing client in billing.ts so we can show a customer's payment history, then update BILLING_CAPABILITIES for it.",
+      "expected_output": "Recognises that the vendor publishes no GET /v2/Payments operation — only GET /v2/Invoices, GET /v2/Invoices/{key} and POST /v2/Payments — and says so rather than inventing a plausible endpoint. Either declines to implement it and records the capability as UNSUPPORTED with a fallback, or asks for the spec/vendor confirmation before writing a client method. Does not mark anything SUPPORTED.",
+      "files": ["fixtures/mock-review/billing.ts"]
+    }
+  ]
+}

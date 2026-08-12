@@ -1,0 +1,78 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Acme CRM API", "version": "3" },
+  "paths": {
+    "/v3/Companies/{CompanyKey}": {
+      "get": {
+        "summary": "Get a single Company",
+        "parameters": [
+          { "name": "CompanyKey", "in": "path", "required": true, "schema": { "type": "string" } },
+          {
+            "name": "$expand",
+            "in": "query",
+            "schema": { "type": "string" },
+            "description": "Include related data. Comma separated. Supported values: People, ContactCards.",
+            "examples": {
+              "People": { "value": "People", "summary": "Include the People related to the Company" },
+              "ContactCards": { "value": "ContactCards", "summary": "Include the Contact Cards (addresses, phones, emails)" }
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Company" } } }
+          },
+          "404": { "description": "Not found" }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Company": {
+        "description": "A single Company. Returned WITHOUT People or ContactCards unless $expand is supplied.",
+        "type": "object",
+        "properties": {
+          "CompanyKey": { "type": "string" },
+          "LegalName": { "type": "string" },
+          "TradingName": { "type": "string" },
+          "LastModifiedDateTime": { "type": "string" },
+          "People": { "$ref": "#/components/schemas/PersonList" },
+          "ContactCards": { "type": "array", "items": { "$ref": "#/components/schemas/ContactCard" } }
+        }
+      },
+      "PersonList": { "type": "array", "items": { "$ref": "#/components/schemas/Person" } },
+      "Person": {
+        "type": "object",
+        "properties": {
+          "PersonKey": { "type": "string" },
+          "FullName": { "type": "string" },
+          "PreferredName": { "type": "string" },
+          "Salutation": { "type": "string" },
+          "EmailAddress": { "type": "string" },
+          "PhoneNumber": {
+            "oneOf": [{ "type": "string" }, { "type": "object", "properties": { "Number": { "type": "string" } } }]
+          }
+        }
+      },
+      "ContactCard": {
+        "type": "object",
+        "properties": {
+          "IsPrimaryCard": { "type": "boolean" },
+          "Addresses": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "AddressLine1": { "type": "string" },
+                "City": { "type": "string" },
+                "StateProvince": { "type": "string" },
+                "PostCode": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
