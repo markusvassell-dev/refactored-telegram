@@ -85,8 +85,11 @@ naming no alternative. `KARBON_NOTE_AUTHOR_EMAIL` now names a current user.
   have meant `upload document`, the step a signed engagement letter depends on
   to reach a client's permanent file, was never verified at all.
 
-  To re-run it, create a work item you are willing to have test data written to
-  — an internal one, not a client's — open it in Karbon, and take the key from
+  To re-run it, **create a dummy client in Karbon** — something obviously not
+  real, such as `Matador Pizza` — and a work item under it. Not a client's work
+  item, and not a real internal one either: a verification note lands on a
+  record somebody may later read as genuine, and a note nobody can account for
+  is worse than no note. Open that work item and take the key from
   the end of its URL. A key looks like `wfyFwlWGZms`: eleven or twelve letters
   and digits, no underscores. Then run the command with **that key in place of
   the last word**:
