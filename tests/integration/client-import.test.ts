@@ -169,6 +169,95 @@ describe('importing clients from Karbon', () => {
     expect(reported!.differences.some((difference) => difference.field === 'Legal name')).toBe(true);
   });
 
+  it('fills in contacts a client is missing, because that is not overwriting', async () => {
+    // The defect this covers, found on the live deployment: the firm's whole
+    // book was imported while the Karbon client read was returning no contacts
+    // at all — the API omits them unless asked. Every re-run afterwards saw
+    // those clients as "already here" and moved on, so the contacts would never
+    // have arrived, and a client with no contact has nobody to address an
+    // engagement letter to. Re-running the import has to be able to repair it.
+    const first = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+    const target = first.created.find((client) => client.legalName.startsWith('Ziegeman'))!;
+
+    await prisma.clientContact.deleteMany({ where: { client: { karbonEntityKey: target.entityKey } } });
+    await prisma.client.update({
+      where: { karbonEntityKey: target.entityKey },
+      data: { city: null, province: null },
+    });
+
+    const second = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+
+    const after = await prisma.client.findUniqueOrThrow({
+      where: { karbonEntityKey: target.entityKey },
+      include: { contacts: true },
+    });
+    expect(after.contacts).toHaveLength(1);
+    expect(after.contacts[0]!.email).toBe('dale@example.test');
+    expect(after.city).toBe('Calgary');
+    expect(after.province).toBe('AB');
+
+    const reported = second.backfilled.find((entry) => entry.entityKey === target.entityKey);
+    expect(reported).toMatchObject({ contactsAdded: 1 });
+    expect(reported!.fieldsFilled).toEqual(expect.arrayContaining(['City', 'Province']));
+  });
+
+  it('adds a contact once, however many times it runs', async () => {
+    // Matched on Karbon's own contact key. Without that, repairing the missing
+    // contacts would hand every client a duplicate on each subsequent run.
+    await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+    await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+    const third = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+
+    const clients = await prisma.client.findMany({
+      where: { karbonEntityKey: { in: entityKeys } },
+      include: { contacts: true },
+    });
+    for (const client of clients) {
+      const keys = client.contacts.map((contact) => contact.karbonContactKey);
+      expect(new Set(keys).size).toBe(keys.length);
+    }
+    expect(third.backfilled).toHaveLength(0);
+  });
+
+  it('leaves a value somebody supplied alone, even while filling the blanks beside it', async () => {
+    // The two rules have to hold at once: repair what is missing, protect what
+    // is not. A postal code typed by hand and a missing contact can sit on the
+    // same client, and one run must handle both correctly.
+    const first = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+    const target = first.created.find((client) => client.legalName.startsWith('Ziegeman'))!;
+
+    await prisma.clientContact.deleteMany({ where: { client: { karbonEntityKey: target.entityKey } } });
+    await prisma.client.update({
+      where: { karbonEntityKey: target.entityKey },
+      data: { city: 'Airdrie', businessNumber: '99999 9999 RC0001' },
+    });
+
+    await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+
+    const after = await prisma.client.findUniqueOrThrow({
+      where: { karbonEntityKey: target.entityKey },
+      include: { contacts: true },
+    });
+    expect(after.city).toBe('Airdrie');
+    expect(after.businessNumber).toBe('99999 9999 RC0001');
+    expect(after.contacts).toHaveLength(1);
+  });
+
+  it('changes nothing on a dry run, including the backfill', async () => {
+    const first = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+    const target = first.created[0]!;
+    await prisma.clientContact.deleteMany({ where: { client: { karbonEntityKey: target.entityKey } } });
+
+    const preview = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: true });
+
+    expect(preview.backfilled.length).toBeGreaterThan(0);
+    const after = await prisma.client.findUniqueOrThrow({
+      where: { karbonEntityKey: target.entityKey },
+      include: { contacts: true },
+    });
+    expect(after.contacts).toHaveLength(0);
+  });
+
   it('refuses to import from a mock, which would invent clients', async () => {
     // The failure this prevents: fictional sample clients in the real client
     // list, indistinguishable from the firm's own and sitting in the

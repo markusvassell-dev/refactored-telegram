@@ -1516,6 +1516,16 @@ export async function importClientsFromKarbon(formData: FormData): Promise<Actio
         : `${result.created.length} added.`,
       `${result.unchanged} already here and matching.`,
     ];
+    if (result.backfilled.length > 0) {
+      // Said separately from "differ and were left alone", because they are
+      // opposites and a reader needs to tell them apart: this is what changed
+      // on a client already here, that is what deliberately did not.
+      const contacts = result.backfilled.reduce((total, row) => total + row.contactsAdded, 0);
+      const filled = dryRun ? 'would have blanks filled' : 'had blanks filled';
+      parts.push(
+        `${result.backfilled.length} ${filled}${contacts > 0 ? `, adding ${contacts} contact(s)` : ''}.`,
+      );
+    }
     if (result.differing.length > 0) parts.push(`${result.differing.length} differ and were left alone.`);
     if (result.failed.length > 0) parts.push(`${result.failed.length} could not be read.`);
 

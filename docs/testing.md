@@ -3,9 +3,9 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (735 tests)
+pnpm test               # unit + integration  (739 tests)
 pnpm test:unit          # 385 — no external dependencies
-pnpm test:integration   # 348 — needs Postgres and LibreOffice Writer
+pnpm test:integration   # 352 — needs Postgres and LibreOffice Writer
 pnpm test:e2e           # 59  — needs a browser
 pnpm build              # production build
 ```
@@ -192,7 +192,7 @@ that is fine.
     so it is read defensively rather than stringified into `[object Object]` on
     a client's letter.
 
-## Integration tests (348)
+## Integration tests (352)
 
 Real Postgres, real document engine, real LibreOffice.
 
@@ -962,6 +962,21 @@ Each was fixed in the code, not the test:
     caller already posts one. Caught before it shipped; recorded because the
     fix for a missing endpoint is where a duplicate write is easiest to
     introduce.
+
+93. **Re-running the client import could not repair anything.** The firm's whole
+    book was imported while the Karbon client read was returning no contacts at
+    all (entry 92), and the import's "never overwrite" rule then treated every
+    one of those clients as *already here* and moved on. The contacts would
+    never have arrived no matter how many times it ran, and a client with no
+    contact has nobody to address an engagement letter to.
+
+    "Never overwrite" protects a value a person corrected. A field holding
+    nothing has no such value to protect, and conflating the two turned a
+    safety rule into a trap. Blanks are now filled and values are still left
+    alone — contacts matched on Karbon's own contact key, so repeated runs add
+    nothing and a hand-entered contact is never duplicated or displaced. The
+    result reports what was filled separately from what was left alone, because
+    they are opposites.
 
 ## What is not covered
 
