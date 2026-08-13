@@ -13,15 +13,18 @@ import {
   confirmDate,
   confirmDateFact,
   confirmServiceSelection,
+  confirmSigner,
   generateCoverLetter,
   importKarbonDocument,
   locatePriorYearDocuments,
   markReadyToSend,
   overrideFee,
   prepareEngagement,
+  removeSigner,
   requestChanges,
   resolveConflict,
   saveFieldGroup,
+  saveSigner,
   recordExternalSignature,
   sendForSignature,
   startGeneration,
@@ -138,7 +141,7 @@ export function ReviewWorkspace({
           <MasterTemplate csrfToken={csrfToken} engagement={engagement} templateVersion={templateVersion} />
         ) : null}
         {tab === 'Document Preview' ? <Preview engagement={engagement} documentLinks={documentLinks} /> : null}
-        {tab === 'Signers' ? <Signers engagement={engagement} /> : null}
+        {tab === 'Signers' ? <Signers csrfToken={csrfToken} engagement={engagement} /> : null}
         {tab === 'Approvals' ? <Approvals csrfToken={csrfToken} engagement={engagement} /> : null}
         {tab === 'Karbon Activity' ? <KarbonActivity engagement={engagement} /> : null}
         {tab === 'Adobe Sign' ? <AdobeSign csrfToken={csrfToken} engagement={engagement} /> : null}
@@ -1291,41 +1294,164 @@ function Preview({
   );
 }
 
-function Signers({ engagement }: { engagement: any }): ReactNode {
+const SIGNER_ROLES_BY_TYPE: Record<string, { value: string; label: string }[]> = {
+  T1_JOINT: [
+    { value: 'TAXPAYER_1', label: 'First taxpayer' },
+    { value: 'TAXPAYER_2', label: 'Second taxpayer' },
+  ],
+  T1_SINGLE: [{ value: 'TAXPAYER_1', label: 'Taxpayer' }],
+  T2: [{ value: 'AUTHORIZED_SIGNING_OFFICER', label: 'Authorised signing officer' }],
+  T3: [{ value: 'AUTHORIZED_REPRESENTATIVE', label: 'Authorised representative' }],
+};
+
+/**
+ * Who signs, and in what order.
+ *
+ * This tab used to be a table you could only read. Since nothing else in the
+ * application could create a signer either, every real engagement carried none
+ * — and the send gate refuses an engagement with no signers, so an approved
+ * letter had nowhere to go by any route, Adobe or manual.
+ */
+function Signers({ csrfToken, engagement }: { csrfToken: string; engagement: any }): ReactNode {
+  const participants = engagement.participants ?? [];
+  const firm = participants.filter((participant: any) => participant.role === 'FIRM_SIGNER');
+  const client = participants.filter(
+    (participant: any) => participant.isSigner && participant.role !== 'FIRM_SIGNER',
+  );
+  const roleOptions = [
+    ...(SIGNER_ROLES_BY_TYPE[engagement.engagementType] ?? []),
+    { value: 'FIRM_SIGNER', label: 'Firm signer' },
+  ];
+
+  const unconfirmed = participants.filter((p: any) => p.isSigner && !p.contactConfirmed).length;
+
   return (
-    <Card
-      title="Signers"
-      description="Signers sharing an order sign in parallel. A firm signer signs after the client when one is required. A signature or signed date is never prefilled."
-    >
-      {engagement.participants.length === 0 ? (
-        <Empty message="No participants have been recorded." />
-      ) : (
-        <table className="table">
-          <thead>
-            <tr>
-              <th scope="col">Role</th>
-              <th scope="col">Name</th>
-              <th scope="col">Email</th>
-              <th scope="col">Order</th>
-              <th scope="col">Signer</th>
-              <th scope="col">Confirmed</th>
-            </tr>
-          </thead>
-          <tbody>
-            {engagement.participants.map((participant: any) => (
-              <tr key={participant.id}>
-                <td>{participant.role.replace(/_/g, ' ').toLowerCase()}</td>
-                <td>{participant.fullLegalName}</td>
-                <td>{participant.email ?? '—'}</td>
-                <td>{participant.signingOrder}</td>
-                <td>{participant.isSigner ? 'Yes' : 'No'}</td>
-                <td>{participant.contactConfirmed ? 'Yes' : 'No'}</td>
+    <>
+      <Card
+        title="Signers"
+        description="The firm signs first, then the client — so the letter that reaches a client has already been signed here. Nothing is sent until every signer's address has been confirmed by a person."
+      >
+        {participants.length === 0 ? (
+          <Empty message="Nobody has been named yet. Preparing the engagement proposes signers from the client's Karbon contacts; you can also add them below." />
+        ) : (
+          <table className="table">
+            <caption className="sr-only">Signers on this engagement</caption>
+            <thead>
+              <tr>
+                <th scope="col">Order</th>
+                <th scope="col">Role</th>
+                <th scope="col">Name</th>
+                <th scope="col">Email</th>
+                <th scope="col">From</th>
+                <th scope="col">Confirmed</th>
+                <th scope="col">
+                  <span className="sr-only">Actions</span>
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </Card>
+            </thead>
+            <tbody>
+              {[...firm, ...client].map((participant: any) => (
+                <tr key={participant.id}>
+                  <td>{participant.signingOrder}</td>
+                  <td>{participant.role.replace(/_/g, ' ').toLowerCase()}</td>
+                  <td className="font-medium">{participant.fullLegalName}</td>
+                  <td className="text-xs">
+                    {participant.email ?? <span className="text-red-700">none — cannot be sent to</span>}
+                  </td>
+                  {/* Where a name came from is worth showing: one the firm's CRM
+                      supplied and one somebody typed carry different confidence. */}
+                  <td className="text-xs">{participant.clientContactId ? 'Karbon' : 'entered here'}</td>
+                  <td className="text-xs">
+                    {participant.contactConfirmed ? (
+                      <span className="badge bg-green-100 text-green-800">yes</span>
+                    ) : (
+                      <span className="badge bg-amber-100 text-amber-800">not yet</span>
+                    )}
+                  </td>
+                  <td>
+                    <div className="flex flex-wrap gap-2">
+                      <ActionForm
+                        action={confirmSigner}
+                        csrfToken={csrfToken}
+                        submitLabel={participant.contactConfirmed ? 'Withdraw' : 'Confirm'}
+                        variant="secondary"
+                      >
+                        <input type="hidden" name="engagementId" value={engagement.id} />
+                        <input type="hidden" name="participantId" value={participant.id} />
+                        <input
+                          type="hidden"
+                          name="confirmed"
+                          value={participant.contactConfirmed ? 'false' : 'true'}
+                        />
+                      </ActionForm>
+                      <ActionForm
+                        action={removeSigner}
+                        csrfToken={csrfToken}
+                        submitLabel="Remove"
+                        variant="secondary"
+                        confirm={`Remove ${participant.fullLegalName} from this engagement?`}
+                      >
+                        <input type="hidden" name="engagementId" value={engagement.id} />
+                        <input type="hidden" name="participantId" value={participant.id} />
+                      </ActionForm>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
+        {unconfirmed > 0 ? (
+          <p className="mt-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            {unconfirmed} signer(s) still need confirming. Confirming is a person saying this is the right name at the
+            right address — a letter sent to the wrong one cannot be recalled.
+          </p>
+        ) : null}
+      </Card>
+
+      <Card
+        title="Add or correct a signer"
+        description="One person per role. Saving over an existing role corrects it rather than adding a second, and clears its confirmation — the details a reviewer approved have changed."
+      >
+        <ActionForm action={saveSigner} csrfToken={csrfToken} submitLabel="Save signer">
+          <input type="hidden" name="engagementId" value={engagement.id} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="label" htmlFor="signer-role">
+                Signs as
+              </label>
+              <select id="signer-role" name="role" className="input" required defaultValue={roleOptions[0]?.value}>
+                {roleOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label" htmlFor="signer-name">
+                Full legal name
+              </label>
+              <input id="signer-name" name="fullLegalName" className="input" required />
+            </div>
+            <div>
+              <label className="label" htmlFor="signer-email">
+                Email
+              </label>
+              <input id="signer-email" name="email" type="email" className="input" />
+              <p className="field-note">Where the signature request goes. Checked against this client before sending.</p>
+            </div>
+            <div>
+              <label className="label" htmlFor="signer-title">
+                Title
+              </label>
+              <input id="signer-title" name="title" className="input" />
+            </div>
+          </div>
+        </ActionForm>
+      </Card>
+    </>
   );
 }
 

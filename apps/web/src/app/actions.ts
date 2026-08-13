@@ -15,7 +15,7 @@ import {
   type Role,
 } from '@element/shared';
 import { factToken, type IntegrationProviderKey } from '@element/services';
-import type { FeeRuleLevel } from '@element/database';
+import type { FeeRuleLevel, ParticipantRole } from '@element/database';
 import { container } from '@/lib/container';
 import { assertCsrf, requirePermission, requireUser, requestContext } from '@/lib/session';
 
@@ -869,6 +869,7 @@ export async function prepareEngagement(formData: FormData): Promise<ActionResul
     if (result.conflictsRaised > 0) outstanding.push(`${result.conflictsRaised} conflicting value(s)`);
     if (result.blockedFees.length > 0) outstanding.push(`${result.blockedFees.length} fee(s) without a prior-year amount`);
     if (result.blockedDates.length > 0) outstanding.push(`${result.blockedDates.length} deadline(s) missing information`);
+    if (result.signerNotes.length > 0) outstanding.push(`${result.signerNotes.length} signer question(s)`);
 
     const searchNote = search.enqueued
       ? search.deduplicated
@@ -878,10 +879,18 @@ export async function prepareEngagement(formData: FormData): Promise<ActionResul
 
     const summary =
       `Prepared: ${result.feesCalculated.length} fee(s) calculated, ${result.datesCalculated} date(s) proposed, ` +
-      `${result.serviceSelectionsSeeded} service selection(s) seeded.`;
+      `${result.serviceSelectionsSeeded} service selection(s) seeded` +
+      (result.signersProposed > 0 ? `, ${result.signersProposed} signer(s) proposed` : '') +
+      '.';
 
     const decisions = outstanding.length > 0 ? ` Needs your decision on ${outstanding.join(', ')}.` : '';
-    return `${summary}${decisions}${searchNote}`;
+
+    // The signer questions are listed rather than counted: "one signer question"
+    // is not something anybody can act on, and each one names a person.
+    return {
+      message: `${summary}${decisions}${searchNote}`,
+      ...(result.signerNotes.length > 0 ? { blockers: result.signerNotes } : {}),
+    };
   });
 }
 
@@ -1102,6 +1111,22 @@ export async function createEngagement(formData: FormData): Promise<ActionResult
     return parts.join(' ');
   });
 }
+
+/**
+ * Roles a person may be given on an engagement.
+ *
+ * Mirrors the database enum. A value not in this list is rejected rather than
+ * stored — the same rule the upload kinds below follow.
+ */
+const PARTICIPANT_ROLES: readonly ParticipantRole[] = [
+  'TAXPAYER_1',
+  'TAXPAYER_2',
+  'AUTHORIZED_SIGNING_OFFICER',
+  'AUTHORIZED_REPRESENTATIVE',
+  'FIRM_SIGNER',
+  'ENGAGEMENT_LEAD',
+  'CC_RECIPIENT',
+];
 
 /** Kinds a person may attach by hand, in the order they are usually needed. */
 const UPLOADABLE_KINDS = [
@@ -1797,5 +1822,87 @@ export async function importKarbonDocument(formData: FormData): Promise<ActionRe
     revalidatePath(`/engagements/${engagementId}`);
 
     return `Brought ${catalogued.fileName} in from ${catalogued.sourceLabel}. It is being read now, and its contents are scored against this client and year before anything is used.`;
+  });
+}
+
+/**
+ * Records who signs an engagement letter.
+ *
+ * Nothing in this application could create an `EngagementParticipant` before
+ * this action existed. The table was written only by the demo seed, so on a
+ * real engagement it was always empty — and `evaluateSendGate` refuses an
+ * engagement with no signers. An approved letter therefore had nowhere to go,
+ * by either route: Adobe Sign could not be asked, and the "record signed
+ * elsewhere" bridge refused too, telling the reviewer this engagement "names
+ * nobody who must sign" while offering no way to name anybody.
+ */
+export async function saveSigner(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('field:edit_structured');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const role = formData.get('role')?.toString() as ParticipantRole | undefined;
+    const fullLegalName = formData.get('fullLegalName')?.toString();
+
+    if (!engagementId) throw new ValidationError('An engagement is required.');
+    if (!role || !PARTICIPANT_ROLES.includes(role)) throw new ValidationError('Choose what this person signs as.');
+    if (!fullLegalName?.trim()) throw new ValidationError('A signer needs a full legal name.');
+
+    const result = await container.participants.upsert({
+      engagementId,
+      actor,
+      role,
+      fullLegalName,
+      email: formData.get('email')?.toString() ?? null,
+      title: formData.get('title')?.toString() ?? null,
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+
+    return result.created
+      ? `${fullLegalName.trim()} added. Confirm the address before this can be sent.`
+      : `${fullLegalName.trim()} updated. The confirmation was cleared, because the details a reviewer approved have changed.`;
+  });
+}
+
+/**
+ * Vouches for a signer's name and address.
+ *
+ * A different permission from editing on purpose: typing a name is clerical,
+ * and standing behind where a client's engagement letter will be sent is not.
+ */
+export async function confirmSigner(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('signing:send');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const participantId = formData.get('participantId')?.toString();
+    const confirmed = formData.get('confirmed')?.toString() !== 'false';
+
+    if (!engagementId || !participantId) throw new ValidationError('A signer is required.');
+
+    await container.participants.confirm({ engagementId, participantId, actor, confirmed });
+    revalidatePath(`/engagements/${engagementId}`);
+
+    return confirmed ? 'Signer confirmed.' : 'Confirmation withdrawn.';
+  });
+}
+
+export async function removeSigner(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('field:edit_structured');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const participantId = formData.get('participantId')?.toString();
+
+    if (!engagementId || !participantId) throw new ValidationError('A signer is required.');
+
+    await container.participants.remove({ engagementId, participantId, actor });
+    revalidatePath(`/engagements/${engagementId}`);
+
+    return 'Signer removed.';
   });
 }

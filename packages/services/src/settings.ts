@@ -21,6 +21,15 @@ export const SETTING_KEYS = {
   productName: 'product_name',
   aiExtractionEnabled: 'ai_extraction_enabled',
   documentRetentionHours: 'document_retention_hours',
+  /**
+   * The user who signs on the firm's behalf, by default.
+   *
+   * Decided once rather than on every engagement, and overridable on an
+   * individual one — the partner who owns a client is not always the person who
+   * signs for the firm. Unset means no firm signer is proposed, and the
+   * engagement will say so rather than sending a letter nobody countersigned.
+   */
+  firmSignerUserId: 'firm_signer_user_id',
 } as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS];

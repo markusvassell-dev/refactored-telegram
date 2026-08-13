@@ -161,7 +161,17 @@ export class SigningService {
 
     const pdf = await this.deps.store.get(version.generatedPdfReference as string);
 
-    const engagementLeadEmail = engagement.participants.find((p) => p.role === 'ENGAGEMENT_LEAD')?.email;
+    // Queried separately, because `engagement.participants` above is filtered to
+    // `isSigner: true` and an engagement lead is a CC recipient, not a signer.
+    // Looking for one in the filtered list always found nothing, so the lead was
+    // never copied on a single signature request — a silent omission, since an
+    // empty CC list is indistinguishable from one nobody asked for.
+    const lead = await this.deps.prisma.engagementParticipant.findFirst({
+      where: { engagementId: input.engagementId, role: { in: ['ENGAGEMENT_LEAD', 'ENGAGEMENT_PARTNER'] } },
+      orderBy: { role: 'asc' },
+      select: { email: true },
+    });
+    const engagementLeadEmail = lead?.email ?? undefined;
 
     // Reserve the row before calling Adobe so a crash mid-call cannot lose the
     // key and allow a duplicate on the next attempt.

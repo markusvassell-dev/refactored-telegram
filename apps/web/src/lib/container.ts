@@ -7,6 +7,7 @@ import {
   BulkRolloutService,
   ClientImportService,
   KarbonLibraryService,
+  ParticipantService,
   CoverLetterService,
   CoverLetterNarrativeService,
   IntegrationConnectionService,
@@ -84,6 +85,7 @@ const approvals = new ApprovalService({ prisma, audit, workflow, settings });
 const userNotifications = new NotificationService({ prisma });
 const clientImport = new ClientImportService({ prisma, audit, logger });
 const karbonLibrary = new KarbonLibraryService({ prisma, audit, logger });
+const participants = new ParticipantService({ prisma, audit, logger });
 const signing = new SigningService({ notifications: userNotifications, prisma, audit, store, workflow, settings, logger });
 const externalSignature = new ExternalSignatureService({
   notifications: userNotifications,
@@ -159,6 +161,7 @@ export const container = {
   signing,
   clientImport,
   karbonLibrary,
+  participants,
   externalSignature,
   coverLetters,
   coverLetterNarratives,

@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from '@element/database';
+import type { ParticipantRole, Prisma, PrismaClient } from '@element/database';
 import type { AuditLogger } from '@element/audit';
 import { evaluateDateRule, type DateRuleInputs } from '@element/dates';
 import { parseManifest, type TemplateManifest } from '@element/documents';
@@ -13,6 +13,13 @@ import {
   type ValueSource,
 } from '@element/shared';
 import type { PricingService } from './pricing-service.js';
+import {
+  CLIENT_SIGNING_ORDER,
+  FIRM_SIGNING_ORDER,
+  REQUIRED_CLIENT_ROLES,
+  describeRole,
+  isSigningRole,
+} from './participant-service.js';
 
 /**
  * Engagement preparation.
@@ -55,6 +62,10 @@ export interface PrepareResult {
   blockedFees: FeeKind[];
   datesCalculated: number;
   blockedDates: string[];
+  /** Signers proposed from the client's Karbon contacts, awaiting confirmation. */
+  signersProposed: number;
+  /** What still stands between this engagement and being sendable. */
+  signerNotes: string[];
 }
 
 const DOCUMENT_TYPE_BY_ENGAGEMENT: Record<EngagementType, DocumentType> = {
@@ -148,6 +159,7 @@ export class PreparationService {
     const manifest = await this.activeManifest(DOCUMENT_TYPE_BY_ENGAGEMENT[engagement.engagementType]);
 
     const karbonFieldsRecorded = await this.recordKarbonValues(engagement);
+    const signersProposed = await this.proposeSigners(engagement);
     const conflictsRaised = await this.reconcile(input.engagementId, input.actorId, input.correlationId);
     const serviceSelectionsSeeded = manifest ? await this.seedServiceSelections(input.engagementId, manifest) : 0;
     const dates = await this.calculateDates(engagement);
@@ -188,6 +200,8 @@ export class PreparationService {
       blockedFees: fees.blocked,
       datesCalculated: dates.calculated,
       blockedDates: dates.blocked,
+      signersProposed,
+      signerNotes: await this.outstandingSigners(input.engagementId, engagement.engagementType),
     };
   }
 
@@ -357,6 +371,168 @@ export class PreparationService {
     }
 
     return recorded;
+  }
+
+  /**
+   * Proposes the people who will sign, from the client's Karbon contacts.
+   *
+   * The same contacts already reach the printed letter — `recordKarbonValues`
+   * above writes them into `signer.officer_name`, `taxpayer1.email` and the
+   * rest. What was missing was the other half: those people existed as *words
+   * in a document* and not as anybody the application could actually send it
+   * to. An engagement therefore reached final approval and then had nowhere to
+   * go, because `evaluateSendGate` refuses an engagement with no signers and
+   * nothing in the application could name one.
+   *
+   * Three rules make re-running preparation safe:
+   *
+   *   - **A confirmed signer is never touched.** Confirmation is a person
+   *     vouching for where a client's engagement letter will be sent; a later
+   *     sync must not quietly replace the address they approved.
+   *   - **Proposals are unconfirmed.** Karbon's contact list is evidence about
+   *     who to write to, not authority to write to them.
+   *   - **A contact with no email is still proposed.** The name is usually
+   *     right and the address is the bit that needs a person; proposing the
+   *     name and leaving the address blank is more useful than proposing
+   *     nothing, and the gate still refuses to send.
+   */
+  private async proposeSigners(engagement: {
+    id: string;
+    engagementType: EngagementType;
+    client: { contacts: { id: string; fullLegalName: string; email: string | null; title: string | null; isPrimary: boolean }[] };
+  }): Promise<number> {
+    const contacts = [...engagement.client.contacts].sort(
+      (a, b) => Number(b.isPrimary) - Number(a.isPrimary),
+    );
+
+    const proposals: { role: ParticipantRole; contact: (typeof contacts)[number] | undefined }[] =
+      engagement.engagementType === 'T1_JOINT'
+        ? [
+            { role: 'TAXPAYER_1', contact: contacts[0] },
+            { role: 'TAXPAYER_2', contact: contacts[1] },
+          ]
+        : engagement.engagementType === 'T1_SINGLE'
+          ? [{ role: 'TAXPAYER_1', contact: contacts[0] }]
+          : engagement.engagementType === 'T3'
+            ? [{ role: 'AUTHORIZED_REPRESENTATIVE', contact: contacts[0] }]
+            : [{ role: 'AUTHORIZED_SIGNING_OFFICER', contact: contacts[0] }];
+
+    let proposed = 0;
+
+    for (const proposal of proposals) {
+      if (!proposal.contact) continue;
+
+      const existing = await this.deps.prisma.engagementParticipant.findUnique({
+        where: { engagementId_role: { engagementId: engagement.id, role: proposal.role } },
+        select: { id: true, contactConfirmed: true },
+      });
+
+      if (existing?.contactConfirmed) continue;
+
+      const data = {
+        clientContactId: proposal.contact.id,
+        fullLegalName: proposal.contact.fullLegalName,
+        email: proposal.contact.email,
+        title: proposal.contact.title,
+        isSigner: true,
+        signingOrder: CLIENT_SIGNING_ORDER,
+        contactConfirmed: false,
+      };
+
+      if (existing) {
+        await this.deps.prisma.engagementParticipant.update({ where: { id: existing.id }, data });
+      } else {
+        await this.deps.prisma.engagementParticipant.create({
+          data: { ...data, engagementId: engagement.id, role: proposal.role },
+        });
+      }
+
+      proposed += 1;
+    }
+
+    proposed += await this.proposeFirmSigner(engagement.id);
+    return proposed;
+  }
+
+  /**
+   * Names the person who signs on the firm's behalf, before the client does.
+   *
+   * Read from a setting so it is decided once rather than on every engagement,
+   * and overridable on an individual one — the partner who owns a client is not
+   * always the person who signs for the firm.
+   */
+  private async proposeFirmSigner(engagementId: string): Promise<number> {
+    const existing = await this.deps.prisma.engagementParticipant.findUnique({
+      where: { engagementId_role: { engagementId, role: 'FIRM_SIGNER' } },
+      select: { id: true, contactConfirmed: true },
+    });
+
+    if (existing?.contactConfirmed) return 0;
+
+    const configured = await this.deps.prisma.systemSetting.findUnique({
+      where: { key: 'firm_signer_user_id' },
+      select: { value: true },
+    });
+
+    const userId = typeof configured?.value === 'string' ? configured.value : null;
+    if (!userId) return 0;
+
+    const user = await this.deps.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, displayName: true, email: true },
+    });
+
+    // A setting pointing at a user who has since been removed is a
+    // configuration problem, not a reason to invent a signer.
+    if (!user) {
+      this.deps.logger.warn('The configured firm signer no longer exists', { engagementId, userId });
+      return 0;
+    }
+
+    const data = {
+      fullLegalName: user.displayName,
+      email: user.email,
+      isSigner: true,
+      // Order 1: the firm signs before the letter reaches the client.
+      signingOrder: FIRM_SIGNING_ORDER,
+      contactConfirmed: false,
+    };
+
+    if (existing) {
+      await this.deps.prisma.engagementParticipant.update({ where: { id: existing.id }, data });
+    } else {
+      await this.deps.prisma.engagementParticipant.create({
+        data: { ...data, engagementId, role: 'FIRM_SIGNER' },
+      });
+    }
+
+    return 1;
+  }
+
+  /** Mirrors `ParticipantService.outstanding`, without a circular dependency. */
+  private async outstandingSigners(engagementId: string, engagementType: EngagementType): Promise<string[]> {
+    const participants = await this.deps.prisma.engagementParticipant.findMany({
+      where: { engagementId },
+      select: { role: true, email: true, contactConfirmed: true, fullLegalName: true },
+    });
+
+    const byRole = new Set(participants.map((participant) => participant.role));
+    const notes: string[] = [];
+
+    for (const role of REQUIRED_CLIENT_ROLES[engagementType]) {
+      if (!byRole.has(role)) notes.push(`No ${describeRole(role)} has been named.`);
+    }
+    if (!byRole.has('FIRM_SIGNER')) {
+      notes.push('No firm signer has been named, so nobody signs before this goes to the client.');
+    }
+
+    for (const participant of participants) {
+      if (!isSigningRole(participant.role)) continue;
+      if (!participant.email) notes.push(`${participant.fullLegalName} has no email address.`);
+      else if (!participant.contactConfirmed) notes.push(`${participant.fullLegalName} has not been confirmed.`);
+    }
+
+    return notes;
   }
 
   /**
