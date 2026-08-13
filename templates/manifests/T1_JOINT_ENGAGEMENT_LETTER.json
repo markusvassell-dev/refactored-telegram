@@ -240,25 +240,22 @@
     {
       "role": "TAXPAYER_1",
       "token": "signature.taxpayer1",
-      "adobeTag": "{{Sig_es_:signer1:signature}}",
+      "adobeFieldType": "SIGNATURE",
       "draftPlaceholder": "________________________________",
-      "signingOrder": 1,
       "required": true
     },
     {
       "role": "TAXPAYER_2",
       "token": "signature.taxpayer2",
-      "adobeTag": "{{Sig_es_:signer2:signature}}",
+      "adobeFieldType": "SIGNATURE",
       "draftPlaceholder": "________________________________",
-      "signingOrder": 1,
       "required": true
     },
     {
       "role": "FIRM_SIGNER",
       "token": "signature.firm",
-      "adobeTag": "{{Sig_es_:signer3:signature}}",
+      "adobeFieldType": "SIGNATURE",
       "draftPlaceholder": "________________________________",
-      "signingOrder": 2,
       "required": false
     }
   ],

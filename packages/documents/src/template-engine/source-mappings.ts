@@ -228,9 +228,20 @@ export const T2_ENGAGEMENT_LETTER_SPEC: TemplateSpec = {
     {
       role: 'AUTHORIZED_SIGNING_OFFICER',
       token: 'signature.officer_date',
-      adobeTag: '{{Dte_es_:signer1:date}}',
+      // T2 is sent with no Adobe tags at all, so Adobe places both the signature
+      // block and its date itself.
+      //
+      // The T2 template has no signature line to anchor to — only this date —
+      // and the firm chose not to edit the approved wording to add one. That
+      // leaves a choice: send a document carrying a date tag but no signature
+      // tag, or send one carrying nothing. Adobe's documented behaviour for an
+      // untagged document is to auto-place a signature field per participant;
+      // its behaviour when *some* fields are tagged is that tagging takes over
+      // placement, which would give the officer a date field and no way to sign.
+      // An agreement nobody can sign is worse than a blank date line, so until a
+      // live send proves otherwise this stays AUTO_PLACED.
+      adobeFieldType: 'AUTO_PLACED',
       draftPlaceholder: '',
-      signingOrder: 1,
       required: true,
     },
   ],
@@ -326,9 +337,9 @@ export const T1_JOINT_ENGAGEMENT_LETTER_SPEC: TemplateSpec = {
     { code: 't1.fee_proposal', label: 'Separate proposal or pricing schedule', anchorText: 'As set out in a separate proposal or pricing schedule', defaultChecked: false, alwaysChecked: false },
   ],
   signatureAnchors: [
-    { role: 'TAXPAYER_1', token: 'signature.taxpayer1', adobeTag: '{{Sig_es_:signer1:signature}}', draftPlaceholder: '________________________________', signingOrder: 1, required: true },
-    { role: 'TAXPAYER_2', token: 'signature.taxpayer2', adobeTag: '{{Sig_es_:signer2:signature}}', draftPlaceholder: '________________________________', signingOrder: 1, required: true },
-    { role: 'FIRM_SIGNER', token: 'signature.firm', adobeTag: '{{Sig_es_:signer3:signature}}', draftPlaceholder: '________________________________', signingOrder: 2, required: false },
+    { role: 'TAXPAYER_1', token: 'signature.taxpayer1', adobeFieldType: 'SIGNATURE', draftPlaceholder: '________________________________', required: true },
+    { role: 'TAXPAYER_2', token: 'signature.taxpayer2', adobeFieldType: 'SIGNATURE', draftPlaceholder: '________________________________', required: true },
+    { role: 'FIRM_SIGNER', token: 'signature.firm', adobeFieldType: 'SIGNATURE', draftPlaceholder: '________________________________', required: false },
   ],
   internalOnlySections: [],
   editableSections: [],
@@ -409,8 +420,8 @@ export const T3_ENGAGEMENT_LETTER_SPEC: TemplateSpec = {
     { code: 't3.fee_proposal', label: 'Separate proposal or pricing schedule', anchorText: 'As set out in a separate proposal or pricing schedule', defaultChecked: false, alwaysChecked: false },
   ],
   signatureAnchors: [
-    { role: 'AUTHORIZED_REPRESENTATIVE', token: 'signature.representative', adobeTag: '{{Sig_es_:signer1:signature}}', draftPlaceholder: '________________________________', signingOrder: 1, required: true },
-    { role: 'FIRM_SIGNER', token: 'signature.firm', adobeTag: '{{Sig_es_:signer2:signature}}', draftPlaceholder: '________________________________', signingOrder: 2, required: false },
+    { role: 'AUTHORIZED_REPRESENTATIVE', token: 'signature.representative', adobeFieldType: 'SIGNATURE', draftPlaceholder: '________________________________', required: true },
+    { role: 'FIRM_SIGNER', token: 'signature.firm', adobeFieldType: 'SIGNATURE', draftPlaceholder: '________________________________', required: false },
   ],
   internalOnlySections: [],
   editableSections: [],

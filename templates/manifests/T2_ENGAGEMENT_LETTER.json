@@ -454,9 +454,8 @@
     {
       "role": "AUTHORIZED_SIGNING_OFFICER",
       "token": "signature.officer_date",
-      "adobeTag": "{{Dte_es_:signer1:date}}",
+      "adobeFieldType": "AUTO_PLACED",
       "draftPlaceholder": "",
-      "signingOrder": 1,
       "required": true
     }
   ],

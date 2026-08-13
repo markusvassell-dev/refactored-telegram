@@ -19,7 +19,7 @@ import {
   writeDocx,
   type DocxParts,
 } from '../ooxml/package.js';
-import type { TemplateManifest } from '../template-engine/manifest.js';
+import { buildAdobeTag, resolveSignerIndices, type TemplateManifest } from '../template-engine/manifest.js';
 import { CHECKBOX_CHECKED, CHECKBOX_UNCHECKED, TOKEN_PATTERN } from '../template-engine/tokens.js';
 import { stripHighlights } from '../sanitation/sanitize.js';
 
@@ -46,6 +46,17 @@ export interface RenderOptions {
    */
   includedSections: readonly string[];
   mode: RenderMode;
+  /**
+   * The engagement's signers, in the order Adobe will be given them.
+   *
+   * Required in `FOR_SIGNATURE` mode and ignored otherwise. Adobe addresses
+   * fields by participant *set* — `signer1` is whoever holds the earliest
+   * signing order — so the index for each role is a fact about this engagement,
+   * not about the template, and rendering cannot invent it. Passing the actual
+   * participants is what stops the tags in the document and the sets in the
+   * request from describing different people.
+   */
+  signers?: readonly { role: string; signingOrder: number }[];
   /**
    * Approved wording exceptions for this document version, applied as whole
    * paragraph replacements. Each has already been approved by a partner.
@@ -279,10 +290,42 @@ export async function renderDocx(templateDocx: Uint8Array | Buffer, options: Ren
   }
 
   // 6. Signature anchors.
+  //
+  // In FOR_SIGNATURE mode each anchor becomes an Adobe text tag addressed to the
+  // participant set its role occupies. That index is computed from the signers
+  // passed in, never read from the manifest: an index written at authoring time
+  // is a claim about signing order that nothing keeps true, and when the firm
+  // moved to order 1 it silently pointed each field at the wrong person.
   const signatureValues: Record<string, string> = {};
+  const signerIndices =
+    options.mode === 'FOR_SIGNATURE' ? resolveSignerIndices(options.signers ?? []) : new Map<string, number>();
+
   for (const anchor of options.manifest.signatureAnchors) {
+    if (options.mode !== 'FOR_SIGNATURE') {
+      signatureValues[anchor.token] = anchor.draftPlaceholder;
+      continue;
+    }
+
+    const signerIndex = signerIndices.get(anchor.role);
+
+    if (signerIndex === undefined) {
+      // A required anchor with nobody to fill it must stop the render. Emitting
+      // the draft placeholder instead would send a document with a blank line
+      // where a signature belongs, and Adobe would raise nothing — the agreement
+      // would simply come back missing a signature nobody noticed was required.
+      if (anchor.required) {
+        throw new Error(
+          `No signer holds the role ${anchor.role}, which this template requires at ${anchor.token}.`,
+        );
+      }
+      signatureValues[anchor.token] = anchor.draftPlaceholder;
+      continue;
+    }
+
+    // AUTO_PLACED yields null: no tag, placeholder stands, Adobe positions its
+    // own field.
     signatureValues[anchor.token] =
-      options.mode === 'FOR_SIGNATURE' ? anchor.adobeTag : anchor.draftPlaceholder;
+      buildAdobeTag(anchor.adobeFieldType, signerIndex) ?? anchor.draftPlaceholder;
   }
 
   // 7. Checkboxes. This runs *before* token substitution because a checkbox

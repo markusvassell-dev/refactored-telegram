@@ -241,7 +241,12 @@ describe('T2 engagement letter rendering', () => {
     }
   });
 
-  it('writes Adobe Sign text tags only when sending for signature', async () => {
+  it('sends T2 with no Adobe tags at all, so Adobe places its own fields', async () => {
+    const signers = [
+      { role: 'FIRM_SIGNER', signingOrder: 1 },
+      { role: 'AUTHORIZED_SIGNING_OFFICER', signingOrder: 2 },
+    ];
+
     const draft = await renderDocx(template.docx, {
       manifest: template.manifest,
       values: T2_VALUES,
@@ -255,13 +260,21 @@ describe('T2 engagement letter rendering', () => {
       selections: T2_SELECTIONS,
       includedSections: [],
       mode: 'FOR_SIGNATURE',
+      signers,
     });
 
     const draftText = (await extractParagraphs(draft.docx)).join('\n');
     const signingText = (await extractParagraphs(signing.docx)).join('\n');
 
     expect(draftText).not.toContain('_es_:');
-    expect(signingText).toContain('{{Dte_es_:signer1:date}}');
+
+    // The T2 template has no signature line to anchor to — only a date — and the
+    // firm chose not to edit the approved wording to add one. Sending a document
+    // with a date field but no signature field risks Adobe taking over placement
+    // and giving the officer no way to sign at all. An agreement nobody can sign
+    // is worse than a blank date line, so T2 goes out untagged and Adobe places
+    // both fields itself.
+    expect(signingText).not.toContain('_es_:');
   });
 
   it('never writes a signature or signed date from supplied values', async () => {
