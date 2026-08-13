@@ -49,8 +49,17 @@ async function run(action: () => Promise<ActionOutcome>): Promise<ActionResult> 
     // An expected refusal explains itself to the user. Anything else shows a
     // generic message on purpose — and must therefore reach the log, or it
     // leaves no trace anywhere at all.
+    //
+    // The generic message used to end there, saying an administrator held the
+    // technical details. In this firm the person reading it *is* the
+    // administrator, and it left them holding a failure with no thread to pull:
+    // no time, no name, nothing to search the log for. So an unexpected failure
+    // now carries a reference, logged alongside the cause.
+    let reference: string | undefined;
     if (!(error instanceof AppError)) {
+      reference = newCorrelationId();
       container.logger.error('Server action failed', {
+        correlationId: reference,
         name: error instanceof Error ? error.name : 'Unknown',
         message: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack?.split('\n').slice(0, 6).join('\n') : undefined,
@@ -64,7 +73,12 @@ async function run(action: () => Promise<ActionOutcome>): Promise<ActionResult> 
       error instanceof AppError && Array.isArray(error.context.blockers)
         ? (error.context.blockers as string[])
         : undefined;
-    return { ok: false, message: toUserMessage(error), ...(blockers ? { blockers } : {}) };
+
+    const message = reference
+      ? `${toUserMessage(error)} Reference ${reference} — it is in the application log under that id.`
+      : toUserMessage(error);
+
+    return { ok: false, message, ...(blockers ? { blockers } : {}) };
   }
 }
 

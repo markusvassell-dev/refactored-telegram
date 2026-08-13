@@ -25,6 +25,45 @@ export interface SourceDocumentDeps {
   store: DocumentStore;
 }
 
+/**
+ * Why a document could not be read, in words the person holding it can act on.
+ *
+ * pdf.js reports these as exception *names* rather than codes, and its message
+ * text ("No password given") reads like an accusation of a missing input rather
+ * than a description of the file. What a reviewer needs is which of two things
+ * happened — the file is locked, or the file is broken — because the responses
+ * are completely different: print it flat and re-attach, or go and find a good
+ * copy.
+ */
+export function describeUnreadable(error: unknown, isPdf: boolean): string {
+  const name = error instanceof Error ? error.name : '';
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (name === 'PasswordException' || /password/i.test(message)) {
+    return (
+      'This PDF is encrypted, so its text could not be read. Signed PDFs often are — Acrobat locks permissions with ' +
+      'an owner password when it applies a signature. It is attached and stored, but nothing has been read from it, ' +
+      'so confirm what it is yourself, or attach a copy printed or re-saved without the restriction.'
+    );
+  }
+
+  if (name === 'InvalidPDFException' || /invalid pdf|xref|corrupt/i.test(message)) {
+    return (
+      'This file could not be opened as a PDF — it is damaged, or it is not really a PDF. It is attached and stored, ' +
+      'but nothing has been read from it. Check the copy in Karbon opens correctly.'
+    );
+  }
+
+  if (!isPdf) {
+    return (
+      'This Word file could not be read. It may be the older .doc format, which this application does not read — ' +
+      'saving it as .docx and attaching that will work. It is attached and stored, but nothing has been read from it.'
+    );
+  }
+
+  return `This document could not be read (${message}). It is attached and stored, but nothing has been read from it, so confirm what it is yourself.`;
+}
+
 export interface UploadSourceDocumentInput {
   engagementId: string;
   actorId: string;
@@ -125,13 +164,45 @@ export class SourceDocumentService {
 
     const buffer = Buffer.from(input.content);
     const pdf = isPdf(buffer);
-    const text = pdf
-      ? (await extractPdfText(buffer)).fullText
-      : (await extractParagraphs(buffer)).join('\n');
-    const pageCount = pdf ? countPdfPages(buffer) : null;
 
     const notes: string[] = [];
-    if (text.trim().length === 0) {
+    let text = '';
+    let pageCount: number | null = null;
+
+    // Reading a document can fail outright, and that is not a reason to refuse
+    // to hold it.
+    //
+    // These three calls were unguarded, so a file the reader could not open
+    // threw out of the whole action and surfaced as "Something went wrong" with
+    // the reason visible only in a log. The commonest cause is the commonest
+    // document: a *signed* PDF, which Acrobat routinely encrypts with an owner
+    // password to lock permissions, and which pdf.js refuses to open at all.
+    // Attaching last year's signed engagement letter is the main thing anybody
+    // does here, so the one document most likely to be chosen was the one
+    // guaranteed to fail.
+    //
+    // Unreadable is a fact about the document, recorded as a note. It is not a
+    // free pass: `text` stays empty, so verification below scores nothing, the
+    // document is attached *unconfirmed*, and a person still has to say what it
+    // is. A file that cannot be read is never quietly treated as verified.
+    try {
+      text = pdf ? (await extractPdfText(buffer)).fullText : (await extractParagraphs(buffer)).join('\n');
+    } catch (error) {
+      notes.push(describeUnreadable(error, pdf));
+    }
+
+    if (pdf) {
+      // Counted separately: a PDF whose text will not come out often still
+      // reports its page count, and losing that to the same failure would be
+      // discarding something that did work.
+      try {
+        pageCount = countPdfPages(buffer);
+      } catch {
+        pageCount = null;
+      }
+    }
+
+    if (notes.length === 0 && text.trim().length === 0) {
       notes.push(
         'No text could be read from this file. It may be a scan, which this application does not read without OCR enabled.',
       );

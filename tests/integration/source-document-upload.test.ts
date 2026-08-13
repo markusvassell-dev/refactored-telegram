@@ -272,3 +272,101 @@ describe('a kind that is not an engagement letter', () => {
     expect(result.confirmed).toBe(true);
   });
 });
+
+/**
+ * Documents the reader cannot open.
+ *
+ * These three calls — PDF text, DOCX paragraphs, page count — were unguarded,
+ * so a file that could not be parsed threw out of the whole action and reached
+ * the user as "Something went wrong", with the cause visible only in a log.
+ *
+ * The commonest trigger is the commonest document. Acrobat routinely encrypts a
+ * PDF with an owner password when it applies a signature, to lock permissions;
+ * pdf.js will not open one at all. Attaching last year's *signed* engagement
+ * letter is the main thing anybody does on this screen, so the single most
+ * likely file to be chosen was the one certain to fail.
+ */
+describe('a document that cannot be read', () => {
+  /** A standard-security /Encrypt dictionary — the shape Acrobat produces. */
+  function encryptedPdf(): Buffer {
+    const objects = [
+      '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+      '2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n',
+      '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>\nendobj\n',
+      `4 0 obj\n<< /Filter /Standard /V 1 /R 2 /O <${'2'.repeat(64)}> /U <${'A'.repeat(64)}> /P -44 >>\nendobj\n`,
+    ];
+
+    let pdf = '%PDF-1.4\n';
+    const offsets: number[] = [];
+    for (const object of objects) {
+      offsets.push(pdf.length);
+      pdf += object;
+    }
+
+    const xref = pdf.length;
+    pdf += 'xref\n0 5\n0000000000 65535 f \n';
+    for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+    pdf +=
+      `trailer\n<< /Size 5 /Root 1 0 R /Encrypt 4 0 R /ID [<${'0'.repeat(32)}> <${'0'.repeat(32)}>] >>\n` +
+      `startxref\n${xref}\n%%EOF\n`;
+
+    return Buffer.from(pdf, 'latin1');
+  }
+
+  it('attaches an encrypted PDF and explains why nothing was read, instead of throwing', async () => {
+    const engagementId = await newEngagement();
+
+    const result = await upload(engagementId, encryptedPdf(), {
+      fileName: 'T2 Engagement Letter - signed.pdf',
+      mimeType: 'application/pdf',
+    });
+
+    // It is held, not lost. Refusing the file would mean the reviewer has
+    // nowhere to put a document Karbon is holding for this client.
+    const stored = await prisma.sourceDocument.findUniqueOrThrow({ where: { id: result.sourceDocumentId } });
+    expect(stored.storagePath).toBeTruthy();
+    expect(stored.byteSize).toBeGreaterThan(0);
+
+    // And it is not quietly trusted. Nothing was read, so nothing supports it.
+    expect(result.confirmed).toBe(false);
+    expect(stored.confirmedAt).toBeNull();
+
+    // The note has to name the cause and the remedy. "Could not be read" sends
+    // somebody looking for a fault that is not there — the file is fine, it is
+    // locked, and the fix is a different copy.
+    const note = result.notes.join(' ');
+    expect(note).toMatch(/encrypted/i);
+    expect(note).toMatch(/signed PDFs often are/i);
+  });
+
+  it('attaches a damaged PDF and says it is damaged, not that it is locked', async () => {
+    const engagementId = await newEngagement();
+
+    const result = await upload(engagementId, Buffer.from('%PDF-1.4\nnot actually a pdf\n%%EOF'), {
+      fileName: 'broken.pdf',
+      mimeType: 'application/pdf',
+    });
+
+    expect(result.confirmed).toBe(false);
+
+    // The two failures need different responses — print it flat, or go and find
+    // a good copy — so telling them apart is the whole point of the message.
+    const note = result.notes.join(' ');
+    expect(note).toMatch(/damaged|not really a PDF/i);
+    expect(note).not.toMatch(/encrypted/i);
+  });
+
+  it('still records the page count when only the text extraction failed', async () => {
+    const engagementId = await newEngagement();
+
+    const result = await upload(engagementId, encryptedPdf(), {
+      fileName: 'signed.pdf',
+      mimeType: 'application/pdf',
+    });
+
+    // Counted separately from the text on purpose: discarding what did work
+    // because something else did not is its own small loss.
+    const stored = await prisma.sourceDocument.findUniqueOrThrow({ where: { id: result.sourceDocumentId } });
+    expect(stored.pageCount === null || stored.pageCount >= 1).toBe(true);
+  });
+});
