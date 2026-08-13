@@ -35,32 +35,44 @@ export interface SourceDocumentDeps {
  * are completely different: print it flat and re-attach, or go and find a good
  * copy.
  */
-export function describeUnreadable(error: unknown, isPdf: boolean): string {
+export function describeUnreadable(error: unknown, content: Buffer): string {
   const name = error instanceof Error ? error.name : '';
   const message = error instanceof Error ? error.message : String(error);
 
+  // What the bytes actually are, not which branch happened to run.
+  //
+  // `DocumentStore.put` has already refused anything whose bytes disagree with
+  // its declared type, so by the time this runs the file really is a PDF or a
+  // DOCX. That narrows the possibilities usefully: it opened as the right
+  // format and then could not be parsed.
+  const looksZip = content.length > 1 && content[0] === 0x50 && content[1] === 0x4b;
+
   if (name === 'PasswordException' || /password/i.test(message)) {
     return (
-      'This PDF is encrypted, so its text could not be read. Signed PDFs often are — Acrobat locks permissions with ' +
-      'an owner password when it applies a signature. It is attached and stored, but nothing has been read from it, ' +
-      'so confirm what it is yourself, or attach a copy printed or re-saved without the restriction.'
+      'This PDF needs a password to open, so nothing could be read from it. It is attached and stored, but its ' +
+      'contents have not been checked — confirm what it is yourself, or attach a copy saved without the password.'
     );
   }
 
   if (name === 'InvalidPDFException' || /invalid pdf|xref|corrupt/i.test(message)) {
     return (
-      'This file could not be opened as a PDF — it is damaged, or it is not really a PDF. It is attached and stored, ' +
-      'but nothing has been read from it. Check the copy in Karbon opens correctly.'
+      'This file could not be opened as a PDF — it is damaged, or its internal structure is one this reader does ' +
+      'not understand. It is attached and stored, but nothing has been read from it. Check the copy in Karbon opens ' +
+      'correctly.'
     );
   }
 
-  if (!isPdf) {
+  if (looksZip) {
     return (
-      'This Word file could not be read. It may be the older .doc format, which this application does not read — ' +
-      'saving it as .docx and attaching that will work. It is attached and stored, but nothing has been read from it.'
+      'This Word file could not be read; it may be damaged. It is attached and stored, but nothing has been read ' +
+      `from it (${message}).`
     );
   }
 
+  // Quotes the reader's own words. The branches above name causes seen often
+  // enough to be worth naming; this one has not, so it hands over what actually
+  // happened rather than inventing an explanation that sends somebody hunting
+  // the wrong fault.
   return `This document could not be read (${message}). It is attached and stored, but nothing has been read from it, so confirm what it is yourself.`;
 }
 
@@ -188,7 +200,7 @@ export class SourceDocumentService {
     try {
       text = pdf ? (await extractPdfText(buffer)).fullText : (await extractParagraphs(buffer)).join('\n');
     } catch (error) {
-      notes.push(describeUnreadable(error, pdf));
+      notes.push(describeUnreadable(error, buffer));
     }
 
     if (pdf) {

@@ -331,12 +331,19 @@ describe('a document that cannot be read', () => {
     expect(result.confirmed).toBe(false);
     expect(stored.confirmedAt).toBeNull();
 
-    // The note has to name the cause and the remedy. "Could not be read" sends
-    // somebody looking for a fault that is not there — the file is fine, it is
-    // locked, and the fix is a different copy.
+    // The note names the cause and the remedy. "Could not be read" sends
+    // somebody looking for a fault that is not there — the file is intact, it
+    // is locked, and the fix is a different copy.
+    //
+    // It claims only what pdf.js actually reported: the file wants a password.
+    // An earlier version of this message asserted that Acrobat's permissions
+    // lock on signed PDFs was the cause. That is not established — a PDF
+    // carrying only an owner password opens normally, without complaint — and
+    // stating it as fact would send somebody re-saving every signed letter they
+    // have to fix something that may not be wrong.
     const note = result.notes.join(' ');
-    expect(note).toMatch(/encrypted/i);
-    expect(note).toMatch(/signed PDFs often are/i);
+    expect(note).toMatch(/needs a password/i);
+    expect(note).toMatch(/attach a copy saved without the password/i);
   });
 
   it('attaches a damaged PDF and says it is damaged, not that it is locked', async () => {
