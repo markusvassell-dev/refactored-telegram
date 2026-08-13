@@ -364,15 +364,85 @@ model Client {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  contacts    ClientContact[]
-  engagements Engagement[]
-  workItems   KarbonWorkItem[]
-  feeRules    FeeRule[]
+  contacts        ClientContact[]
+  engagements     Engagement[]
+  workItems       KarbonWorkItem[]
+  feeRules        FeeRule[]
+  karbonDocuments KarbonClientDocument[]
+  librarySyncs    KarbonLibrarySync[]
 
   @@index([legalName])
   @@index([clientGroup])
   @@index([isTestFixture])
   @@map("client")
+}
+
+/// One file Karbon holds for a client — the catalogue behind the Documents tab.
+///
+/// Metadata only. The bytes stay in Karbon until somebody selects the document,
+/// because Karbon's download tokens expire about fifteen minutes after the
+/// listing that issued them, so there is nothing here worth storing: a stored
+/// URL would be a link that works in testing and fails for the first person who
+/// opens it an hour later. Selecting a document fetches a fresh listing.
+model KarbonClientDocument {
+  id       String @id @default(uuid())
+  clientId String
+  /// Karbon's FileContextKey. Unique per client, and the dedupe key when the
+  /// same file is filed against more than one entity.
+  karbonFileKey String
+  fileName      String
+  /// Which file list this came from, and what a person would call it.
+  sourceEntityType String
+  sourceEntityKey  String
+  sourceLabel      String
+  byteSize         Int?
+  mimeType         String?
+  /// When Karbon recorded the file, not when this row was written.
+  uploadedAt DateTime?
+  /// The tax year inferred from the work item title, when one could be read.
+  /// Null means unknown, never "this year" — a guess here files a document
+  /// against the wrong year's engagement.
+  inferredTaxYear Int?
+  /// Last sync that saw this file. A file Karbon no longer lists keeps its row
+  /// and a stale `lastSeenAt`, so a document disappearing is visible rather
+  /// than silent.
+  lastSeenAt DateTime
+  firstSeenAt DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, karbonFileKey])
+  @@index([clientId, uploadedAt])
+  @@index([clientId, inferredTaxYear])
+  @@map("karbon_client_document")
+}
+
+/// The outcome of one attempt to read a client's whole Karbon library.
+///
+/// Recorded because a count on its own cannot be trusted: 91 documents from a
+/// complete read and 91 from a read that lost two work items to a timeout are
+/// different answers, and only this row can tell them apart.
+model KarbonLibrarySync {
+  id        String   @id @default(uuid())
+  clientId  String
+  startedAt DateTime @default(now())
+  finishedAt DateTime?
+  /// Scopes read successfully, and scopes that failed.
+  scopesRead     Int @default(0)
+  scopesFailed   Int @default(0)
+  documentsFound Int @default(0)
+  documentsNew   Int @default(0)
+  /// False when any scope failed. The library may be missing documents.
+  complete Boolean @default(false)
+  /// What failed, in the vendor's own words.
+  failureDetail Json?
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId, startedAt])
+  @@map("karbon_library_sync")
 }
 
 model ClientContact {

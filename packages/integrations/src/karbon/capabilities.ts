@@ -58,6 +58,21 @@ export const KARBON_CAPABILITY_MATRIX: readonly CapabilityReport[] = [
       'Document listings expose file names and identifiers. File names are never trusted on their own — every candidate prior-year document is verified against its content. A client key names either an Organization or a Contact, so both are tried in that order; those two entity types have not yet been observed returning a file.',
   },
   {
+    capability: 'LIST_CLIENT_LIBRARY',
+    // UNVERIFIED, deliberately. Every request it makes is a documented
+    // operation already observed working, and it is covered by tests — but no
+    // run has yet assembled a real client's library against the live tenant,
+    // and a corrected path is not an observed one. What is untested is exactly
+    // what is hardest to get right: whether the aggregate is *whole* for a
+    // client with years of work items.
+    //
+    // `pnpm verify:karbon --library CLIENT_KEY` is what promotes this.
+    support: 'UNVERIFIED',
+    operation: 'GET /v3/FileList/{EntityType} once per entity, plus GET /v3/WorkItems to enumerate them',
+    limitation:
+      'Karbon publishes no operation returning a client’s documents, and FileList takes no paging parameters — it answers for exactly one entity. A client’s library is therefore assembled from the organization, each contact and every work item, which is one request each and can be tens of them. Any of those can fail, so the result carries a `complete` flag; a library assembled from nineteen of twenty scopes is not a smaller library but a wrong one, and must not be shown as the client’s documents.',
+  },
+  {
     capability: 'DOWNLOAD_DOCUMENT',
     // Observed 2026-08-10: 31,118 bytes of application/pdf came back from a
     // live work item. Both halves of the two-step are therefore exercised —

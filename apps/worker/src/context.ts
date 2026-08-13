@@ -5,6 +5,7 @@ import {
   ApprovalService,
   CoverLetterService,
   CoverLetterNarrativeService,
+  KarbonLibraryService,
   DateRuleService,
   DocumentStore,
   EngagementService,
@@ -57,6 +58,7 @@ export interface WorkerContext {
   externalSignature: ExternalSignatureService;
   coverLetters: CoverLetterService;
   coverLetterNarratives: CoverLetterNarrativeService;
+  karbonLibrary: KarbonLibraryService;
   notifications: KarbonNotificationService;
   providers(): Promise<ResolvedProviders>;
   testMode(): Promise<{ testMode: boolean; productionSendingEnabled: boolean }>;
@@ -131,6 +133,7 @@ export function buildWorkerContext(): WorkerContext {
     audit,
     templateDirectory,
   });
+  const karbonLibrary = new KarbonLibraryService({ prisma, audit, logger });
   const notifications = new KarbonNotificationService({
     prisma,
     audit,
@@ -167,6 +170,7 @@ export function buildWorkerContext(): WorkerContext {
     externalSignature,
     coverLetters,
     coverLetterNarratives,
+    karbonLibrary,
     notifications,
     testMode,
     providers: async () => {

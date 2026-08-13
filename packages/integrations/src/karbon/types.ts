@@ -61,11 +61,60 @@ export interface KarbonDocument {
   uploadedAt?: string | null;
   uploadedBy?: string | null;
   /**
+   * Which file list this came from, in words — "2024 T2 Tax Return" or the
+   * client's own name. A file key alone cannot tell a reviewer where in Karbon
+   * a document is filed, and that is usually the question being asked.
+   */
+  sourceLabel?: string | null;
+  /** The entity type whose file list produced this document. */
+  sourceEntityType?: KarbonEntityType | null;
+  /**
    * The signed API path Karbon hands out with a file listing. Short-lived — the
    * token carries its own expiry — so it is never persisted; a download fetches
    * a current listing to obtain a fresh one.
    */
   downloadUrl?: string | null;
+}
+
+/** One place a file list was read from, and what it held. */
+export interface KarbonLibraryScope {
+  entityType: KarbonEntityType;
+  entityKey: string;
+  /** What a person would call this — a work item title, or the client's name. */
+  label: string;
+  documentCount: number;
+}
+
+/** A scope that could not be read. Its documents are missing, not absent. */
+export interface KarbonLibraryFailure {
+  entityType: KarbonEntityType;
+  entityKey: string;
+  label: string;
+  reason: string;
+}
+
+/**
+ * Everything Karbon holds for one client.
+ *
+ * Karbon has no "all documents for this client" operation. The Documents tab in
+ * its own interface is an aggregate, and so is this: the organization's files,
+ * each contact's files, and the files on every work item ever raised for that
+ * client, deduplicated by file key.
+ *
+ * `complete` is the field that matters. Reading a client's library means tens of
+ * requests, and any one of them can fail; a library assembled from nineteen of
+ * twenty scopes is not a smaller library, it is a wrong one. Presenting it as
+ * the client's documents would mean a reviewer concluding a document does not
+ * exist because the request that would have found it failed quietly. So a
+ * partial result stays labelled partial, all the way to the screen.
+ */
+export interface KarbonDocumentLibrary {
+  entityKey: string;
+  documents: KarbonDocument[];
+  scopes: KarbonLibraryScope[];
+  failures: KarbonLibraryFailure[];
+  /** True only when every scope was read. False means documents may be missing. */
+  complete: boolean;
 }
 
 export interface KarbonWorkItemQuery {
@@ -116,6 +165,7 @@ export type KarbonCapability =
   | 'READ_CONTACTS'
   | 'READ_CLIENT'
   | 'LIST_DOCUMENTS'
+  | 'LIST_CLIENT_LIBRARY'
   | 'DOWNLOAD_DOCUMENT'
   | 'UPLOAD_DOCUMENT'
   | 'ADD_COMMENT'
@@ -177,6 +227,16 @@ export interface KarbonProvider {
   searchWorkItems(query: KarbonWorkItemQuery): Promise<KarbonWorkItem[]>;
 
   listDocuments(scope: { workItemKey?: string; entityKey?: string }): Promise<KarbonDocument[]>;
+
+  /**
+   * Every document Karbon holds for a client, across every scope it files them
+   * under. See `KarbonDocumentLibrary` — in particular `complete`, which a
+   * caller must not discard.
+   */
+  listClientLibrary(
+    entityKey: string,
+    options?: { maxWorkItems?: number },
+  ): Promise<KarbonDocumentLibrary>;
   /**
    * `scope` names the entity whose listing carries the download token. Karbon
    * issues one only alongside a file list, so a document id alone is not enough.

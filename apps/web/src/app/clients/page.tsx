@@ -37,7 +37,7 @@ export default async function ClientsPage({
       // order between tied rows is undefined and paging would drop clients
       // from a list that reports itself complete.
       orderBy: withStableOrder([{ legalName: 'asc' as const }]),
-      include: { _count: { select: { engagements: true, contacts: true } } },
+      include: { _count: { select: { engagements: true, contacts: true, karbonDocuments: true } } },
       skip: request.skip,
       take: request.take,
     }),
@@ -118,6 +118,7 @@ export default async function ClientsPage({
                   <th scope="col">Karbon</th>
                   <th scope="col">Business number</th>
                   <th scope="col">Contacts</th>
+                  <th scope="col">Documents</th>
                   <th scope="col">Engagements</th>
                 </tr>
               </thead>
@@ -125,7 +126,9 @@ export default async function ClientsPage({
                 {clients.map((client) => (
                   <tr key={client.id}>
                     <td className="font-medium">
-                      {client.legalName}
+                      <Link className="underline" href={`/clients/${client.id}`}>
+                        {client.legalName}
+                      </Link>
                       {client.isTestFixture ? (
                         <span className="badge ml-2 bg-amber-100 text-amber-800">test fixture</span>
                       ) : null}
@@ -142,6 +145,15 @@ export default async function ClientsPage({
                     </td>
                     <td className="text-xs">{client.businessNumber ?? '—'}</td>
                     <td className="text-xs">{client._count.contacts}</td>
+                    <td className="text-xs">
+                      {client._count.karbonDocuments > 0 ? (
+                        <Link className="underline" href={`/clients/${client.id}`}>
+                          {client._count.karbonDocuments}
+                        </Link>
+                      ) : (
+                        <span className="text-slate-500">not read</span>
+                      )}
+                    </td>
                     <td className="text-xs">
                       {client._count.engagements > 0 ? (
                         <Link className="underline" href={`/engagements?client=${client.id}`}>

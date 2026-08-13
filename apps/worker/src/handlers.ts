@@ -140,6 +140,34 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       return { found: true, workItemKey };
     },
 
+    /**
+     * Catalogues everything Karbon holds for a client.
+     *
+     * A background job because a long-standing client means tens of file-list
+     * requests against a rate-limited API — too slow for a request, and it must
+     * survive a restart partway through.
+     */
+    SYNC_CLIENT_DOCUMENTS: async ({ job, logger }) => {
+      const clientId = requireString(job.payload, 'clientId');
+      const { karbon } = await context.providers();
+
+      const result = await context.karbonLibrary.sync({ clientId, karbon });
+
+      if (!result.complete) {
+        // Warned, not failed. A library missing two work items is still worth
+        // having; what would be wrong is presenting it as the whole of it, and
+        // `complete: false` is already recorded against the sync for the screen
+        // to read.
+        logger.warn('Client document library is incomplete', {
+          clientId,
+          scopesFailed: result.scopesFailed,
+          documentsFound: result.documentsFound,
+        });
+      }
+
+      return { ...result };
+    },
+
     // -------------------------------------------------- Prior-year documents
     LOCATE_PRIOR_YEAR_DOCUMENTS: async ({ job, logger }) => {
       const engagementId = requireString(job.payload, 'engagementId');

@@ -39,6 +39,7 @@ import {
  * Usage:
  *   pnpm verify:karbon                          # read-only
  *   pnpm verify:karbon --work-item KEY          # exercise a specific work item
+ *   pnpm verify:karbon --library CLIENT_KEY     # read one client's whole document library
  *   pnpm verify:karbon --allow-writes --work-item KEY
  *
  * Writing to a production tenant additionally needs --write-to-production, and
@@ -241,12 +242,94 @@ async function main(): Promise<void> {
       logger,
     });
 
-    await verify(client, argument('work-item'));
+    // A separate mode, because it answers a different question. The checks
+    // below prove each operation works; this proves the aggregate is *whole* —
+    // which is the only thing a client's document list is judged on.
+    const libraryKey = argument('library');
+    if (libraryKey) {
+      await verifyLibrary(client, libraryKey);
+    } else {
+      await verify(client, argument('work-item'));
+    }
   } finally {
     await prisma.$disconnect();
   }
 
   summarise();
+}
+
+/**
+ * Reads one client's whole document library and shows where every file came
+ * from.
+ *
+ * Karbon has no operation that returns a client's documents, so this is an
+ * aggregate over the organization, its contacts and every work item — and the
+ * number it prints is only meaningful next to the number of places it read.
+ * "93 documents" from a complete read and "93 documents" from a read that lost
+ * four work items to a rate limit are different answers.
+ */
+async function verifyLibrary(client: KarbonProvider, entityKey: string): Promise<void> {
+  if (entityKey.startsWith('<') || /^(THE_?KEY|PasteTheKeyHere|CLIENT_?KEY)$/i.test(entityKey)) {
+    fail(
+      `"${entityKey}" is a placeholder, not a Karbon key.`,
+      'Open the client in Karbon and take the key from the end of its URL — eleven or twelve letters and digits,\n' +
+        'like 3bXVhdMHgc9P. Then re-run with that in place of the last word:\n' +
+        '  pnpm verify:karbon --library PasteTheKeyHere',
+    );
+  }
+
+  const named = await attempt(
+    'READ_CLIENT',
+    () => client.getClient(entityKey),
+    (found) => (found ? `${found.legalName} (${found.entityType})` : 'no organisation or contact matched that key'),
+    (found) => found !== null,
+  );
+
+  if (!named) {
+    const explanation = await client.describeUnresolvedClient(entityKey).catch(() => null);
+    if (explanation) process.stdout.write(`\n  ${explanation}\n`);
+    return;
+  }
+
+  const library = await attempt(
+    'LIST_CLIENT_LIBRARY',
+    () => client.listClientLibrary(entityKey),
+    (result) =>
+      `${result.documents.length} document(s) across ${result.scopes.length} place(s)` +
+      (result.complete ? '' : ` — INCOMPLETE, ${result.failures.length} place(s) could not be read`),
+    // An empty library from a client that has files is the exact failure this
+    // whole exercise exists to catch, and it raises no error. A read that found
+    // nothing proves nothing, so it is not allowed to pass.
+    (result) => result.documents.length > 0 && result.complete,
+  );
+
+  if (!library) return;
+
+  process.stdout.write(`\n  Where ${named.legalName}'s documents are filed:\n`);
+  const withFiles = library.scopes.filter((scope) => scope.documentCount > 0);
+  for (const scope of withFiles.slice(0, 40)) {
+    process.stdout.write(`    ${String(scope.documentCount).padStart(4)}  ${scope.entityType.padEnd(12)} ${scope.label}\n`);
+  }
+  if (withFiles.length > 40) {
+    process.stdout.write(`    ... and ${withFiles.length - 40} more\n`);
+  }
+
+  const empty = library.scopes.length - withFiles.length;
+  if (empty > 0) process.stdout.write(`    (${empty} place(s) held no files)\n`);
+
+  for (const failure of library.failures) {
+    process.stdout.write(`    FAILED  ${failure.entityType} ${failure.label}: ${failure.reason}\n`);
+  }
+
+  // Implausible uniformity is the tell. Every scope returning zero is not a
+  // client with no paperwork, it is a query that is not working — which is
+  // precisely how this went unnoticed the first time.
+  if (withFiles.length === 0 && library.scopes.length > 3) {
+    process.stdout.write(
+      `\n  Every one of ${library.scopes.length} places returned zero files. For an established client that is\n` +
+        '  not a quiet year, it is a broken read. Check the token has file access before believing it.\n',
+    );
+  }
 }
 
 function writeMode(isSandbox: boolean): string {

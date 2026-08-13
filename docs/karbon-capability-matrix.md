@@ -138,6 +138,7 @@ Browser automation and scraping are not used anywhere, and will not be added.
 | Read client | Supported | `GET /v3/Organizations/{EntityKey}?$expand=Contacts,BusinessCards`, `GET /v3/Contacts/{EntityKey}?$expand=BusinessCards` | Tries organisation, then contact | **`$expand` is not optional.** A bare read returns the name and keys only — no contacts, no address, no telephone. Contacts are one expansion and the address/e-mail/telephone live on a Business Card, which is another. Karbon publishes **no business-number field**; `UserDefinedIdentifier` is free text and is accepted only when number-shaped, because a wrong CRA number on a T2 letter is worse than a blank one. |
 | Read contacts | Unverified | `GET /v3/Contacts` and the organisation contact collection | — | — |
 | List documents | **Supported** | `GET /v3/FileList/{EntityType}?EntityKey=…`, where `EntityType` is `WorkItem`, `Organization` or `Contact` | — | Returns names and identifiers. **File names are never trusted on their own** — every prior-year candidate is verified against its contents. A client key names an organisation or a contact and only Karbon knows which, so both are tried in that order; an empty list from a recognised entity is a real answer and stops the search, a 404 is not. **Only `WorkItem` has been observed returning a file**; the other two entity types share the code path but have not yet produced one. |
+| Read a client's whole library | Unverified | `GET /v3/FileList/{EntityType}` once per entity, plus `GET /v3/WorkItems` to enumerate them | — | **Karbon publishes no operation that returns a client's documents**, and `FileList` takes no paging parameters — it declares `EntityType` and `EntityKey`, nothing else, so it answers for exactly one entity. In Karbon's data model a client does not have documents: its organisation does, its contacts do, and each of its work items does. Its own Documents tab is an aggregate, and so is this — which is why a client with 93 documents returns almost none of them from the organisation scope alone. One request per entity means tens of requests for an established client, any of which can fail, so the result carries a `complete` flag. **A library assembled from nineteen of twenty scopes is not a smaller library, it is a wrong one**, and is never presented as the client's documents. Verify with `pnpm verify:karbon --library CLIENT_KEY`. |
 | Download document | **Supported** | `GET /v3/Files?token=…` | — | There is no download by identifier. Karbon issues a signed token alongside a file listing, documented as valid for **fifteen minutes**, so a download first lists the entity holding the file. Tokens are never persisted, and only the token is taken from the vendor-supplied `DownloadUrl` — never the host. |
 | Upload document | **Supported** | `POST /v3/Files`, `multipart/form-data` with `file` and `workitem_keys` | — | Approved, signed and certificate files are uploaded with `neverOverwrite`. On a name collision the upload is skipped, the collision is recorded, and the reviewer is told. |
 | Add comment or note | **Supported** | `POST /v3/Notes` with `AuthorEmailAddress`, `Subject`, `Body` and a `Timelines` entry naming the work item | — | Karbon **requires** an author who is a user on the tenant. Set `KARBON_NOTE_AUTHOR_EMAIL`; otherwise the first user the tenant lists is used. Comments are **notifications only** — never parsed as automation commands. |
@@ -201,7 +202,18 @@ Before relying on any row above:
    pnpm verify:karbon                       # reads only
    pnpm verify:karbon --work-item 3xKmQp9   # a key you have chosen; not a placeholder
    pnpm verify:karbon --allow-writes --work-item 3xKmQp9
+   pnpm verify:karbon --library 3bXVhdMHgc9P  # one client's whole document library
    ```
+
+   `--library` answers a different question from the rest. The other checks
+   prove each operation works; this proves the aggregate is **whole**, which is
+   the only thing a client's document list is judged on. It prints the count
+   beside the number of places read and lists every scope that held files, so
+   "93 documents from 41 places" can be told apart from "93 documents, and four
+   work items we could not read". A read that returns nothing **fails** rather
+   than passing quietly: an empty library from a client who has files is the
+   exact failure that raises no error, and it is why every work item in this
+   tenant reported zero documents for months.
 
    It reads the credentials already stored on the Integrations screen — there
    is no second home for a Karbon credential, and none is passed on a command

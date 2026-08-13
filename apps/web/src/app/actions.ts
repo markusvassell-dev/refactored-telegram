@@ -1667,3 +1667,121 @@ export async function importClientsFromKarbon(formData: FormData): Promise<Actio
     return { ok: true, message: parts.join(' '), blockers };
   });
 }
+
+/**
+ * Catalogues every document Karbon holds for a client.
+ *
+ * Queued rather than done here: a client with years of history means tens of
+ * file-list requests against a rate-limited API, which is well past what a
+ * request should hold open.
+ */
+export async function syncClientDocuments(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    await requirePermission('source_document:select');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const clientId = formData.get('clientId')?.toString();
+    if (!clientId) throw new ValidationError('A client is required.');
+
+    const client = await container.prisma.client.findUnique({
+      where: { id: clientId },
+      select: { legalName: true, karbonEntityKey: true },
+    });
+
+    if (!client) throw new ValidationError('That client no longer exists.');
+    if (!client.karbonEntityKey) {
+      throw new PreconditionError(
+        `${client.legalName} is not linked to Karbon, so there is no document area to read. Import the client from Karbon, or set its entity key, first.`,
+      );
+    }
+
+    const result = await container.queue.enqueue({
+      jobType: 'SYNC_CLIENT_DOCUMENTS',
+      // Time-based on purpose: re-reading is how the catalogue stays current,
+      // so asking twice must mean looking twice.
+      idempotencyKey: `sync_client_documents_${clientId}_${Date.now()}`,
+      payload: { clientId },
+      correlationId: newCorrelationId(),
+    });
+
+    revalidatePath(`/clients/${clientId}`);
+
+    return result.deduplicated
+      ? 'A document sync for this client is already running.'
+      : `Reading ${client.legalName}'s documents from Karbon. Its work items are read one at a time, so a long-standing client takes a minute.`;
+  });
+}
+
+/**
+ * Pulls one catalogued Karbon document into an engagement as a source document.
+ *
+ * The bytes are fetched now, from a fresh listing. The download token Karbon
+ * issued when the catalogue was built expired about fifteen minutes later, so
+ * there is nothing stored to reuse and re-listing is not an inefficiency.
+ *
+ * What arrives is scored exactly as an uploaded file is. Being filed in Karbon
+ * against this client is evidence about a document, not proof of what it is —
+ * a folder can hold the wrong year, and a signed T2 letter sitting in a client's
+ * area is still the wrong document for their T1.
+ */
+export async function importKarbonDocument(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('source_document:select');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    const documentId = formData.get('karbonDocumentId')?.toString();
+    const kind = formData.get('kind')?.toString() as UploadableKind | undefined;
+
+    if (!engagementId) throw new ValidationError('An engagement is required.');
+    if (!documentId) throw new ValidationError('A document is required.');
+    if (!kind || !UPLOADABLE_KINDS.includes(kind)) throw new ValidationError('Choose what this document is.');
+
+    const catalogued = await container.prisma.karbonClientDocument.findUnique({
+      where: { id: documentId },
+      select: {
+        karbonFileKey: true,
+        fileName: true,
+        sourceEntityType: true,
+        sourceEntityKey: true,
+        sourceLabel: true,
+      },
+    });
+
+    if (!catalogued) throw new ValidationError('That document is no longer in the catalogue.');
+
+    const providers = await container.providers();
+
+    // Scoped to the entity that holds the file: Karbon issues a download token
+    // only alongside that entity's listing, so the scope is not optional.
+    const scope =
+      catalogued.sourceEntityType === 'WorkItem'
+        ? { workItemKey: catalogued.sourceEntityKey }
+        : { entityKey: catalogued.sourceEntityKey };
+
+    const downloaded = await providers.karbon.downloadDocument(catalogued.karbonFileKey, scope);
+
+    const result = await container.sourceDocuments.upload({
+      engagementId,
+      actorId: actor.id,
+      fileName: downloaded.fileName || catalogued.fileName,
+      mimeType: downloaded.mimeType,
+      content: new Uint8Array(downloaded.content),
+      kind,
+      karbonDocumentId: catalogued.karbonFileKey,
+      karbonWorkItemKey: catalogued.sourceEntityType === 'WorkItem' ? catalogued.sourceEntityKey : null,
+    });
+
+    await container.queue.enqueue({
+      jobType: 'EXTRACT_DOCUMENT_TEXT',
+      idempotencyKey: `extract_${result.sourceDocumentId}`,
+      payload: { engagementId, sourceDocumentId: result.sourceDocumentId, actorId: actor.id },
+      engagementId,
+      correlationId: newCorrelationId(),
+    });
+
+    revalidatePath(`/engagements/${engagementId}`);
+
+    return `Brought ${catalogued.fileName} in from ${catalogued.sourceLabel}. It is being read now, and its contents are scored against this client and year before anything is used.`;
+  });
+}

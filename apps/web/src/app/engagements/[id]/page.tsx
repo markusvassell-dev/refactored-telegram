@@ -27,7 +27,21 @@ export default async function EngagementDetailPage({ params }: { params: Promise
   const engagement = await container.prisma.engagement.findUnique({
     where: { id },
     include: {
-      client: { include: { contacts: true } },
+      client: {
+        include: {
+          contacts: true,
+          // The client's Karbon catalogue, so last year's letter can be
+          // attached from where it already is rather than fetched by hand.
+          // Newest first, and capped: a long-standing client can have hundreds,
+          // and the ones being looked for are almost always recent.
+          // The tiebreaker is not decoration: documents filed in one batch share
+          // an `uploadedAt` to the millisecond, and with a `take` a non-total
+          // order means the 200 shown can differ between two renders of the
+          // same page.
+          karbonDocuments: { orderBy: [{ uploadedAt: 'desc' }, { fileName: 'asc' }, { id: 'desc' }], take: 200 },
+          librarySyncs: { orderBy: [{ startedAt: 'desc' }, { id: 'desc' }], take: 1 },
+        },
+      },
       karbonWorkItem: true,
       preparer: true,
       reviewer: true,

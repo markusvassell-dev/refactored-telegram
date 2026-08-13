@@ -5,6 +5,9 @@ import type {
   KarbonClient,
   KarbonCommentRequest,
   KarbonDocument,
+  KarbonDocumentLibrary,
+  KarbonEntityType,
+  KarbonLibraryScope,
   KarbonProvider,
   KarbonTaskRequest,
   KarbonUploadRequest,
@@ -100,6 +103,63 @@ export class MockKarbonProvider implements KarbonProvider {
       if (scope.entityKey) return document.entityKey === scope.entityKey;
       return true;
     });
+  }
+
+  /**
+   * Assembled from the same three scopes the real client reads, deliberately.
+   *
+   * The shortcut here would be to return every seeded document at once. It
+   * would also make the mock more capable than Karbon, which has no operation
+   * that does that — and it would hide the aggregation, which is the only part
+   * of this with anything to get wrong.
+   */
+  async listClientLibrary(
+    entityKey: string,
+    options: { maxWorkItems?: number } = {},
+  ): Promise<KarbonDocumentLibrary> {
+    this.record('listClientLibrary', { entityKey });
+
+    const scopes: KarbonLibraryScope[] = [];
+    const byFileKey = new Map<string, KarbonDocument>();
+
+    const collect = async (
+      entityType: KarbonEntityType,
+      key: string,
+      label: string,
+      scope: { workItemKey?: string; entityKey?: string },
+    ): Promise<void> => {
+      const documents = await this.listDocuments(scope);
+      scopes.push({ entityType, entityKey: key, label, documentCount: documents.length });
+      for (const document of documents) {
+        if (!document.documentId || byFileKey.has(document.documentId)) continue;
+        byFileKey.set(document.documentId, { ...document, sourceLabel: label, sourceEntityType: entityType });
+      }
+    };
+
+    const client = this.clients.get(entityKey) ?? null;
+    await collect('Organization', entityKey, client?.legalName ?? entityKey, { entityKey });
+
+    for (const contact of client?.contacts ?? []) {
+      if (!contact.contactKey) continue;
+      await collect('Contact', contact.contactKey, contact.fullName || 'Contact', {
+        entityKey: contact.contactKey,
+      });
+    }
+
+    const workItems = await this.searchWorkItems({ clientKey: entityKey, limit: options.maxWorkItems ?? 500 });
+    for (const item of workItems) {
+      await collect('WorkItem', item.workItemKey, item.title || item.workItemKey, {
+        workItemKey: item.workItemKey,
+      });
+    }
+
+    return {
+      entityKey,
+      documents: [...byFileKey.values()],
+      scopes,
+      failures: [],
+      complete: true,
+    };
   }
 
   async downloadDocument(documentId: string): Promise<{ content: Buffer; fileName: string; mimeType: string }> {
@@ -264,6 +324,23 @@ export class BlockedKarbonProvider implements KarbonProvider {
   async listDocuments(): Promise<KarbonDocument[]> {
     return [];
   }
+  /**
+   * Empty *and* incomplete.
+   *
+   * A blocked provider returning `complete: true` would be claiming this client
+   * genuinely has no documents in Karbon, which is a statement about the firm's
+   * data made by an adapter that never looked. The failure entry is what stops
+   * "we are not allowed to read" from reading as "there is nothing there".
+   */
+  async listClientLibrary(entityKey: string): Promise<KarbonDocumentLibrary> {
+    return {
+      entityKey,
+      documents: [],
+      scopes: [],
+      failures: [{ entityType: 'Organization', entityKey, label: 'Karbon', reason: this.reason }],
+      complete: false,
+    };
+  }
   async downloadDocument(): Promise<{ content: Buffer; fileName: string; mimeType: string }> {
     throw new NotFoundError('Karbon document (test mode blocks reads from production)');
   }
@@ -343,6 +420,9 @@ export class ReadOnlyKarbonProvider implements KarbonProvider {
   }
   listDocuments(scope: { workItemKey?: string; entityKey?: string }): Promise<KarbonDocument[]> {
     return this.inner.listDocuments(scope);
+  }
+  listClientLibrary(entityKey: string, options?: { maxWorkItems?: number }): Promise<KarbonDocumentLibrary> {
+    return this.inner.listClientLibrary(entityKey, options);
   }
   downloadDocument(
     documentId: string,

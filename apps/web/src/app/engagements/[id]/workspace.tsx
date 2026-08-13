@@ -14,6 +14,7 @@ import {
   confirmDateFact,
   confirmServiceSelection,
   generateCoverLetter,
+  importKarbonDocument,
   locatePriorYearDocuments,
   markReadyToSend,
   overrideFee,
@@ -306,6 +307,102 @@ const UPLOAD_KINDS: { value: string; label: string }[] = [
   { value: 'OTHER_SUPPORTING_SCHEDULE', label: 'Other supporting schedule' },
 ];
 
+/**
+ * The client's Karbon documents, offered where they are needed.
+ *
+ * Being filed against this client in Karbon is evidence about a document, not
+ * proof of what it is: a folder can hold the wrong year, and a signed T2 letter
+ * in a client's area is still the wrong document for their T1. So attaching one
+ * puts it through exactly the checks an uploaded file goes through, and the
+ * reviewer still says what it is.
+ */
+function KarbonCatalogue({ csrfToken, engagement }: { csrfToken: string; engagement: any }): ReactNode {
+  const documents = engagement.client.karbonDocuments ?? [];
+  const lastSync = engagement.client.librarySyncs?.[0] ?? null;
+
+  // Recent years first — what a preparer wants is nearly always last year's.
+  const priorYear = engagement.taxYear - 1;
+  const relevant = documents.filter(
+    (document: any) => document.inferredTaxYear === null || document.inferredTaxYear >= priorYear - 1,
+  );
+
+  return (
+    <Card
+      title="From this client's Karbon file"
+      description={
+        lastSync
+          ? `${documents.length} document(s) catalogued from Karbon. Attaching one fetches it fresh — Karbon's download links expire within about fifteen minutes, so nothing usable is stored here.`
+          : "This client's Karbon documents have not been read yet."
+      }
+    >
+      {lastSync && !lastSync.complete ? (
+        <p className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          This list is incomplete — {lastSync.scopesFailed} place(s) in Karbon could not be read. A document missing
+          here has not been shown to be missing from Karbon.
+        </p>
+      ) : null}
+
+      {documents.length === 0 ? (
+        <p className="text-sm text-slate-600">
+          Nothing catalogued yet.{' '}
+          <a className="underline" href={`/clients/${engagement.client.id}`}>
+            Read {engagement.client.legalName}&rsquo;s documents from Karbon
+          </a>
+          , then come back and attach the one you need.
+        </p>
+      ) : (
+        <ActionForm action={importKarbonDocument} csrfToken={csrfToken} submitLabel="Attach from Karbon">
+          <input type="hidden" name="engagementId" value={engagement.id} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="label" htmlFor="karbon-document">
+                Document
+              </label>
+              <select id="karbon-document" name="karbonDocumentId" className="input" required defaultValue="">
+                <option value="" disabled>
+                  Choose a document…
+                </option>
+                {(relevant.length > 0 ? relevant : documents).map((document: any) => (
+                  <option key={document.id} value={document.id}>
+                    {document.fileName}
+                    {document.inferredTaxYear ? ` (${document.inferredTaxYear})` : ''} — {document.sourceLabel}
+                  </option>
+                ))}
+              </select>
+              {relevant.length > 0 && relevant.length < documents.length ? (
+                <p className="field-note">
+                  Showing {relevant.length} of {documents.length}: those from {priorYear - 1} onward, plus any whose
+                  year could not be read.{' '}
+                  <a className="underline" href={`/clients/${engagement.client.id}`}>
+                    See all
+                  </a>
+                  .
+                </p>
+              ) : null}
+            </div>
+            <div>
+              <label className="label" htmlFor="karbon-kind">
+                What is this document?
+              </label>
+              <select id="karbon-kind" name="kind" className="input" required defaultValue="PRIOR_YEAR_ENGAGEMENT_LETTER">
+                {UPLOAD_KINDS.map((kind) => (
+                  <option key={kind.value} value={kind.value}>
+                    {kind.label}
+                  </option>
+                ))}
+              </select>
+              <p className="field-note">
+                Where Karbon files a document is a hint, not a statement of what it is. Its contents are checked against
+                this client, engagement type and year regardless.
+              </p>
+            </div>
+          </div>
+        </ActionForm>
+      )}
+    </Card>
+  );
+}
+
 function SourceDocuments({ csrfToken, engagement }: { csrfToken: string; engagement: any }): ReactNode {
   return (
     <>
@@ -321,6 +418,8 @@ function SourceDocuments({ csrfToken, engagement }: { csrfToken: string; engagem
         </p>
       </ActionForm>
     </Card>
+
+    <KarbonCatalogue csrfToken={csrfToken} engagement={engagement} />
 
     <Card
       title="Attach a document"

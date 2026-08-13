@@ -32,6 +32,15 @@ export interface UploadSourceDocumentInput {
   mimeType: string;
   content: Uint8Array;
   kind: SourceDocumentKind;
+  /**
+   * Where this came from, when it came from Karbon rather than a file picker.
+   *
+   * Kept so a reviewer can tell a document pulled from the client's Karbon file
+   * from one somebody found on their desktop, and so the same file arriving by
+   * both routes can be recognised as the same file.
+   */
+  karbonDocumentId?: string | null;
+  karbonWorkItemKey?: string | null;
 }
 
 export interface UploadSourceDocumentResult {
@@ -174,6 +183,8 @@ export class SourceDocumentService {
         byteSize: stored.byteSize,
         mimeType: stored.mimeType,
         storagePath: stored.reference,
+        karbonDocumentId: input.karbonDocumentId ?? null,
+        karbonWorkItemKey: input.karbonWorkItemKey ?? null,
         pageCount,
         verificationScore: verification?.score ?? null,
         verificationDetail: verification

@@ -6,8 +6,11 @@ import type {
   KarbonClient,
   KarbonCommentRequest,
   KarbonDocument,
+  KarbonDocumentLibrary,
   KarbonEntityType,
   KarbonFileList,
+  KarbonLibraryFailure,
+  KarbonLibraryScope,
   KarbonProvider,
   KarbonTaskRequest,
   KarbonUploadRequest,
@@ -413,12 +416,110 @@ export class KarbonRestClient implements KarbonProvider {
         mimeType: typeof raw.MimeType === 'string' ? raw.MimeType : null,
         uploadedAt: typeof raw.DateCreated === 'string' ? raw.DateCreated : null,
         uploadedBy: null,
+        sourceEntityType: entityType,
         // Short-lived: the token carries its own expiry, so it is never stored.
         downloadUrl: typeof raw.DownloadUrl === 'string' ? raw.DownloadUrl : null,
       }));
     }
 
     return [];
+  }
+
+  /**
+   * Every document Karbon holds for a client.
+   *
+   * `GET /FileList/{EntityType}` answers for exactly one entity and takes no
+   * paging parameters — confirmed against the published specification, which
+   * declares only `EntityType` and `EntityKey`. There is no operation that
+   * returns a client's documents in one call, because in Karbon's own data
+   * model a client does not have documents: its organization does, its contacts
+   * do, and each of its work items does. The Documents tab in Karbon's
+   * interface is an aggregate, so this is too.
+   *
+   * That is why a client with 93 documents returns almost none of them from the
+   * organization scope alone — years of returns, working papers and signed
+   * letters are filed against the work item they belong to.
+   */
+  async listClientLibrary(
+    entityKey: string,
+    options: { maxWorkItems?: number } = {},
+  ): Promise<KarbonDocumentLibrary> {
+    const scopes: KarbonLibraryScope[] = [];
+    const failures: KarbonLibraryFailure[] = [];
+    // Keyed by Karbon's file key: the same file appears in more than one list.
+    const byFileKey = new Map<string, KarbonDocument>();
+
+    const collect = async (
+      entityType: KarbonEntityType,
+      key: string,
+      label: string,
+      scope: { workItemKey?: string; entityKey?: string },
+    ): Promise<void> => {
+      try {
+        const documents = await this.listDocuments(scope);
+        scopes.push({ entityType, entityKey: key, label, documentCount: documents.length });
+
+        for (const document of documents) {
+          if (!document.documentId) continue;
+          // First writer wins, and work items are read after the client, so a
+          // document filed in both keeps the more specific label.
+          if (byFileKey.has(document.documentId)) continue;
+          byFileKey.set(document.documentId, { ...document, sourceLabel: label, sourceEntityType: entityType });
+        }
+      } catch (error) {
+        // Recorded, never swallowed. A scope that failed is the difference
+        // between "the client has no 2019 letter" and "we could not look".
+        failures.push({
+          entityType,
+          entityKey: key,
+          label,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
+
+    const client = await this.getClient(entityKey).catch(() => null);
+    const clientName = client?.legalName ?? 'this client';
+    const entityType: KarbonEntityType = client?.entityType === 'Contact' ? 'Contact' : 'Organization';
+
+    // 1. The client's own document area.
+    await collect(entityType, entityKey, clientName, { entityKey });
+
+    // 2. Each contact. A contact's files are theirs, not the organization's,
+    //    and Karbon shows them on the client all the same.
+    for (const contact of client?.contacts ?? []) {
+      if (!contact.contactKey) continue;
+      await collect('Contact', contact.contactKey, contact.fullName || 'Contact', {
+        entityKey: contact.contactKey,
+      });
+    }
+
+    // 3. Every work item ever raised for the client — where the bulk lives.
+    let workItems: KarbonWorkItem[] = [];
+    try {
+      workItems = await this.searchWorkItems({ clientKey: entityKey, limit: options.maxWorkItems ?? 500 });
+    } catch (error) {
+      failures.push({
+        entityType: 'WorkItem',
+        entityKey,
+        label: `Work items for ${clientName}`,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    for (const item of workItems) {
+      await collect('WorkItem', item.workItemKey, item.title || item.workItemKey, {
+        workItemKey: item.workItemKey,
+      });
+    }
+
+    return {
+      entityKey,
+      documents: [...byFileKey.values()].sort((a, b) => (b.uploadedAt ?? '').localeCompare(a.uploadedAt ?? '')),
+      scopes,
+      failures,
+      complete: failures.length === 0,
+    };
   }
 
   async downloadDocument(
