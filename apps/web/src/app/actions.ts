@@ -701,6 +701,120 @@ export async function setProductionSending(formData: FormData): Promise<ActionRe
 }
 
 /**
+ * States the prior-year search may begin from.
+ *
+ * `LOCATING_SOURCE_DOCUMENTS` is the job's first act, so an engagement that has
+ * already moved past extraction cannot accept it. Refusing here gives the
+ * reviewer the reason immediately instead of enqueuing a job that fails on the
+ * transition minutes later, in a place only the log would show it.
+ */
+const PRIOR_YEAR_SEARCH_STATES = new Set([
+  'NOT_STARTED',
+  'SOURCE_DOCUMENT_REVIEW_REQUIRED',
+  'GENERATION_FAILED',
+  'NEEDS_ATTENTION',
+]);
+
+interface PriorYearSearchOutcome {
+  enqueued: boolean;
+  deduplicated: boolean;
+  /** Why it was not started, in words a reviewer can act on. */
+  reason?: string;
+}
+
+/**
+ * Queues the Karbon search for last year's engagement letter.
+ *
+ * The worker has been able to do this since the first release: it searches the
+ * current work item, then the prior year's work items, then the client's own
+ * document area, and scores each candidate on its text rather than its
+ * filename. What was missing was anybody asking. Until now the only caller was
+ * the Karbon status webhook, and `karbon_status_triggers` ships empty, so on a
+ * tenant that had never configured a status trigger the search simply never
+ * ran — leaving every engagement asking the reviewer to upload by hand a
+ * document Karbon was already holding.
+ *
+ * A fully tested capability that nothing reaches is indistinguishable from one
+ * that was never built, which is why `tests/integration/prior-year-search.test.ts`
+ * now asserts the caller and not just the handler.
+ */
+async function enqueuePriorYearSearch(
+  engagementId: string,
+  correlationId: string,
+  options: { force?: boolean } = {},
+): Promise<PriorYearSearchOutcome> {
+  const engagement = await container.prisma.engagement.findUnique({
+    where: { id: engagementId },
+    select: {
+      status: true,
+      client: { select: { karbonEntityKey: true } },
+      karbonWorkItem: { select: { karbonKey: true } },
+    },
+  });
+
+  if (!engagement) return { enqueued: false, deduplicated: false, reason: 'The engagement no longer exists.' };
+
+  // Nothing to search. Saying which link is missing is the difference between
+  // a fixable message and "no documents found".
+  if (!engagement.client.karbonEntityKey && !engagement.karbonWorkItem?.karbonKey) {
+    return {
+      enqueued: false,
+      deduplicated: false,
+      reason:
+        'This engagement is not linked to Karbon — neither the client nor a work item carries a Karbon key — so there is nowhere to search. Attach last year’s letter below.',
+    };
+  }
+
+  if (!PRIOR_YEAR_SEARCH_STATES.has(engagement.status)) {
+    return {
+      enqueued: false,
+      deduplicated: false,
+      reason: `Searching would move this engagement back to locating source documents, which is not allowed from ${engagement.status
+        .replace(/_/g, ' ')
+        .toLowerCase()}.`,
+    };
+  }
+
+  const result = await container.queue.enqueue({
+    jobType: 'LOCATE_PRIOR_YEAR_DOCUMENTS',
+    // Stable per engagement so re-running preparation does not search twice;
+    // an explicit re-run asks for a fresh look and gets its own key.
+    idempotencyKey: options.force
+      ? `locate_prior_year_${engagementId}_${Date.now()}`
+      : `locate_prior_year_${engagementId}`,
+    payload: { engagementId },
+    engagementId,
+    correlationId,
+  });
+
+  return { enqueued: true, deduplicated: result.deduplicated };
+}
+
+/**
+ * Searches Karbon again for the prior-year letter, on request.
+ *
+ * Preparation starts this automatically; this is the button for after the
+ * missing Karbon link has been fixed, or after last year's letter has been
+ * filed where the first search could not see it.
+ */
+export async function locatePriorYearDocuments(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    await requirePermission('source_document:select');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    if (!engagementId) throw new ValidationError('An engagement is required.');
+
+    const outcome = await enqueuePriorYearSearch(engagementId, newCorrelationId(), { force: true });
+    revalidatePath(`/engagements/${engagementId}`);
+
+    if (!outcome.enqueued) throw new PreconditionError(outcome.reason ?? 'The search could not be started.');
+
+    return 'Searching Karbon for last year’s letter. Candidates appear below with the score each one earned.';
+  });
+}
+
+/**
  * Runs the preparation step: records what Karbon says, raises conflicts where
  * sources disagree, seeds service selections from the prior year as
  * suggestions, calculates the fees, and evaluates the deadlines.
@@ -720,12 +834,20 @@ export async function prepareEngagement(formData: FormData): Promise<ActionResul
       container.env.HIGH_FEE_INCREASE_THRESHOLD_PERCENT,
     );
 
+    const correlationId = newCorrelationId();
+
     const result = await container.preparation.prepare({
       engagementId,
       actorId: actor.id,
-      correlationId: newCorrelationId(),
+      correlationId,
       highIncreaseThresholdPercent: threshold,
     });
+
+    // Preparation reconciles what is already known; the prior-year letter is
+    // the largest single source of what it reconciles against, so the search
+    // starts here. It runs in the background: preparation's own result must
+    // not depend on Karbon being reachable this second.
+    const search = await enqueuePriorYearSearch(engagementId, correlationId);
 
     revalidatePath(`/engagements/${engagementId}`);
 
@@ -734,11 +856,18 @@ export async function prepareEngagement(formData: FormData): Promise<ActionResul
     if (result.blockedFees.length > 0) outstanding.push(`${result.blockedFees.length} fee(s) without a prior-year amount`);
     if (result.blockedDates.length > 0) outstanding.push(`${result.blockedDates.length} deadline(s) missing information`);
 
+    const searchNote = search.enqueued
+      ? search.deduplicated
+        ? ' Karbon has already been searched for last year’s letter.'
+        : ' Searching Karbon for last year’s letter.'
+      : ` Last year’s letter was not searched for: ${search.reason ?? 'no reason given.'}`;
+
     const summary =
       `Prepared: ${result.feesCalculated.length} fee(s) calculated, ${result.datesCalculated} date(s) proposed, ` +
       `${result.serviceSelectionsSeeded} service selection(s) seeded.`;
 
-    return outstanding.length > 0 ? `${summary} Needs your decision on ${outstanding.join(', ')}.` : summary;
+    const decisions = outstanding.length > 0 ? ` Needs your decision on ${outstanding.join(', ')}.` : '';
+    return `${summary}${decisions}${searchNote}`;
   });
 }
 

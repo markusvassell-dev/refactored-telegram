@@ -14,6 +14,7 @@ import {
   confirmDateFact,
   confirmServiceSelection,
   generateCoverLetter,
+  locatePriorYearDocuments,
   markReadyToSend,
   overrideFee,
   prepareEngagement,
@@ -309,8 +310,21 @@ function SourceDocuments({ csrfToken, engagement }: { csrfToken: string; engagem
   return (
     <>
     <Card
+      title="Search Karbon for last year’s letter"
+      description="Preparation starts this automatically. Run it again after fixing a missing Karbon link, or once last year’s letter has been filed where the first search could not see it. The current work item is searched first, then the prior year’s work items, then the client’s own documents."
+    >
+      <ActionForm action={locatePriorYearDocuments} csrfToken={csrfToken} submitLabel="Search Karbon">
+        <input type="hidden" name="engagementId" value={engagement.id} />
+        <p className="text-sm text-slate-600">
+          Every candidate is read and scored on its text. Nothing is selected on the strength of its filename, and a
+          close call is handed to you rather than guessed.
+        </p>
+      </ActionForm>
+    </Card>
+
+    <Card
       title="Attach a document"
-      description="Karbon supplies these automatically once it is connected. Until then — and whenever a document is missing — attach it here. Its contents are scored against this client, engagement type and year exactly as a located one would be."
+      description="For anything Karbon does not hold — a first-year client, or a letter kept outside Karbon. Its contents are scored against this client, engagement type and year exactly as a located one would be."
     >
       <ActionForm action={uploadSourceDocument} csrfToken={csrfToken} submitLabel="Attach and read">
         <input type="hidden" name="engagementId" value={engagement.id} />

@@ -506,6 +506,22 @@ export class CoverLetterService {
   }): Promise<void> {
     assertCan(input.actor, 'cover_letter:approve');
 
+    const existing = await this.deps.prisma.coverLetterPackage.findUniqueOrThrow({
+      where: { id: input.coverLetterPackageId },
+      select: { engagementId: true },
+    });
+
+    // Re-fingerprint the sources before reading the staleness flag.
+    //
+    // The gate below has always consulted `record.status === 'STALE'`, but the
+    // only thing that raises that flag is `detectStaleSources`, and for a long
+    // time nothing called it: the DETECT_STALE_SOURCES job had a handler and no
+    // caller. The gate was therefore reading an input that was always false, so
+    // a cover letter whose source documents changed after generation could be
+    // approved as though nothing had moved. Detecting it here rather than on a
+    // schedule means the check cannot be outrun by approving quickly.
+    await this.detectStaleSources(existing.engagementId);
+
     const record = await this.deps.prisma.coverLetterPackage.findUniqueOrThrow({
       where: { id: input.coverLetterPackageId },
     });
