@@ -52,9 +52,13 @@ function base64Url(data: Buffer): string {
 /**
  * Microsoft Entra ID via OpenID Connect authorization code flow with PKCE.
  *
- * Implemented against the documented v2.0 endpoints. Not yet exercised against
- * a live tenant from this project — the Integrations screen reports the
- * connection as unverified until a real sign-in succeeds.
+ * **Verified against a live tenant on 2026-08-14** — a real sign-in against the
+ * Gordon and Company directory completed, and an administrator session was
+ * issued from it. Everything below is therefore observed behaviour rather than
+ * inference from documentation, which is a distinction worth keeping: the Adobe
+ * client in this repository is still the other kind.
+ *
+ * Implemented against the documented v2.0 endpoints.
  */
 export class EntraIdProvider implements IdentityProvider {
   readonly name = 'entra-id';

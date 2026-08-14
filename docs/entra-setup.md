@@ -3,6 +3,10 @@
 Production authentication. The development login refuses to run outside
 development and test, so this is the only way into a deployed instance.
 
+**Working in production since 14 August 2026.** A live sign-in against the
+Gordon and Company tenant issued an administrator session, so the flow below is
+described from something that happened rather than something expected to.
+
 The application registration already exists in the Gordon and Company tenant:
 
 | | |
