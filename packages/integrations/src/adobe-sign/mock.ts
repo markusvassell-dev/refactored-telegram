@@ -283,6 +283,18 @@ export class MockAdobeSignProvider implements AdobeSignProvider {
   agreementCount(): number {
     return this.agreements.size;
   }
+
+  /**
+   * SHA-256 of the PDF an agreement was created from.
+   *
+   * Exists so a test can prove *which* rendered copy was uploaded. The draft and
+   * the signature copy are both valid PDFs of the same letter, so a test that
+   * only checks an agreement was created passes equally well when the untagged
+   * draft is sent — which is exactly the defect that shipped.
+   */
+  uploadedPdfHash(agreementId: string): string | null {
+    return this.agreements.get(agreementId)?.pdfHash ?? null;
+  }
 }
 
 function mockPdf(title: string): Buffer {

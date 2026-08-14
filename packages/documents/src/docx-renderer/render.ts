@@ -328,6 +328,32 @@ export async function renderDocx(templateDocx: Uint8Array | Buffer, options: Ren
       buildAdobeTag(anchor.adobeFieldType, signerIndex) ?? anchor.draftPlaceholder;
   }
 
+  // 6b. A declared anchor is worthless unless its token is actually in the
+  //     document.
+  //
+  //     Substitution below only writes where `[[token]]` appears, so an anchor
+  //     the template never carries produces no tag and raises nothing — the
+  //     document renders, Adobe accepts it, and the agreement has no signature
+  //     field for that person. T1 joint and T3 declare anchors whose tokens are
+  //     absent from their normalised templates, which is exactly this: three
+  //     required signatures that would never have been asked for.
+  //
+  //     Checked only when sending, because a draft legitimately shows blank
+  //     lines and nobody signs it.
+  if (options.mode === 'FOR_SIGNATURE') {
+    const bodyText = serializeBody(parsed);
+    const missing = options.manifest.signatureAnchors
+      .filter((anchor) => anchor.required && anchor.adobeFieldType !== 'AUTO_PLACED')
+      .filter((anchor) => !bodyText.includes(anchor.token))
+      .map((anchor) => anchor.token);
+
+    if (missing.length > 0) {
+      throw new ValidationError(
+        `This template declares required signature field(s) at ${missing.join(', ')}, but the document does not contain ${missing.length === 1 ? 'that token' : 'those tokens'}. Sending it would create an agreement with nowhere to sign.`,
+      );
+    }
+  }
+
   // 7. Checkboxes. This runs *before* token substitution because a checkbox
   //    anchor may point at a token (for example the "Other: [[…]]" bullets),
   //    which would otherwise have already been replaced by its value.

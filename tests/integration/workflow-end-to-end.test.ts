@@ -367,6 +367,26 @@ describe('T2 with compilation selected', () => {
     expect(sent.deduplicated).toBe(false);
     expect(adobe.agreementCount()).toBe(1);
 
+    // What went to Adobe must be the signature copy, not the draft.
+    //
+    // Both are valid PDFs of the same letter, so every assertion above this one
+    // passes just as happily when the untagged draft is sent — which is what the
+    // code did, producing agreements with no signature fields in them that Adobe
+    // accepted without complaint and nobody could sign. Comparing hashes is the
+    // only assertion here that can tell the two apart.
+    const sentVersion = await prisma.documentVersion.findUniqueOrThrow({
+      where: { id: generated.documentVersionId },
+      select: { pdfHash: true, signaturePdfHash: true },
+    });
+
+    // Deliberately not asserting the two hashes differ: T2 is AUTO_PLACED, so
+    // its signature copy carries no tags and is the same document as the draft.
+    // That assertion would pass here on PDF timestamp nondeterminism rather than
+    // on content, which is worse than not making it. What the tags look like is
+    // pinned at the render level instead, on a template that actually has them.
+    expect(sentVersion.signaturePdfHash).toBeTruthy();
+    expect(adobe.uploadedPdfHash(sent.agreementId)).toBe(sentVersion.signaturePdfHash);
+
     // A retry must not create a second agreement.
     const retried = await signing.sendForSignature({
       engagementId: engagement.id,

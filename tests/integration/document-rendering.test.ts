@@ -507,3 +507,105 @@ describe('document comparison', () => {
     expect(findings[0]?.priorYearText).toMatch(/bespoke liability cap/);
   });
 });
+
+describe('who each signature field belongs to', () => {
+  /**
+   * The firm signs first, so the firm is Adobe's `signer1` and the taxpayers are
+   * `signer2`.
+   *
+   * The manifests used to carry these indices as literals written by hand — T1
+   * joint had the taxpayers at signer1/signer2 and the firm at signer3. Moving
+   * the firm to order 1 without recomputing them would have left every field
+   * addressed to the wrong participant set, and nothing on that path raises an
+   * error: the document renders, Adobe accepts it, the agreement completes, and
+   * the taxpayer's signature lands in the block reserved for the firm.
+   *
+   * These assertions are the only thing standing between that change and a
+   * countersigned letter that attributes signatures to the wrong people.
+   */
+  it('refuses to send T1 joint, whose template is missing its signature tokens', async () => {
+    const template = await loadTemplate('T1_JOINT_ENGAGEMENT_LETTER');
+
+    const values: Record<string, string> = {};
+    for (const field of template.manifest.fields) values[field.token] = 'Sample';
+
+    // The manifest declares signature.taxpayer1 / taxpayer2 / firm, and the
+    // normalised .docx contains none of them -- normalisation tokenised the
+    // names but never the signature lines. Substitution writes only where a
+    // token appears, so this rendered silently without a single signature field
+    // and Adobe would have accepted the agreement with nowhere to sign.
+    await expect(
+      renderDocx(template.docx, {
+        manifest: template.manifest,
+        values,
+        selections: {},
+        includedSections: [],
+        mode: 'FOR_SIGNATURE',
+        signers: [
+          { role: 'FIRM_SIGNER', signingOrder: 1 },
+          { role: 'TAXPAYER_1', signingOrder: 2 },
+          { role: 'TAXPAYER_2', signingOrder: 2 },
+        ],
+      }),
+    ).rejects.toThrow(/nowhere to sign/i);
+  });
+
+  it('refuses to render when a required signer is missing rather than leaving a blank', async () => {
+    const template = await loadTemplate('T1_JOINT_ENGAGEMENT_LETTER');
+
+    const values: Record<string, string> = {};
+    for (const field of template.manifest.fields) values[field.token] = 'Sample';
+
+    // A joint letter needs both taxpayers. Rendering the second one's block as a
+    // blank line would send an agreement that completes with one signature where
+    // two are legally required, and Adobe would report nothing wrong.
+    await expect(
+      renderDocx(template.docx, {
+        manifest: template.manifest,
+        values,
+        selections: {},
+        includedSections: [],
+        mode: 'FOR_SIGNATURE',
+        signers: [
+          { role: 'FIRM_SIGNER', signingOrder: 1 },
+          { role: 'TAXPAYER_1', signingOrder: 2 },
+        ],
+      }),
+    ).rejects.toThrow(/TAXPAYER_2/);
+  });
+});
+
+describe('normalisation did not damage the approved wording', () => {
+  /**
+   * Every normalised template must still read as English.
+   *
+   * Normalising T1 joint corrupted its signature block: replacing
+   * `[TAXPAYER 2 FULL LEGAL NAME]` left a stray `[TAX` behind and consumed the
+   * first four characters of the *following* paragraph, turning "Electronic
+   * signature" into "tronic signature". The placeholder validator never caught
+   * it because its pattern requires a closing bracket and the damage left none,
+   * so a production-supported letter would have gone to a client reading
+   * "[TAXJane Smith / tronic signature".
+   */
+  const templates = [
+    'T1_JOINT_ENGAGEMENT_LETTER',
+    'T2_ENGAGEMENT_LETTER',
+    'T3_ENGAGEMENT_LETTER',
+    'T1_COVER_LETTER',
+    'COMPILATION_COVER_LETTER',
+  ];
+
+  for (const documentType of templates) {
+    it(`${documentType} carries no truncated placeholder debris`, async () => {
+      const template = await loadTemplate(documentType);
+      const text = (await extractParagraphs(template.docx)).join('\n');
+
+      // An opening bracket that never closes is the signature of a replacement
+      // that ran off the end of its run.
+      const orphaned = text.match(/\[[A-Z]{2,}(?!\w*\])[^\n[\]]{0,20}/g) ?? [];
+      const debris = orphaned.filter((hit) => !hit.startsWith('[['));
+
+      expect(debris, `Orphaned placeholder fragments: ${JSON.stringify(debris)}`).toEqual([]);
+    });
+  }
+});

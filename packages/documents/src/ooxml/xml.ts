@@ -139,17 +139,56 @@ export interface TextNode {
   /** Offset of this node's text within the concatenated paragraph text. */
   textStart: number;
   textEnd: number;
+  /**
+   * False for `<w:tab/>`, `<w:br/>` and `<w:cr/>`.
+   *
+   * These contribute a character to the concatenated text — `blockText` counts
+   * them — but they carry no text content to rewrite, and splicing over them
+   * would replace the element itself with a literal tab or newline. They occupy
+   * their position and are otherwise left alone.
+   */
+  replaceable: boolean;
 }
 
 /** Locates every `<w:t>` text node inside a fragment, in document order. */
 export function textNodes(fragment: string): TextNode[] {
   const nodes: TextNode[] = [];
-  const pattern = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g;
+
+  // Deliberately the same pattern `blockText` uses, and it must stay that way.
+  //
+  // These two functions define one coordinate system between them: `blockText`
+  // produces the string that callers search for matches, and this function maps
+  // those match offsets back onto the markup. When they walked different
+  // elements they silently disagreed — this pattern used to match only `<w:t>`,
+  // so every `<w:tab/>` or `<w:br/>` before a match shifted the replacement one
+  // character late, leaving debris at the front of the placeholder and eating
+  // the same number of characters off the end.
+  //
+  // That is not hypothetical: it corrupted the T1 joint signature block,
+  // rewriting "[TAXPAYER 2 FULL LEGAL NAME]" followed by "Electronic signature"
+  // into "[TAX<token>" followed by "tronic signature", in a template the firm
+  // sends to clients.
+  const pattern = /<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>|<w:tab\s*\/>|<w:br\s*\/>|<w:cr\s*\/>/g;
   let match: RegExpExecArray | null;
   let textCursor = 0;
 
   while ((match = pattern.exec(fragment)) !== null) {
-    const raw = match[1] ?? '';
+    if (match[1] === undefined) {
+      // A tab or break: one character of the concatenated text, no content to
+      // rewrite.
+      nodes.push({
+        contentStart: match.index,
+        contentEnd: match.index + match[0].length,
+        text: match[0].startsWith('<w:tab') ? '\t' : '\n',
+        textStart: textCursor,
+        textEnd: textCursor + 1,
+        replaceable: false,
+      });
+      textCursor += 1;
+      continue;
+    }
+
+    const raw = match[1];
     const decoded = unescapeXml(raw);
     const contentStart = match.index + match[0].length - raw.length - '</w:t>'.length;
     nodes.push({
@@ -158,6 +197,7 @@ export function textNodes(fragment: string): TextNode[] {
       text: decoded,
       textStart: textCursor,
       textEnd: textCursor + decoded.length,
+      replaceable: true,
     });
     textCursor += decoded.length;
   }
@@ -215,6 +255,9 @@ export function replaceTextRanges(
   for (let index = nodes.length - 1; index >= 0; index -= 1) {
     const node = nodes[index];
     if (!node) continue;
+    // A tab or break holds a position in the text but has no content to write
+    // into; splicing it would replace the element with a literal tab character.
+    if (!node.replaceable) continue;
     const replacementText = newTexts[index] ?? '';
     if (replacementText === node.text) continue;
     result = result.slice(0, node.contentStart) + escapeXml(replacementText) + result.slice(node.contentEnd);

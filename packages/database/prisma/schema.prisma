@@ -736,6 +736,12 @@ model DocumentVersion {
   generatedPdfReference  String?
   docxHash               String?
   pdfHash                String?
+  /// The copy carrying Adobe signature tags, rendered from the same values in
+  /// the same operation as the draft above. Two renders exist because a person
+  /// approves a readable document and Adobe needs a tagged one; rendering the
+  /// tagged copy later would send bytes nobody approved.
+  signaturePdfReference  String?
+  signaturePdfHash       String?
   pageCount              Int?
   karbonDocumentId       String?
   karbonPdfDocumentId    String?

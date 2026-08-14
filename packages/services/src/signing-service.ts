@@ -13,6 +13,7 @@ import {
   type Logger,
   type Principal,
 } from '@element/shared';
+import { parseManifest, type TemplateManifest } from '@element/documents';
 import { evaluateSendGate, type GateResult } from '@element/workflows';
 import type { DocumentStore } from './storage.js';
 import type { WorkflowService } from './workflow-service.js';
@@ -53,6 +54,27 @@ export interface SendForSignatureInput {
 export class SigningService {
   constructor(private readonly deps: SigningServiceDeps) {}
 
+  /**
+   * The signature anchors of the template a version was rendered from.
+   *
+   * Returns null when the version predates template tracking, in which case the
+   * gate simply cannot say which roles the letter demands. That is a weaker
+   * check, not a false pass — `hasSignatureCopy` still blocks the send.
+   */
+  private async signatureManifest(
+    templateVersionId: string | null,
+  ): Promise<TemplateManifest | null> {
+    if (!templateVersionId) return null;
+
+    const templateVersion = await this.deps.prisma.templateVersion.findUnique({
+      where: { id: templateVersionId },
+      select: { manifest: true },
+    });
+    if (!templateVersion) return null;
+
+    return parseManifest(templateVersion.manifest);
+  }
+
   async evaluateSendGate(input: {
     engagementId: string;
     documentVersionId: string;
@@ -81,6 +103,18 @@ export class SigningService {
 
     const report = (version.validationReport ?? { errorCount: 0 }) as { errorCount?: number };
 
+    // Which roles the letter itself demands a signature from, and whether the
+    // roster still matches the one the signature copy was rendered against.
+    const manifest = await this.signatureManifest(version.templateVersionId);
+    const requiredRoles = (manifest?.signatureAnchors ?? [])
+      .filter((anchor) => anchor.required)
+      .map((anchor) => anchor.role);
+
+    const heldRoles = new Set(participants.map((participant) => participant.role));
+    const snapshot = (version.renderedFieldValues ?? {}) as {
+      signers?: { role: string; signingOrder: number }[];
+    };
+
     return evaluateSendGate({
       status: engagement.status,
       hasApprovedPdf: version.status === 'APPROVED' && Boolean(version.generatedPdfReference),
@@ -93,6 +127,9 @@ export class SigningService {
       })),
       signingOrderConfirmed: participants.length > 0 && participants.every((p) => p.contactConfirmed),
       validationErrorCount: report.errorCount ?? 0,
+      hasSignatureCopy: Boolean(version.signaturePdfReference),
+      unfilledSignatureRoles: requiredRoles.filter((role) => !heldRoles.has(role)),
+      signersChangedSinceGeneration: rosterChanged(snapshot.signers, participants),
       testMode: input.testMode,
       productionSendingEnabled: input.productionSendingEnabled,
       sandboxConfigured: input.sandboxConfigured,
@@ -159,7 +196,14 @@ export class SigningService {
       testMode: input.testMode,
     }).replace(/\.pdf$/, '');
 
-    const pdf = await this.deps.store.get(version.generatedPdfReference as string);
+    // The signature copy, not the draft.
+    //
+    // This used to read `generatedPdfReference` — the human-readable draft, whose
+    // signature lines are rows of underscores. Adobe accepts such a document
+    // without complaint and creates an agreement with no signature fields in it,
+    // so the request went out looking correct and could never be signed. The
+    // gate above refuses when this copy is missing, so by here it exists.
+    const pdf = await this.deps.store.get(version.signaturePdfReference as string);
 
     // Queried separately, because `engagement.participants` above is filtered to
     // `isSigner: true` and an engagement lead is a CC recipient, not a signer.
@@ -656,4 +700,32 @@ function mapAgreementStatusToEngagementStatus(
     default:
       return null;
   }
+}
+
+/**
+ * Whether the signer roster differs from the one a document was rendered against.
+ *
+ * Only role and signing order matter here: those are what the Adobe tags encode,
+ * because a tag names a participant *set* by position rather than a person. A
+ * corrected spelling or a new email address does not move anybody's field and so
+ * is not this function's business — the letter body carries those, and changing
+ * them already supersedes the version through the ordinary generation path.
+ *
+ * A missing snapshot counts as changed. Versions generated before the roster was
+ * recorded cannot prove their tags match the current signers, and assuming they
+ * do is exactly the silent misrouting this check exists to prevent.
+ */
+function rosterChanged(
+  snapshot: { role: string; signingOrder: number }[] | undefined,
+  current: readonly { role: string; signingOrder: number }[],
+): boolean {
+  if (!snapshot) return true;
+
+  const key = (roster: readonly { role: string; signingOrder: number }[]): string =>
+    roster
+      .map((signer) => `${signer.role}:${signer.signingOrder}`)
+      .sort()
+      .join('|');
+
+  return key(snapshot) !== key(current);
 }

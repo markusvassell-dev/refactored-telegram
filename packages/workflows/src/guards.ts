@@ -131,6 +131,33 @@ export interface SendGateInput {
   signers: readonly { name: string; email: string; confirmed: boolean; signingOrder: number }[];
   signingOrderConfirmed: boolean;
   validationErrorCount: number;
+  /**
+   * Whether a signature copy — the render carrying Adobe's tags — exists for the
+   * version about to be sent.
+   *
+   * Separate from `hasApprovedPdf` because they are different files. What was
+   * approved is the readable draft; what Adobe needs is the tagged copy. Sending
+   * the draft is what the code did before, and it meant every agreement went out
+   * with no signature fields in it at all.
+   */
+  hasSignatureCopy: boolean;
+  /**
+   * Roles the template requires a signature from that no participant holds.
+   *
+   * Non-empty means the signature copy could not name everyone the document
+   * needs. Sending anyway produces an agreement that completes without a
+   * signature the letter says is required.
+   */
+  unfilledSignatureRoles: readonly string[];
+  /**
+   * Whether the signer roster differs from the one the signature copy was
+   * rendered against.
+   *
+   * Compared as a roster snapshot rather than by timestamp: a `max(updatedAt)`
+   * check cannot see a *removed* signer, because the rows that remain are
+   * untouched and look older than the document version.
+   */
+  signersChangedSinceGeneration: boolean;
   testMode: boolean;
   productionSendingEnabled: boolean;
   /** True when a sandbox Adobe Sign connection is configured for test sends. */
@@ -169,6 +196,33 @@ export function evaluateSendGate(input: SendGateInput): GateResult {
   }
   if (!input.signingOrderConfirmed) {
     blockers.push('The signing order must be confirmed.');
+  }
+
+  // The document that goes to Adobe is not the one a reviewer read. The draft
+  // shows blank signature lines; the signature copy carries Adobe's tags in
+  // their place. Sending the draft — which is what happened before this copy
+  // existed — produces an agreement with no signature fields at all, which
+  // Adobe accepts without complaint and nobody can sign.
+  if (!input.hasSignatureCopy) {
+    blockers.push(
+      'This version has no signature copy, so there is nothing carrying signature fields to send. Regenerate the document after naming the signers.',
+    );
+  }
+  if (input.unfilledSignatureRoles.length > 0) {
+    blockers.push(
+      `The letter requires a signature from ${input.unfilledSignatureRoles
+        .map((role) => role.replace(/_/g, ' ').toLowerCase())
+        .join(', ')}, and nobody on this engagement holds that role.`,
+    );
+  }
+  if (input.signersChangedSinceGeneration) {
+    // The tags in the stored copy address participant *sets* by position, so a
+    // roster edit after generation silently re-points every field at somebody
+    // else. Regenerating is cheap; sending a letter whose signature blocks
+    // belong to the wrong people is not recoverable once it has gone out.
+    blockers.push(
+      'The signers changed after this document was generated, so its signature fields no longer match them. Regenerate before sending.',
+    );
   }
 
   // Test Mode must make it hard to confuse test and production.

@@ -195,6 +195,9 @@ describe('send gate', () => {
     signers: [{ name: 'Sample Officer', email: 'officer@example.test', confirmed: true, signingOrder: 1 }],
     signingOrderConfirmed: true,
     validationErrorCount: 0,
+    hasSignatureCopy: true,
+    unfilledSignatureRoles: [] as string[],
+    signersChangedSinceGeneration: false,
     testMode: false,
     productionSendingEnabled: true,
     sandboxConfigured: false,
@@ -202,6 +205,32 @@ describe('send gate', () => {
 
   it('passes when every precondition is satisfied', () => {
     expect(evaluateSendGate(ready).ok).toBe(true);
+  });
+
+  it('refuses to send the draft when no signature copy was rendered', () => {
+    // The draft's signature lines are rows of underscores. Adobe accepts such a
+    // document and builds an agreement with no signature fields in it, so the
+    // send looks successful and the letter can never be signed.
+    const gate = evaluateSendGate({ ...ready, hasSignatureCopy: false });
+    expect(gate.ok).toBe(false);
+    expect(gate.blockers.join(' ')).toMatch(/no signature copy/i);
+  });
+
+  it('refuses when the letter needs a role nobody holds', () => {
+    const gate = evaluateSendGate({ ...ready, unfilledSignatureRoles: ['TAXPAYER_2'] });
+    expect(gate.ok).toBe(false);
+    // Named, not counted: "one unfilled role" is not something anybody can act on.
+    expect(gate.blockers.join(' ')).toMatch(/taxpayer 2/i);
+  });
+
+  it('refuses when the signers changed after the document was generated', () => {
+    // The stored copy's tags address participant sets by position, so editing
+    // the roster afterwards silently re-points every field at somebody else.
+    // Regenerating is cheap; a letter whose signature blocks belong to the wrong
+    // people cannot be recalled.
+    const gate = evaluateSendGate({ ...ready, signersChangedSinceGeneration: true });
+    expect(gate.ok).toBe(false);
+    expect(gate.blockers.join(' ')).toMatch(/regenerate/i);
   });
 
   it('refuses without an explicit internal approval event', () => {
