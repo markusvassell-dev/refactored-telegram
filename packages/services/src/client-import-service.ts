@@ -78,6 +78,20 @@ export interface ClientImportResult {
 /** Work items to examine. Each distinct client among them is a candidate. */
 const DEFAULT_LIMIT = 200;
 
+/**
+ * The most work items one import may examine.
+ *
+ * Clients are derived from work items, so a firm whose whole book does not
+ * appear in the first `DEFAULT_LIMIT` needs to look further — but not without
+ * a ceiling. Each distinct client costs a `getClient` call against a
+ * rate-limited API, and this runs inside a request.
+ *
+ * Matched to what the Karbon client can actually page through
+ * (`MAX_SEARCH_PAGES` × `PAGE_SIZE`), so asking for more than this would
+ * promise a depth the search cannot reach.
+ */
+const MAX_LIMIT = 5000;
+
 export class ClientImportService {
   constructor(private readonly deps: ClientImportDeps) {}
 
@@ -90,8 +104,18 @@ export class ClientImportService {
       );
     }
 
-    const limit = input.limit ?? DEFAULT_LIMIT;
+    const requested = input.limit ?? DEFAULT_LIMIT;
+    if (!Number.isInteger(requested) || requested < 1) {
+      throw new PreconditionError('The number of work items to examine must be a positive whole number.');
+    }
+    const limit = Math.min(requested, MAX_LIMIT);
     const notes: string[] = [];
+
+    if (requested > MAX_LIMIT) {
+      notes.push(
+        `Asked for ${requested} work items; ${MAX_LIMIT} is the most one import can examine, so that is what was read.`,
+      );
+    }
 
     const workItems = await input.karbon.searchWorkItems({ limit });
     const entityKeys = [...new Set(workItems.map((item) => item.clientKey).filter((key): key is string => Boolean(key)))];
@@ -100,8 +124,13 @@ export class ClientImportService {
       // The count is a floor, not a total. Saying "22 clients" when it is
       // "22 among the first 200 work items" is the kind of number somebody
       // reconciles against their client list and finds short.
+      //
+      // Saying so is not enough on its own: a warning a reader cannot act on
+      // is just an apology. It names the control that answers it.
       notes.push(
-        `Examined the first ${limit} work items, which is as many as were asked for — there may be more clients beyond them.`,
+        limit >= MAX_LIMIT
+          ? `Examined ${limit} work items, the most one import can read, and the supply was not exhausted — clients may exist beyond them. Import what is here, then narrow the remainder by other means.`
+          : `Examined the first ${limit} work items and the supply was not exhausted — there may be more clients beyond them. Run it again with a higher "work items to examine" to look further.`,
       );
     }
 

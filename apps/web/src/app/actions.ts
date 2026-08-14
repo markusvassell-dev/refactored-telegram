@@ -1675,12 +1675,27 @@ export async function importClientsFromKarbon(formData: FormData): Promise<Actio
     await assertCsrf(formData.get('csrf')?.toString());
 
     const dryRun = formData.get('dryRun')?.toString() !== 'false';
+
+    // Clients are derived from work items, so how many are examined decides how
+    // much of the firm's book can be seen at all. The service reports when the
+    // ceiling bound; without a control here that report was unactionable.
+    const rawLimit = formData.get('limit')?.toString().trim();
+    let limit: number | undefined;
+    if (rawLimit) {
+      const parsed = Number(rawLimit);
+      if (!Number.isInteger(parsed) || parsed < 1) {
+        throw new ValidationError('The number of work items to examine must be a positive whole number.');
+      }
+      limit = parsed;
+    }
+
     const providers = await container.providers();
 
     const result = await container.clientImport.run({
       karbon: providers.karbon,
       actor,
       dryRun,
+      limit,
       correlationId: newCorrelationId(),
     });
 

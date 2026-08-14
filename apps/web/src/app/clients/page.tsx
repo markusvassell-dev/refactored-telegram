@@ -11,6 +11,39 @@ import { importClientsFromKarbon } from '@/app/actions';
 export const dynamic = 'force-dynamic';
 
 /**
+ * How deep into Karbon's work items an import looks.
+ *
+ * Clients are not read from a client list — they are the distinct clients named
+ * on work items — so this decides how much of the firm's book can be seen at
+ * all. It was fixed at 200, and the import reported when that ceiling bound
+ * without offering any way to answer the report.
+ *
+ * Deeper is not simply better: each distinct client costs a request against a
+ * rate-limited API, and the import runs inside a page request. So the choices
+ * are coarse, and the default stays where it was.
+ */
+function WorkItemDepth({ id }: { id: string }) {
+  return (
+    <>
+      <label className="label" htmlFor={id}>
+        Work items to examine
+      </label>
+      <select id={id} name="limit" className="input" defaultValue="200">
+        <option value="200">200 — recent work (fastest)</option>
+        <option value="500">500</option>
+        <option value="1000">1,000</option>
+        <option value="2500">2,500</option>
+        <option value="5000">5,000 — as deep as it goes (slowest)</option>
+      </select>
+      <p className="field-note">
+        Clients come from the work items Karbon holds, so a client with no recent work item is not found. Preview first:
+        it says whether the supply ran out before the limit did.
+      </p>
+    </>
+  );
+}
+
+/**
  * The firm's clients.
  *
  * There was no such screen, which meant there was also no way to see whether
@@ -83,6 +116,7 @@ export default async function ClientsPage({
                   variant="secondary"
                 >
                   <input type="hidden" name="dryRun" value="true" />
+                  <WorkItemDepth id="preview-limit" />
                   <p className="text-sm text-slate-600">Reports what would happen and changes nothing.</p>
                 </ActionForm>
 
@@ -93,6 +127,7 @@ export default async function ClientsPage({
                   confirm="This adds the clients Karbon knows about to this application. Continue?"
                 >
                   <input type="hidden" name="dryRun" value="false" />
+                  <WorkItemDepth id="import-limit" />
                   <p className="text-sm text-slate-600">Adds the new ones. Existing clients are left alone.</p>
                 </ActionForm>
               </div>

@@ -333,6 +333,45 @@ describe('importing clients from Karbon', () => {
     ).rejects.toThrow(PermissionError);
   });
 
+  it('looks only as deep as it was asked to, and says the supply was not exhausted', async () => {
+    // Clients are derived from work items, so the depth decides how much of the
+    // firm's book can be seen at all. Asking for one work item must find one
+    // client, not all three — otherwise the limit is decorative.
+    const result = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: true, limit: 1 });
+
+    expect(result.found).toBe(1);
+    expect(result.notes.join(' ')).toMatch(/more clients beyond them/i);
+    // A warning a reader cannot act on is an apology. It must name the control
+    // that answers it, which is the whole reason the limit is now settable.
+    expect(result.notes.join(' ')).toMatch(/work items to examine/i);
+  });
+
+  it('says nothing about depth when the supply ran out first', async () => {
+    // Three work items against a limit of two hundred: the ceiling never bound,
+    // so warning about it would train people to ignore the warning.
+    const result = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: true });
+
+    expect(result.found).toBe(3);
+    expect(result.notes).toEqual([]);
+  });
+
+  it('refuses a depth that is not a positive whole number', async () => {
+    for (const limit of [0, -5, 1.5]) {
+      await expect(
+        service.run({ karbon: connectedKarbon(), actor: admin, dryRun: true, limit }),
+      ).rejects.toThrow(PreconditionError);
+    }
+  });
+
+  it('caps a depth beyond what the search can page through, and says it did', async () => {
+    // Honouring 50,000 would promise a depth the Karbon client cannot reach,
+    // so the number is lowered and the lowering is reported rather than silent.
+    const result = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: true, limit: 50_000 });
+
+    expect(result.notes.join(' ')).toMatch(/5000 is the most one import can examine/i);
+    expect(result.found).toBe(3);
+  });
+
   it('records what it did, and says so on a dry run too', async () => {
     await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: true });
 
