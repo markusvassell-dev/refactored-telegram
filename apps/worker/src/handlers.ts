@@ -626,38 +626,6 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
     },
 
     // ---------------------------------------------------------- Adobe Sign
-    CREATE_ADOBE_AGREEMENT: async ({ job }) => {
-      const engagementId = requireString(job.payload, 'engagementId');
-      const documentVersionId = requireString(job.payload, 'documentVersionId');
-      const actorId = requireString(job.payload, 'actorId');
-
-      const { adobeSign } = await context.providers();
-      const state = await context.testMode();
-
-      const actor = await context.prisma.user.findUniqueOrThrow({
-        where: { id: actorId },
-        include: { userRoles: true },
-      });
-
-      const result = await context.signing.sendForSignature({
-        engagementId,
-        documentVersionId,
-        actor: {
-          id: actor.id,
-          email: actor.email,
-          displayName: actor.displayName,
-          roles: actor.userRoles.map((row) => row.role),
-        },
-        adobeSign,
-        testMode: state.testMode,
-        productionSendingEnabled: state.productionSendingEnabled,
-        sandboxConfigured: adobeSign.isMock === false || adobeSign.name.includes('mock'),
-        correlationId: job.correlationId,
-      });
-
-      return { ...result };
-    },
-
     SEND_NOTIFICATION_EMAILS: async () => {
       // Delivery is separate from raising the notice: a signature must never
       // fail because a mail server was briefly unreachable, so the notice is

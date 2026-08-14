@@ -35,12 +35,6 @@ import { JOB_TYPES, type JobType } from '@element/services';
  * dead or waiting on work that has not been done — it is not "fine".
  */
 const UNREACHABLE_BY_DESIGN: Partial<Record<JobType, string>> = {
-  // Adobe Acrobat Sign is not built yet. The firm holds Acrobat Pro, which has
-  // no agreement API; signing goes through the external-signature bridge
-  // instead. This handler is the placeholder for when that changes.
-  CREATE_ADOBE_AGREEMENT:
-    'Adobe Sign integration is not built. Signatures are recorded through the external-signature bridge.',
-
   // Superseded: generation and cover-letter rendering both convert inline
   // (generation-service.ts, cover-letter-service.ts) because the review screen
   // needs the PDF in the same request that produced the DOCX.

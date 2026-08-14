@@ -1906,3 +1906,69 @@ export async function removeSigner(formData: FormData): Promise<ActionResult> {
     return 'Signer removed.';
   });
 }
+
+/**
+ * Names the person who signs on the firm's behalf.
+ *
+ * `PreparationService` reads `firm_signer_user_id` to propose the FIRM_SIGNER
+ * participant, and until now nothing wrote it. So the setting was permanently
+ * unset, every preparation reported "No firm signer has been named", and the
+ * firm-first signing order — the whole point of the ordering work — could not be
+ * configured at all. The same defect as the read-only Signers tab: reachable to
+ * read, unreachable to write.
+ */
+export async function setFirmSigner(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('system:manage_test_mode');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const userId = formData.get('userId')?.toString() ?? '';
+    const context = await requestContext();
+
+    // An empty selection clears it, which is a legitimate choice — better than pointing
+    // at somebody who has left the firm.
+    if (!userId) {
+      await container.settings.set('firm_signer_user_id', null, actor);
+      await container.audit.record({
+        eventType: 'CONFIGURATION_CHANGED',
+        objectType: 'SystemSetting',
+        objectId: 'firm_signer_user_id',
+        userId: actor.id,
+        afterValue: { firmSignerUserId: null },
+        ipAddress: context.ipAddress,
+      });
+      revalidatePath('/settings');
+      return 'The default firm signer has been cleared. Engagements will not propose one until it is set again.';
+    }
+
+    const signer = await container.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, displayName: true, email: true, isActive: true },
+    });
+
+    if (!signer) throw new ValidationError('That user no longer exists.');
+    if (!signer.isActive) {
+      throw new ValidationError(
+        `${signer.displayName} is not an active user, so they cannot be sent an agreement to sign.`,
+      );
+    }
+
+    await container.settings.set('firm_signer_user_id', signer.id, actor);
+
+    await container.audit.record({
+      eventType: 'CONFIGURATION_CHANGED',
+      objectType: 'SystemSetting',
+      objectId: 'firm_signer_user_id',
+      userId: actor.id,
+      afterValue: { firmSignerUserId: signer.id, email: signer.email },
+      ipAddress: context.ipAddress,
+    });
+
+    revalidatePath('/settings');
+
+    // Existing engagements are deliberately left alone: their signers may have
+    // been confirmed by a reviewer already, and a settings change must not
+    // quietly re-point a letter somebody has approved.
+    return `${signer.displayName} will be proposed as the firm signer on new engagements. Engagements already prepared keep the signer they have.`;
+  });
+}

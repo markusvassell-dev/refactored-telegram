@@ -191,14 +191,6 @@ export class SigningService {
       return { agreementId: existing.agreementId, deduplicated: true };
     }
 
-    await this.deps.workflow.transition({
-      engagementId: input.engagementId,
-      to: 'SENDING_FOR_SIGNATURE',
-      userId: input.actor.id,
-      reason: 'Creating Adobe Sign agreement',
-      correlationId: input.correlationId,
-    });
-
     const title = buildFileName({
       year: engagement.taxYear,
       documentType: version.documentType,
@@ -206,6 +198,49 @@ export class SigningService {
       role: 'APPROVED_PDF',
       testMode: input.testMode,
     }).replace(/\.pdf$/, '');
+
+    // Ask Adobe whether this key already produced an agreement.
+    //
+    // The local check above only sees what this database recorded. If the row
+    // was lost, or the process died between Adobe creating the agreement and the
+    // id being written back, the local check finds nothing and a retry sends the
+    // client a second copy of the same engagement letter. Adobe is the authority
+    // on what Adobe holds.
+    //
+    // `findByExternalId` throws rather than returning null when the lookup
+    // itself fails, so "could not check" stops the send instead of being read as
+    // "none exists".
+    const remote = await input.adobeSign.findByExternalId(idempotencyKey);
+    if (remote) {
+      this.deps.logger.warn('Adobe already holds an agreement for this key; adopting it rather than creating another', {
+        engagementId: input.engagementId,
+        agreementId: remote,
+      });
+
+      await this.deps.prisma.adobeAgreement.upsert({
+        where: { idempotencyKey },
+        create: {
+          idempotencyKey,
+          engagementId: input.engagementId,
+          documentVersionId: input.documentVersionId,
+          agreementId: remote,
+          title,
+          status: 'OUT_FOR_SIGNATURE',
+          isTestMode: input.testMode,
+        },
+        update: { agreementId: remote },
+      });
+
+      return { agreementId: remote, deduplicated: true };
+    }
+
+    await this.deps.workflow.transition({
+      engagementId: input.engagementId,
+      to: 'SENDING_FOR_SIGNATURE',
+      userId: input.actor.id,
+      reason: 'Creating Adobe Sign agreement',
+      correlationId: input.correlationId,
+    });
 
     // The signature copy, not the draft.
     //

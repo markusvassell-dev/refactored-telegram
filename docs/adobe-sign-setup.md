@@ -154,15 +154,37 @@ never a signed date.
 
 ## 5. Signing order
 
+**The firm signs first.** A letter reaching a client has already been
+countersigned; Adobe releases the document to order 2 only once order 1 has
+signed, so this ordering is the whole of that guarantee.
+
 Signers sharing an order form one participant set and sign in parallel.
 
-| Engagement | Order |
-| --- | --- |
-| **T1 joint** | Both taxpayers at order 1, in parallel. Firm signer at order 2, after both. |
-| **T2** | Authorized signing officer at order 1. Firm representative at order 2. |
-| **T3** | Trustee / executor / administrator / liquidator at order 1. Firm signer at order 2. |
+| Engagement | Order 1 | Order 2 |
+| --- | --- | --- |
+| **T1 joint** | Firm signer | Both taxpayers, in parallel |
+| **T2** | Firm signer | Authorized signing officer |
+| **T3** | Firm signer | Trustee / executor / administrator / liquidator |
 
-The firm signer is only included when a firm signature is required.
+This document previously described the opposite — client first, firm second —
+which was never what the firm asked for.
+
+The firm signer comes from the `firm_signer_user_id` setting (Settings → Firm
+signer) and can be overridden per engagement on the Signers tab.
+
+### Which participant set a field belongs to
+
+Adobe addresses fields by set: `signer1` means whoever holds the earliest signing
+order, not a particular person. Manifests therefore state *what* a field collects
+(`SIGNATURE`, `DATE`, `AUTO_PLACED`) and never the index, which is computed at
+render time from the engagement's actual participants. A hardcoded index is a
+claim about signing order that nothing keeps true — when the firm moved to order
+1 it would have pointed every field at the wrong person, silently.
+
+**T2 is sent with no tags at all.** Its template has no signature line to anchor
+to, only a date, and the approved wording is not edited to add one. Adobe places
+its own signature block, which means the T2 signature appears at the end of the
+document rather than at the acceptance section — an accepted trade-off.
 
 ## 6. Defaults
 
@@ -172,8 +194,21 @@ The firm signer is only included when a firm signature is required.
 | Expiry | 30 days | Yes |
 | CC | Assigned engagement lead | Yes |
 | Language | English (`en_US`) | Yes |
-| Delegation | **Off** | Administrator |
-| Authentication | Email verification | Stronger methods configurable |
+| Delegation | **Off — see below** | Not yet honoured |
+| Authentication | Email verification | Yes, per request |
+
+**Authentication** is sent: the request's `authenticationMethod` is written onto
+each participant. It previously was not — the field was declared, passed, and
+dropped, so a firm configuring KBA would silently have got email verification.
+
+**Delegation is NOT yet enforced.** The request carries `allowDelegation: false`
+and the client does not send it, because the field Adobe uses to forbid
+delegation could not be confirmed against the published specification from the
+build environment. Guessing a field name is worse than sending none: an
+unrecognised key is ignored silently, which would leave this table reading as
+enforced while Adobe applied its own default. Every send logs a warning while
+this is outstanding. Resolve it against Adobe's REST v6 specification before
+relying on delegation being off.
 
 ## 7. Test configuration
 
