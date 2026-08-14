@@ -1,0 +1,116 @@
+# Continuous integration.
+#
+# Until now every "typecheck, lint, tests and build pass" claim in this
+# repository came from someone running those commands on their own machine and
+# reporting the result. That is assurance about one machine at one moment, and it
+# stops being true the moment anybody pushes without repeating it.
+#
+# This reproduces the whole check on a clean machine, so the claim is made by
+# something that cannot forget.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# A new push supersedes an in-flight run on the same ref. The old result is about
+# code nobody is looking at any more.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        # Without this the first migration races the server's own startup.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # The suite points itself at this database (tests/setup.ts), so migrations
+      # and the seed must target the same one.
+      TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/element_engagements_test?schema=public
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/element_engagements_test?schema=public
+      # Obviously fake, and only ever used here. `env()` validates at build time
+      # and refuses to start without them, so the build needs values even though
+      # nothing is encrypted or signed during a build.
+      ENCRYPTION_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
+      SESSION_SECRET: '1111111111111111111111111111111111111111111111111111111111111111'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The integration tests convert real .docx files through a real
+      # LibreOffice — that is deliberate, because a PDF that never converted is
+      # a document nobody can send. It has to exist here too.
+      - name: Install LibreOffice
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice
+          soffice --version
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The Prisma client is generated into packages/database/generated and is
+      # not committed, so nothing typechecks until this runs.
+      - name: Generate the Prisma client
+        run: pnpm db:generate
+
+      - name: Create the test database
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -c \
+            'CREATE DATABASE element_engagements_test'
+
+      - name: Apply migrations
+        run: pnpm db:migrate
+
+      # Not optional. Template manifests live in the database, and the suite
+      # reads them: a manifest change with no reseed fails the whole integration
+      # run, which is exactly how this was discovered.
+      - name: Seed templates and reference data
+        run: pnpm db:seed
+
+      # Asserts the committed manifests still match the approved .docx files.
+      # A template edited without re-normalising would otherwise reach production
+      # as a hash mismatch nobody looked for.
+      - name: Verify template hashes
+        run: pnpm templates:verify
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+        env:
+          NODE_ENV: production
