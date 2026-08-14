@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@element/database';
 import { createAuditLogger } from '@element/audit';
-import { ClientImportService } from '@element/services';
+import { ClientImportService, describeDifferences } from '@element/services';
 import { MockKarbonProvider } from '@element/integrations';
 import { PermissionError, PreconditionError, createLogger, type Principal } from '@element/shared';
 
@@ -370,6 +370,46 @@ describe('importing clients from Karbon', () => {
 
     expect(result.notes.join(' ')).toMatch(/5000 is the most one import can examine/i);
     expect(result.found).toBe(3);
+  });
+
+  it('says what differs, not merely how many do', async () => {
+    // The screen promises that differences are reported so you can decide.
+    // They were computed, returned and dropped, so it reported a count and
+    // nothing to decide with. The legal name matters most of all: it is one of
+    // the compared fields and prints verbatim into a legal document.
+    const lines = describeDifferences([
+      {
+        entityKey: 'k1',
+        legalName: '2100698 Albeta Ltd.',
+        differences: [
+          { field: 'Legal name', here: '2100698 Albeta Ltd.', inKarbon: '2100698 Alberta Ltd.' },
+          { field: 'City', here: null, inKarbon: 'Calgary' },
+        ],
+      },
+    ]);
+
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('2100698 Albeta Ltd.');
+    expect(lines[0]).toContain('Legal name');
+    // Both sides, because which one is right is the reader's call, not ours.
+    expect(lines[0]).toMatch(/here .*Albeta Ltd\./);
+    expect(lines[0]).toMatch(/Karbon .*Alberta Ltd\./);
+    expect(lines[0]).toContain('City');
+  });
+
+  it('cuts a very long difference list short, and says that it did', async () => {
+    const many = Array.from({ length: 14 }, (_, index) => ({
+      entityKey: `k${index}`,
+      legalName: `Client ${index}`,
+      differences: [{ field: 'City', here: 'Calgary', inKarbon: 'Edmonton' }],
+    }));
+
+    const lines = describeDifferences(many);
+
+    // Ten described, plus one line accounting for the rest — a silent cut would
+    // under-report differences somebody is deciding about.
+    expect(lines).toHaveLength(11);
+    expect(lines.at(-1)).toContain('4 more client(s)');
   });
 
   it('records what it did, and says so on a dry run too', async () => {

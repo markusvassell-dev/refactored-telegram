@@ -14,7 +14,7 @@ import {
   type FeeMethod,
   type Role,
 } from '@element/shared';
-import { factToken, type IntegrationProviderKey } from '@element/services';
+import { describeDifferences, factToken, type IntegrationProviderKey } from '@element/services';
 import type { FeeRuleLevel, ParticipantRole } from '@element/database';
 import { container } from '@/lib/container';
 import { assertCsrf, extendSession, requirePermission, requireUser, requestContext } from '@/lib/session';
@@ -1721,11 +1721,34 @@ export async function importClientsFromKarbon(formData: FormData): Promise<Actio
     if (result.differing.length > 0) parts.push(`${result.differing.length} differ and were left alone.`);
     if (result.failed.length > 0) parts.push(`${result.failed.length} could not be read.`);
 
+    // A client whose blanks were filled may also differ on a field that already
+    // held a value, so it is counted in both. Without saying so the totals do
+    // not add up to the number found, and a reader who tries to reconcile them
+    // concludes something was lost.
+    const backfilledKeys = new Set(result.backfilled.map((row) => row.entityKey));
+    const alsoDiffering = result.differing.filter((row) => backfilledKeys.has(row.entityKey)).length;
+    if (alsoDiffering > 0) {
+      parts.push(
+        `${alsoDiffering} appear(s) in two of those counts: blanks filled, and a difference left alone elsewhere.`,
+      );
+    }
+
     // The reasons, not just the count. A number with no explanation is a
     // mystery somebody has to come back and investigate; the client that could
     // not be read is a client no engagement can be started for, and the cause
     // is usually specific and actionable.
-    const blockers = [...result.notes, ...result.failed.map((entry) => `${entry.entityKey}: ${entry.reason}`)];
+    //
+    // The same argument applies to a difference, and applies harder: this
+    // screen says differences are reported so you can decide, and until now
+    // they were computed, returned, and dropped here. "5 differ" with no way to
+    // see what differs is not something anybody can decide about — and one of
+    // the compared fields is the legal name, which prints into a legal
+    // document.
+    const blockers = [
+      ...result.notes,
+      ...result.failed.map((entry) => `${entry.entityKey}: ${entry.reason}`),
+      ...describeDifferences(result.differing),
+    ];
 
     return { ok: true, message: parts.join(' '), blockers };
   });

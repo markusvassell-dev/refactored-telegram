@@ -354,6 +354,43 @@ const BACKFILLABLE = [
   ['postalCode', 'Postal code'],
 ] as const;
 
+/**
+ * How many differing clients are spelled out before the list is cut short.
+ *
+ * An import of a whole firm could differ on hundreds, and a list that long is
+ * read by nobody. The cut is reported rather than silent.
+ */
+const DIFFERENCES_SHOWN = 10;
+
+/**
+ * What actually differs between a client here and the same client in Karbon.
+ *
+ * The import deliberately never overwrites: somebody may have corrected a legal
+ * name Karbon has wrong, or typed a business number from the CRA notice rather
+ * than the CRM. **That decision is only defensible if the person is told what
+ * was left alone.** Until this existed the differences were computed, returned,
+ * and dropped by the caller, so the screen reported "5 differ" while promising
+ * in the same panel that differences are reported so you can decide. A count
+ * with no detail is not something anybody can decide about.
+ *
+ * It matters most for the legal name, which is one of the compared fields and
+ * prints verbatim into a legal document.
+ */
+export function describeDifferences(differing: ClientImportResult['differing']): string[] {
+  const lines = differing.slice(0, DIFFERENCES_SHOWN).map((row) => {
+    const fields = row.differences
+      .map((difference) => `${difference.field}: here “${difference.here ?? '—'}”, Karbon “${difference.inKarbon ?? '—'}”`)
+      .join('; ');
+    return `${row.legalName} differs and was left alone — ${fields}`;
+  });
+
+  if (differing.length > DIFFERENCES_SHOWN) {
+    lines.push(`…and ${differing.length - DIFFERENCES_SHOWN} more client(s) differing, not listed here.`);
+  }
+
+  return lines;
+}
+
 function compare(
   here: { legalName: string; businessNumber: string | null; city: string | null; province: string | null; postalCode: string | null },
   there: { legalName: string; businessNumber?: string | null; city?: string | null; province?: string | null; postalCode?: string | null },
