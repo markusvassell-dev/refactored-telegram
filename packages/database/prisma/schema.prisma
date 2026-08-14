@@ -1147,6 +1147,13 @@ model AdobeAgreement {
   certificateKarbonDocumentId String?
   signedPdfHash               String?
   certificateHash             String?
+  /// Where the signed PDF and audit report are held by this application.
+  /// Kept because the Karbon upload can fail, or the work item can be missing,
+  /// and until now the bytes were downloaded, hashed, uploaded and dropped --
+  /// so on either of those paths the one document proving a client agreed to a
+  /// fee existed nowhere at all.
+  signedPdfReference          String?
+  certificateReference        String?
   createdAt                   DateTime             @default(now())
   updatedAt                   DateTime             @updatedAt
 

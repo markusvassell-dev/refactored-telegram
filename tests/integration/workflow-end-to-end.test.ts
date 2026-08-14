@@ -48,7 +48,7 @@ const templateDirectory = `${process.cwd()}/templates/normalized`;
 const generation = new GenerationService({ prisma, audit, store, pdfConverter, workflow, logger, templateDirectory });
 const approvals = new ApprovalService({ prisma, audit, workflow, settings });
 const userNotifications = new NotificationService({ prisma });
-const signing = new SigningService({ notifications: userNotifications, prisma, audit, store, workflow, settings, logger });
+const signing = new SigningService({ notifications: userNotifications, prisma, audit, store, workflow, settings, logger, queue });
 const coverLetters = new CoverLetterService({
   prisma,
   audit,
@@ -688,6 +688,18 @@ describe('background job queue', () => {
   });
 
   it('claims each job exactly once across concurrent workers', async () => {
+    // `claim` takes the oldest runnable job, whatever it is, so this test is
+    // only meaningful when its own job is the only one available. The
+    // integration suite shares a database and other tests legitimately leave
+    // work queued — this used to pass by luck, and started failing the moment a
+    // completed webhook began enqueueing a retrieval.
+    //
+    // Deferred rather than deleted: other tests assert those rows exist.
+    await prisma.backgroundJob.updateMany({
+      where: { status: 'PENDING' },
+      data: { runAt: new Date(Date.now() + 60 * 60 * 1000) },
+    });
+
     const key = `claim-${randomUUID()}`;
     await queue.enqueue({ jobType: 'KARBON_SYNC', idempotencyKey: key, payload: {} });
 
@@ -987,6 +999,84 @@ describe('Adobe Sign webhooks', () => {
 
     const events = await prisma.adobeEvent.findMany({ where: { providerEventId: eventId } });
     expect(events).toHaveLength(1);
+
+    // A completed webhook must ask for the signed document.
+    //
+    // This is where the return leg used to end. The webhook applied the status
+    // and stopped; the poll was the only thing that enqueued the retrieval, and
+    // its query covered agreements still in flight — so once the webhook had
+    // moved this one to COMPLETED, the poll skipped it forever. The signed PDF
+    // was never downloaded and never reached Karbon, while the engagement sat at
+    // SIGNED and the staff notification said it "is being filed into Karbon".
+    const retrievals = await prisma.backgroundJob.findMany({
+      where: { jobType: 'RETRIEVE_SIGNED_DOCUMENTS', idempotencyKey: `signed_${sent.agreementId}` },
+    });
+    expect(retrievals).toHaveLength(1);
+
+    // The duplicate delivery must not queue a second fetch — the poll uses this
+    // same key, so whichever arrives first wins.
+    expect(retrievals[0]?.idempotencyKey).toBe(`signed_${sent.agreementId}`);
+  });
+
+  it('keeps the signed document even when Karbon is a mock, and files nothing', async () => {
+    const engagement = await makeT2Engagement({ compilationSelected: false });
+    const adobe = new MockAdobeSignProvider({ webhookSecret: 'test-adobe-webhook-secret' });
+    const karbon = new MockKarbonProvider();
+
+    await workflow.transition({ engagementId: engagement.id, to: 'GENERATING' });
+    const generated = await generation.generate({
+      engagementId: engagement.id,
+      documentType: 'T2_ENGAGEMENT_LETTER',
+      actorId: preparer.id,
+      correlationId: 'test',
+      testMode: true,
+    });
+    await workflow.transition({ engagementId: engagement.id, to: 'DRAFT_READY' });
+    await workflow.transition({ engagementId: engagement.id, to: 'REVIEW_REQUIRED' });
+    await approvals.startReview(engagement.id, reviewer);
+    await approvals.approveDocument({
+      engagementId: engagement.id,
+      documentVersionId: generated.documentVersionId,
+      actor: partner,
+    });
+    await approvals.markReadyToSend(engagement.id, partner);
+
+    const sent = await signing.sendForSignature({
+      engagementId: engagement.id,
+      documentVersionId: generated.documentVersionId,
+      actor: partner,
+      adobeSign: adobe,
+      testMode: true,
+      productionSendingEnabled: false,
+      sandboxConfigured: true,
+      correlationId: 'test',
+    });
+
+    adobe.simulateSign(sent.agreementId, 'officer@example.test');
+
+    const result = await signing.returnSignedDocumentsToKarbon({
+      agreementId: sent.agreementId,
+      adobeSign: adobe,
+      karbon,
+      correlationId: 'test',
+    });
+
+    const stored = await prisma.adobeAgreement.findUniqueOrThrow({
+      where: { agreementId: sent.agreementId },
+    });
+
+    // The bytes are kept whatever Karbon did. They used to be downloaded,
+    // hashed, uploaded and dropped, so a failed upload left the one document
+    // proving a client accepted a fee existing nowhere.
+    expect(stored.signedPdfReference).toBeTruthy();
+    expect(stored.certificateReference).toBeTruthy();
+    expect(await store.get(stored.signedPdfReference as string)).toBeInstanceOf(Buffer);
+
+    // A mock's object id must never be recorded as a real filing. Doing so would
+    // also switch off the poll's safety net, which keys on this column being
+    // null, so the letter would never be retried once Karbon was connected.
+    expect(stored.signedPdfKarbonDocumentId).toBeNull();
+    expect(result.messages.join(' ')).toMatch(/Karbon is not connected/i);
   });
 
   it('rejects a payload whose signature does not verify', async () => {

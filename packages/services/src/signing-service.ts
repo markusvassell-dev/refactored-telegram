@@ -15,6 +15,7 @@ import {
 } from '@element/shared';
 import { parseManifest, type TemplateManifest } from '@element/documents';
 import { evaluateSendGate, type GateResult } from '@element/workflows';
+import type { JobQueue } from './jobs/queue.js';
 import type { DocumentStore } from './storage.js';
 import type { WorkflowService } from './workflow-service.js';
 import type { NotificationService } from './notification-service.js';
@@ -37,6 +38,16 @@ export interface SigningServiceDeps {
   settings: SettingsService;
   logger: Logger;
   notifications: NotificationService;
+  /**
+   * Needed so a completed webhook can ask for the signed document.
+   *
+   * Without it `processWebhook` could apply a status and nothing else, which is
+   * how a signed letter used to stop dead: the poll was the only thing that
+   * enqueued the retrieval, and its query excludes agreements already COMPLETED.
+   * When the webhook arrived first — which it does — the poll then skipped that
+   * agreement forever.
+   */
+  queue: JobQueue;
 }
 
 export interface SendForSignatureInput {
@@ -524,6 +535,27 @@ export class SigningService {
 
     await this.applyAgreementState(event.agreementId, state, input.correlationId);
 
+    // Signed means go and fetch it.
+    //
+    // This used to end at `applyAgreementState`, so the engagement reached
+    // SIGNED and stopped. The poll was the only thing that ever enqueued the
+    // retrieval, and its query covers CREATED / OUT_FOR_SIGNATURE /
+    // PARTIALLY_SIGNED only — so once the webhook had moved the agreement to
+    // COMPLETED, the poll skipped it forever. The signed PDF was never
+    // downloaded and never reached Karbon, while the staff notification said it
+    // "is being filed into Karbon".
+    //
+    // The idempotency key is the same one the poll uses, so whichever arrives
+    // first wins and the other is deduplicated rather than fetching twice.
+    if (state.status === 'COMPLETED' || state.status === 'SIGNED') {
+      await this.deps.queue.enqueue({
+        jobType: 'RETRIEVE_SIGNED_DOCUMENTS',
+        idempotencyKey: `signed_${event.agreementId}`,
+        payload: { agreementId: event.agreementId },
+        correlationId: input.correlationId,
+      });
+    }
+
     await this.deps.prisma.adobeEvent.update({
       where: { providerEventId: event.eventId },
       data: { processedAt: new Date() },
@@ -547,6 +579,9 @@ export class SigningService {
       include: {
         engagement: { include: { client: true, karbonWorkItem: true } },
         documentVersion: true,
+        // Who signed and when — the note below reports it, so a reader of the
+        // Karbon work item can see it without opening Adobe.
+        signers: { orderBy: { signingOrder: 'asc' } },
       },
     });
 
@@ -617,13 +652,45 @@ export class SigningService {
     if (signedUpload.message) messages.push(signedUpload.message);
     if (certificateUpload.message) messages.push(certificateUpload.message);
 
+    // A mock adapter answers SUCCEEDED with an id from an in-memory map that
+    // dies with the process. Recording it would mark the signed letter as filed
+    // in Karbon when nothing was filed anywhere — and because the poll's safety
+    // net keys on this column being null, a fabricated id would also switch off
+    // the only thing that would ever retry it. Same rule as
+    // `external-signature-service.ts:371`.
+    const reallyFiled = !input.karbon.isMock;
+
+    if (!reallyFiled) {
+      messages.push(
+        'Karbon is not connected, so these were filed to the mock adapter only. The signed letter still exists nowhere but this application, and filing will be retried once Karbon is connected.',
+      );
+    }
+
+    // Keep the bytes regardless of what Karbon did with them.
+    //
+    // Previously they were downloaded, hashed, uploaded and dropped. If the
+    // upload failed, or the engagement had no linked work item, the one document
+    // proving a client accepted a fee existed nowhere at all.
+    const scope = record.engagementId.replace(/-/g, '');
+    const [storedSigned, storedCertificate] = await Promise.all([
+      this.deps.store.put({ content: signedPdf, fileName: signedName, mimeType: 'application/pdf', scope }),
+      this.deps.store.put({
+        content: certificate,
+        fileName: certificateName,
+        mimeType: 'application/pdf',
+        scope,
+      }),
+    ]);
+
     await this.deps.prisma.adobeAgreement.update({
       where: { id: record.id },
       data: {
-        signedPdfKarbonDocumentId: signedUpload.objectId ?? null,
-        certificateKarbonDocumentId: certificateUpload.objectId ?? null,
+        signedPdfKarbonDocumentId: reallyFiled ? (signedUpload.objectId ?? null) : null,
+        certificateKarbonDocumentId: reallyFiled ? (certificateUpload.objectId ?? null) : null,
         signedPdfHash: sha256Hex(signedPdf),
         certificateHash: sha256Hex(certificate),
+        signedPdfReference: storedSigned.reference,
+        certificateReference: storedCertificate.reference,
       },
     });
 
@@ -660,6 +727,50 @@ export class SigningService {
       data: { status: 'SIGNED' },
     });
 
+    // A note saying who signed, so the work item reads as a record on its own.
+    //
+    // Two PDFs appearing on a work item say a signature happened somewhere; they
+    // do not say who signed or when without opening them. Posted after the
+    // uploads so it cannot claim a filing that did not occur.
+    if (reallyFiled) {
+      const signedList = record.signers
+        .filter((signer) => signer.signedAt)
+        .map(
+          (signer) =>
+            `${signer.name} (${signer.email}) on ${signer.signedAt?.toISOString().slice(0, 10) ?? 'an unrecorded date'}`,
+        );
+
+      const note = [
+        `Engagement letter signed via Adobe Acrobat Sign${record.isTestMode ? ' (TEST MODE — not a real client signature)' : ''}.`,
+        signedList.length > 0 ? `Signed by: ${signedList.join('; ')}.` : 'No signer completion dates were recorded.',
+        `The signed letter and Adobe audit report are filed on this work item.`,
+      ].join(' ');
+
+      const comment = await input.karbon.addComment({
+        workItemKey,
+        body: note,
+        idempotencyKey: `signed_note_${record.id}`,
+      });
+
+      if (comment.message) messages.push(comment.message);
+
+      await this.deps.prisma.karbonActivity
+        .create({
+          data: {
+            engagementId: record.engagementId,
+            documentVersionId: record.documentVersionId,
+            karbonWorkItemKey: workItemKey,
+            type: 'COMMENT',
+            outcome: comment.outcome === 'SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
+            idempotencyKey: `signed_note_${record.id}`,
+            karbonObjectId: comment.objectId ?? null,
+            requestSummary: { kind: 'SIGNED_NOTE' } as never,
+            correlationId: input.correlationId,
+          },
+        })
+        .catch(() => undefined);
+    }
+
     await this.deps.audit.record({
       eventType: 'KARBON_UPLOAD',
       objectType: 'AdobeAgreement',
@@ -670,6 +781,7 @@ export class SigningService {
         signed: signedUpload.outcome,
         certificate: certificateUpload.outcome,
         signedHash: sha256Hex(signedPdf),
+        filedToKarbon: reallyFiled,
       },
     });
 

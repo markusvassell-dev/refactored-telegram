@@ -86,7 +86,7 @@ const userNotifications = new NotificationService({ prisma });
 const clientImport = new ClientImportService({ prisma, audit, logger });
 const karbonLibrary = new KarbonLibraryService({ prisma, audit, logger });
 const participants = new ParticipantService({ prisma, audit, logger });
-const signing = new SigningService({ notifications: userNotifications, prisma, audit, store, workflow, settings, logger });
+const signing = new SigningService({ notifications: userNotifications, prisma, audit, store, workflow, settings, logger, queue });
 const externalSignature = new ExternalSignatureService({
   notifications: userNotifications,
   prisma,
