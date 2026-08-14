@@ -25,19 +25,32 @@ export const dynamic = 'force-dynamic';
 function WorkItemDepth({ id }: { id: string }) {
   return (
     <>
-      <label className="label" htmlFor={id}>
-        Work items to examine
+      <label className="label" htmlFor={`${id}-source`}>
+        Where to look
+      </label>
+      <select id={`${id}-source`} name="source" className="input" defaultValue="CLIENT_LIST">
+        <option value="CLIENT_LIST">Karbon&rsquo;s client list — every organisation and contact</option>
+        <option value="WORK_ITEMS">Recent work items — only clients with work open</option>
+      </select>
+      <p className="field-note">
+        The client list is what Karbon holds under Organisations and Contacts. Work items find only clients somebody has
+        opened work for, so a new or dormant client will not appear — which is why a count from it can look short
+        against your own list.
+      </p>
+
+      <label className="label mt-4" htmlFor={id}>
+        Records to examine
       </label>
       <select id={id} name="limit" className="input" defaultValue="200">
-        <option value="200">200 — recent work (fastest)</option>
+        <option value="200">200 (fastest)</option>
         <option value="500">500</option>
         <option value="1000">1,000</option>
         <option value="2500">2,500</option>
         <option value="5000">5,000 — as deep as it goes (slowest)</option>
       </select>
       <p className="field-note">
-        Clients come from the work items Karbon holds, so a client with no recent work item is not found. Preview first:
-        it says whether the supply ran out before the limit did.
+        Preview first: it says whether the supply ran out before the limit did, which is how you know the list is
+        complete rather than merely long.
       </p>
     </>
   );
@@ -95,10 +108,9 @@ export default async function ClientsPage({
           <div className="card-header">
             <h2 className="text-base font-semibold">Import from Karbon</h2>
             <p className="mt-1 text-sm text-slate-600">
-              Reads the clients named on recent Karbon work items and adds the ones not already here. A client already
-              here is never overwritten — Karbon is the system of record for documents, not for the details that go
-              into a legal document, and somebody may have corrected those on purpose. Differences are reported so you
-              can decide.
+              Reads Karbon&rsquo;s client list and adds the ones not already here. A client already here is never
+              overwritten — Karbon is the system of record for documents, not for the details that go into a legal
+              document, and somebody may have corrected those on purpose. Differences are reported so you can decide.
             </p>
           </div>
           <div className="card-body">

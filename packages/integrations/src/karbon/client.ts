@@ -4,6 +4,7 @@ import { KARBON_DOCUMENTED_REQUESTS_PER_MINUTE, RateLimiter, retryAfterMs } from
 import type {
   CapabilityReport,
   KarbonClient,
+  KarbonClientSummary,
   KarbonCommentRequest,
   KarbonDocument,
   KarbonDocumentLibrary,
@@ -248,6 +249,68 @@ export class KarbonRestClient implements KarbonProvider {
       query: { $expand: 'BusinessCards' },
     });
     return contact ? mapContactEntity(contact) : null;
+  }
+
+  /**
+   * The firm's client list, read from the endpoints published for it.
+   *
+   * Both entity types are read because both are clients here: a corporation is
+   * an Organization, and an individual filing a T1 is a Contact.
+   *
+   * `ContactType` comes back verbatim and is not filtered on. The vocabulary is
+   * tenant-defined — `/TenantSettings` lists what a given firm uses — so a
+   * server-side `$filter` for `'Client'` would quietly drop every client of a
+   * firm that calls them something else. Carrying the value through and letting
+   * a person decide is the only treatment that cannot be wrong.
+   *
+   * The summary DTO holds no business cards, so no address and no contacts.
+   * `getClient` is still needed per client, exactly as before.
+   */
+  async listClients(options: { limit?: number } = {}): Promise<KarbonClientSummary[]> {
+    const [organizations, contacts] = await Promise.all([
+      this.pageClientList('/Organizations', 'Organization', 'OrganizationKey', options.limit),
+      this.pageClientList('/Contacts', 'Contact', 'ContactKey', options.limit),
+    ]);
+
+    return [...organizations, ...contacts];
+  }
+
+  private async pageClientList(
+    path: string,
+    entityType: KarbonClientSummary['entityType'],
+    keyField: string,
+    limit?: number,
+  ): Promise<KarbonClientSummary[]> {
+    const wanted = limit ?? Number.POSITIVE_INFINITY;
+    const found: KarbonClientSummary[] = [];
+    let skip = 0;
+
+    for (let page = 1; page <= MAX_SEARCH_PAGES; page += 1) {
+      const response = await this.request<KarbonPage | null>({
+        path,
+        query: { $top: PAGE_SIZE, $skip: skip > 0 ? skip : undefined },
+      });
+
+      const rows = response?.value ?? [];
+      for (const row of rows) {
+        const entityKey = text(row[keyField]);
+        // A row with no key cannot be read back or stored against anything.
+        if (!entityKey) continue;
+
+        found.push({
+          entityKey,
+          entityType,
+          fullName: text(row.FullName) ?? entityKey,
+          contactType: text(row.ContactType),
+        });
+        if (found.length >= wanted) return found;
+      }
+
+      if (rows.length < PAGE_SIZE) return found;
+      skip += PAGE_SIZE;
+    }
+
+    return found;
   }
 
   /**

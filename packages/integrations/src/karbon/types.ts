@@ -164,6 +164,7 @@ export type KarbonCapability =
   | 'READ_WORK_ITEM'
   | 'READ_CONTACTS'
   | 'READ_CLIENT'
+  | 'LIST_CLIENTS'
   | 'LIST_DOCUMENTS'
   | 'LIST_CLIENT_LIBRARY'
   | 'DOWNLOAD_DOCUMENT'
@@ -215,6 +216,29 @@ export interface KarbonFileList {
   Attachments?: KarbonFileListItem[];
 }
 
+/**
+ * One entry of Karbon's own client list.
+ *
+ * Deliberately thin: the list endpoints return a summary DTO with no business
+ * cards, so no address and no contacts. `getClient` is still what fills a
+ * client in. This exists to answer "who are the firm's clients?", which is a
+ * different question from "what do we know about this one?".
+ */
+export interface KarbonClientSummary {
+  entityKey: string;
+  entityType: 'Organization' | 'Contact';
+  fullName: string;
+  /**
+   * Karbon's contact type, verbatim.
+   *
+   * Tenant-defined — the vocabulary comes from `/TenantSettings` and differs
+   * between firms — so nothing here interprets it. It is carried through and
+   * shown, because which of a firm's types mean "a client" is the firm's answer
+   * and not one this application can infer.
+   */
+  contactType: string | null;
+}
+
 export interface KarbonProvider {
   readonly name: string;
   /** True when this adapter is a mock and performs no real network calls. */
@@ -225,6 +249,22 @@ export interface KarbonProvider {
   getClient(entityKey: string): Promise<KarbonClient | null>;
   getWorkItem(workItemKey: string): Promise<KarbonWorkItem | null>;
   searchWorkItems(query: KarbonWorkItemQuery): Promise<KarbonWorkItem[]>;
+
+  /**
+   * The firm's client list, as Karbon holds it.
+   *
+   * Client discovery used to run entirely through work items: search them, take
+   * the distinct client keys, import those. That finds only clients somebody
+   * has already opened work for, which silently omits a new client, a dormant
+   * one, and any client whose work predates the window being examined. The
+   * screen reported "63 clients found in Karbon" when it meant "63 clients
+   * among the work items I looked at" — a number a person reconciles against
+   * their own client list and finds short.
+   *
+   * Karbon publishes `/Organizations` and `/Contacts` for exactly this, and
+   * neither was ever called.
+   */
+  listClients(options?: { limit?: number }): Promise<KarbonClientSummary[]>;
 
   listDocuments(scope: { workItemKey?: string; entityKey?: string }): Promise<KarbonDocument[]>;
 

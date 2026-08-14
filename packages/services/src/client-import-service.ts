@@ -40,11 +40,33 @@ export interface ClientImportDeps {
   logger: Logger;
 }
 
+/**
+ * Where the list of candidate clients comes from.
+ *
+ * `CLIENT_LIST` reads `/Organizations` and `/Contacts` — Karbon's own client
+ * list, and the answer to "who are the firm's clients?".
+ *
+ * `WORK_ITEMS` takes the distinct clients named on recent work items. It was
+ * the only route for a long time, and it answers a narrower question: who has
+ * work open. A new client, a dormant one, and any client whose work predates
+ * the window are all invisible to it, which is how a firm reconciles the count
+ * against their own list and finds it short.
+ *
+ * Both are kept because they are genuinely different questions, and the narrow
+ * one is useful when a firm's Karbon holds many non-clients.
+ */
+export type ClientImportSource = 'CLIENT_LIST' | 'WORK_ITEMS';
+
 export interface ClientImportInput {
   karbon: KarbonProvider;
   actor: Principal;
-  /** How many work items to look through for distinct clients. */
+  /**
+   * How many records to look through — work items, or client-list entries.
+   * Client discovery, not a cap on how many clients may be created.
+   */
   limit?: number;
+  /** Defaults to Karbon's own client list. */
+  source?: ClientImportSource;
   /** True to report only, changing nothing. */
   dryRun: boolean;
   correlationId?: string;
@@ -106,31 +128,46 @@ export class ClientImportService {
 
     const requested = input.limit ?? DEFAULT_LIMIT;
     if (!Number.isInteger(requested) || requested < 1) {
-      throw new PreconditionError('The number of work items to examine must be a positive whole number.');
+      throw new PreconditionError('The number of records to examine must be a positive whole number.');
     }
     const limit = Math.min(requested, MAX_LIMIT);
     const notes: string[] = [];
 
     if (requested > MAX_LIMIT) {
       notes.push(
-        `Asked for ${requested} work items; ${MAX_LIMIT} is the most one import can examine, so that is what was read.`,
+        `Asked for ${requested} records; ${MAX_LIMIT} is the most one import can examine, so that is what was read.`,
       );
     }
 
-    const workItems = await input.karbon.searchWorkItems({ limit });
-    const entityKeys = [...new Set(workItems.map((item) => item.clientKey).filter((key): key is string => Boolean(key)))];
+    const source = input.source ?? 'CLIENT_LIST';
 
-    if (workItems.length >= limit) {
+    const { entityKeys, examined } =
+      source === 'CLIENT_LIST'
+        ? await this.fromClientList(input.karbon, limit)
+        : await this.fromWorkItems(input.karbon, limit);
+
+    const noun = source === 'CLIENT_LIST' ? 'client-list entries' : 'work items';
+
+    if (source === 'WORK_ITEMS') {
+      // The narrower question, stated as such. A count from this source is
+      // "clients with recent work", and reading it as "clients" is the mistake
+      // that made a firm's list look short.
+      notes.push(
+        'Read from work items, so this finds only clients somebody has opened work for — a new or dormant client will not appear. Karbon’s own client list is the other option.',
+      );
+    }
+
+    if (examined >= limit) {
       // The count is a floor, not a total. Saying "22 clients" when it is
-      // "22 among the first 200 work items" is the kind of number somebody
+      // "22 among the first 200 records" is the kind of number somebody
       // reconciles against their client list and finds short.
       //
       // Saying so is not enough on its own: a warning a reader cannot act on
       // is just an apology. It names the control that answers it.
       notes.push(
         limit >= MAX_LIMIT
-          ? `Examined ${limit} work items, the most one import can read, and the supply was not exhausted — clients may exist beyond them. Import what is here, then narrow the remainder by other means.`
-          : `Examined the first ${limit} work items and the supply was not exhausted — there may be more clients beyond them. Run it again with a higher "work items to examine" to look further.`,
+          ? `Examined ${limit} ${noun}, the most one import can read, and the supply was not exhausted — clients may exist beyond them. Import what is here, then narrow the remainder by other means.`
+          : `Examined the first ${limit} ${noun} and the supply was not exhausted — there may be more clients beyond them. Run it again with a higher "records to examine" to look further.`,
       );
     }
 
@@ -282,6 +319,42 @@ export class ClientImportService {
    * holds nothing — a value already present is left for `compare` to report,
    * because a person may have put it there on purpose.
    */
+  /**
+   * Karbon's own client list.
+   *
+   * Every organisation and every contact, because both are clients here: a
+   * corporation is an Organization and an individual filing a T1 is a Contact.
+   *
+   * `ContactType` is deliberately not filtered on. It is tenant-defined, so a
+   * firm that calls its clients something other than "Client" would have every
+   * one of them silently dropped — the failure this whole change exists to
+   * remove, reintroduced one layer down.
+   */
+  private async fromClientList(
+    karbon: KarbonProvider,
+    limit: number,
+  ): Promise<{ entityKeys: string[]; examined: number }> {
+    const summaries = await karbon.listClients({ limit });
+    return {
+      entityKeys: [...new Set(summaries.map((summary) => summary.entityKey).filter(Boolean))],
+      examined: summaries.length,
+    };
+  }
+
+  /** The distinct clients named on recent work items. */
+  private async fromWorkItems(
+    karbon: KarbonProvider,
+    limit: number,
+  ): Promise<{ entityKeys: string[]; examined: number }> {
+    const workItems = await karbon.searchWorkItems({ limit });
+    return {
+      entityKeys: [
+        ...new Set(workItems.map((item) => item.clientKey).filter((key): key is string => Boolean(key))),
+      ],
+      examined: workItems.length,
+    };
+  }
+
   private async backfillFromKarbon(
     existing: { id: string; legalName: string; contacts: { karbonContactKey: string | null }[] },
     karbonClient: KarbonClient,

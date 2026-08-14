@@ -14,7 +14,12 @@ import {
   type FeeMethod,
   type Role,
 } from '@element/shared';
-import { describeDifferences, factToken, type IntegrationProviderKey } from '@element/services';
+import {
+  describeDifferences,
+  factToken,
+  type ClientImportSource,
+  type IntegrationProviderKey,
+} from '@element/services';
 import type { FeeRuleLevel, ParticipantRole } from '@element/database';
 import { container } from '@/lib/container';
 import { assertCsrf, extendSession, requirePermission, requireUser, requestContext } from '@/lib/session';
@@ -1684,10 +1689,13 @@ export async function importClientsFromKarbon(formData: FormData): Promise<Actio
     if (rawLimit) {
       const parsed = Number(rawLimit);
       if (!Number.isInteger(parsed) || parsed < 1) {
-        throw new ValidationError('The number of work items to examine must be a positive whole number.');
+        throw new ValidationError('The number of records to examine must be a positive whole number.');
       }
       limit = parsed;
     }
+
+    const rawSource = formData.get('source')?.toString();
+    const source: ClientImportSource = rawSource === 'WORK_ITEMS' ? 'WORK_ITEMS' : 'CLIENT_LIST';
 
     const providers = await container.providers();
 
@@ -1696,6 +1704,7 @@ export async function importClientsFromKarbon(formData: FormData): Promise<Actio
       actor,
       dryRun,
       limit,
+      source,
       correlationId: newCorrelationId(),
     });
 

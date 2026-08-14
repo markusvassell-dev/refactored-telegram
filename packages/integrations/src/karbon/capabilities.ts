@@ -36,6 +36,17 @@ export const KARBON_CAPABILITY_MATRIX: readonly CapabilityReport[] = [
     limitation: 'The entity type must be known in advance; the application stores it on the client record.',
   },
   {
+    capability: 'LIST_CLIENTS',
+    // Written against the published operations and not yet observed returning
+    // the firm's list. Corrected code is not observed code: this stays
+    // UNVERIFIED until a real run reports a count, and the first run that does
+    // is the one that promotes it.
+    support: 'UNVERIFIED',
+    operation: 'GET /v3/Organizations and GET /v3/Contacts, paged with $top/$skip',
+    limitation:
+      'ContactType is tenant-defined, so nothing is filtered on it — every organisation and contact is offered and a person decides which are clients. Client discovery previously ran only through work items, which finds no client without recent work.',
+  },
+  {
     capability: 'READ_CONTACTS',
     support: 'UNVERIFIED',
     operation: 'GET /v3/Contacts and the Organization contact collection',

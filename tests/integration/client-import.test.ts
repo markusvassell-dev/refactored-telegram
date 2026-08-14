@@ -282,7 +282,7 @@ describe('importing clients from Karbon', () => {
       },
     }) as typeof karbon;
 
-    const result = await service.run({ karbon: withDiagnosis, actor: admin, dryRun: true });
+    const result = await service.run({ karbon: withDiagnosis, actor: admin, dryRun: true, source: 'WORK_ITEMS' });
 
     expect(probed).toEqual([ghostKey]);
     expect(result.failed).toHaveLength(1);
@@ -308,7 +308,12 @@ describe('importing clients from Karbon', () => {
       },
     }) as typeof karbon;
 
-    const result = await service.run({ karbon: withBrokenDiagnosis, actor: admin, dryRun: true });
+    const result = await service.run({
+      karbon: withBrokenDiagnosis,
+      actor: admin,
+      dryRun: true,
+      source: 'WORK_ITEMS',
+    });
 
     expect(result.failed).toHaveLength(1);
     expect(result.failed[0]!.entityKey).toBe(ghostKey);
@@ -343,7 +348,7 @@ describe('importing clients from Karbon', () => {
     expect(result.notes.join(' ')).toMatch(/more clients beyond them/i);
     // A warning a reader cannot act on is an apology. It must name the control
     // that answers it, which is the whole reason the limit is now settable.
-    expect(result.notes.join(' ')).toMatch(/work items to examine/i);
+    expect(result.notes.join(' ')).toMatch(/records to examine/i);
   });
 
   it('says nothing about depth when the supply ran out first', async () => {
@@ -370,6 +375,56 @@ describe('importing clients from Karbon', () => {
 
     expect(result.notes.join(' ')).toMatch(/5000 is the most one import can examine/i);
     expect(result.found).toBe(3);
+  });
+
+  it('finds a client that has no work item at all', async () => {
+    // The defect this covers, reported from the live deployment: discovery ran
+    // entirely through work items, so a client nobody had opened work for was
+    // invisible however deep the search went. Karbon publishes /Organizations
+    // and /Contacts for exactly this question and neither was ever called.
+    //
+    // A dormant client and a brand-new one are both normal for a tax firm, so
+    // this is not an edge case — it is a slice of every firm's book.
+    const seeded = seed();
+    const dormantKey = `ci-org-${suffix}-dormant`;
+    entityKeys.push(dormantKey);
+
+    const karbon = Object.create(
+      new MockKarbonProvider({
+        clients: [
+          ...seeded.clients,
+          {
+            entityKey: dormantKey,
+            entityType: 'Organization' as const,
+            legalName: 'Dormant Holdings Ltd.',
+            contacts: [],
+          },
+        ],
+        // Deliberately unchanged: no work item names the dormant client.
+        workItems: seeded.workItems,
+      }),
+      { isMock: { value: false, enumerable: true } },
+    ) as MockKarbonProvider;
+
+    const viaWorkItems = await service.run({ karbon, actor: admin, dryRun: true, source: 'WORK_ITEMS' });
+    expect(viaWorkItems.created.map((entry) => entry.entityKey)).not.toContain(dormantKey);
+
+    const viaClientList = await service.run({ karbon, actor: admin, dryRun: true, source: 'CLIENT_LIST' });
+    expect(viaClientList.created.map((entry) => entry.entityKey)).toContain(dormantKey);
+
+    // And the narrower source says it is narrow, rather than reporting a count
+    // that reads like the whole client list.
+    expect(viaWorkItems.notes.join(' ')).toMatch(/only clients somebody has opened work for/i);
+  });
+
+  it('defaults to the client list, not to work items', async () => {
+    // Which source is the default decides whether a firm's first import is
+    // complete or quietly partial, so it is worth pinning rather than assuming.
+    const karbon = connectedKarbon();
+    await service.run({ karbon, actor: admin, dryRun: true });
+
+    expect(karbon.calls.some((call) => call.operation === 'listClients')).toBe(true);
+    expect(karbon.calls.some((call) => call.operation === 'searchWorkItems')).toBe(false);
   });
 
   it('says what differs, not merely how many do', async () => {

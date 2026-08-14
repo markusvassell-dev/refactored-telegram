@@ -3,6 +3,7 @@ import { KARBON_CAPABILITY_MATRIX } from './capabilities.js';
 import type {
   CapabilityReport,
   KarbonClient,
+  KarbonClientSummary,
   KarbonCommentRequest,
   KarbonDocument,
   KarbonDocumentLibrary,
@@ -80,6 +81,23 @@ export class MockKarbonProvider implements KarbonProvider {
   async getWorkItem(workItemKey: string): Promise<KarbonWorkItem | null> {
     this.record('getWorkItem', { workItemKey });
     return this.workItems.get(workItemKey) ?? null;
+  }
+
+  /**
+   * Every seeded client, whether or not it has a work item.
+   *
+   * That distinction is the entire point of the method, so a mock that ignored
+   * it would hide the defect it exists to fix.
+   */
+  async listClients(options: { limit?: number } = {}): Promise<KarbonClientSummary[]> {
+    this.record('listClients', options);
+    const all = [...this.clients.values()].map((client) => ({
+      entityKey: client.entityKey,
+      entityType: client.entityType,
+      fullName: client.legalName,
+      contactType: 'Client',
+    }));
+    return options.limit === undefined ? all : all.slice(0, options.limit);
   }
 
   async searchWorkItems(query: KarbonWorkItemQuery): Promise<KarbonWorkItem[]> {
@@ -321,6 +339,15 @@ export class BlockedKarbonProvider implements KarbonProvider {
   async searchWorkItems(): Promise<KarbonWorkItem[]> {
     return [];
   }
+  /**
+   * Empty, and that emptiness is a refusal rather than an answer.
+   *
+   * The import refuses to run against a blocked or mock provider at all, so
+   * nothing here can be mistaken for "this firm has no clients".
+   */
+  async listClients(): Promise<KarbonClientSummary[]> {
+    return [];
+  }
   async listDocuments(): Promise<KarbonDocument[]> {
     return [];
   }
@@ -411,6 +438,11 @@ export class ReadOnlyKarbonProvider implements KarbonProvider {
   // ---- Reads: the firm's own data, unchanged by looking at it -------------
   getClient(entityKey: string): Promise<KarbonClient | null> {
     return this.inner.getClient(entityKey);
+  }
+
+  /** Reading who the firm's clients are changes nothing on the firm's side. */
+  listClients(options?: { limit?: number }): Promise<KarbonClientSummary[]> {
+    return this.inner.listClients(options);
   }
   getWorkItem(workItemKey: string): Promise<KarbonWorkItem | null> {
     return this.inner.getWorkItem(workItemKey);
