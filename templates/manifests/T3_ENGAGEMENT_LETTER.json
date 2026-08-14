@@ -4,7 +4,7 @@
   "templateVersion": 1,
   "sourceFileName": "T3 Trust Engagement Letter.docx",
   "sourceFileHash": "cfef8b783476fbc31089a8d6132ef4025f3214187af37be98ee257724851f639",
-  "normalizedFileHash": "3ce4169ce8beb3756947df267a33bc1292322fc99b3bcbe4a83e76ec1b9dbbdf",
+  "normalizedFileHash": "9eadf5e6a9d1638cb042d94e2ad01934e8bebc3daa43bf11b5b20feb24691bfa",
   "fields": [
     {
       "token": "trust.legal_name",
@@ -242,14 +242,28 @@
       "role": "AUTHORIZED_REPRESENTATIVE",
       "token": "signature.representative",
       "adobeFieldType": "SIGNATURE",
-      "draftPlaceholder": "________________________________",
+      "draftPlaceholder": "____________________________",
+      "required": true
+    },
+    {
+      "role": "AUTHORIZED_REPRESENTATIVE",
+      "token": "signature.representative_date",
+      "adobeFieldType": "DATE",
+      "draftPlaceholder": "____________________________",
       "required": true
     },
     {
       "role": "FIRM_SIGNER",
       "token": "signature.firm",
       "adobeFieldType": "SIGNATURE",
-      "draftPlaceholder": "________________________________",
+      "draftPlaceholder": "____________________________",
+      "required": false
+    },
+    {
+      "role": "FIRM_SIGNER",
+      "token": "signature.firm_date",
+      "adobeFieldType": "DATE",
+      "draftPlaceholder": "____________________________",
       "required": false
     }
   ],

@@ -523,31 +523,41 @@ describe('who each signature field belongs to', () => {
    * These assertions are the only thing standing between that change and a
    * countersigned letter that attributes signatures to the wrong people.
    */
-  it('refuses to send T1 joint, whose template is missing its signature tokens', async () => {
+  it('addresses T1 joint fields by the order the signers actually hold', async () => {
     const template = await loadTemplate('T1_JOINT_ENGAGEMENT_LETTER');
 
     const values: Record<string, string> = {};
     for (const field of template.manifest.fields) values[field.token] = 'Sample';
 
-    // The manifest declares signature.taxpayer1 / taxpayer2 / firm, and the
-    // normalised .docx contains none of them -- normalisation tokenised the
-    // names but never the signature lines. Substitution writes only where a
-    // token appears, so this rendered silently without a single signature field
-    // and Adobe would have accepted the agreement with nowhere to sign.
-    await expect(
-      renderDocx(template.docx, {
-        manifest: template.manifest,
-        values,
-        selections: {},
-        includedSections: [],
-        mode: 'FOR_SIGNATURE',
-        signers: [
-          { role: 'FIRM_SIGNER', signingOrder: 1 },
-          { role: 'TAXPAYER_1', signingOrder: 2 },
-          { role: 'TAXPAYER_2', signingOrder: 2 },
-        ],
-      }),
-    ).rejects.toThrow(/nowhere to sign/i);
+    const rendered = await renderDocx(template.docx, {
+      manifest: template.manifest,
+      values,
+      selections: {},
+      includedSections: [],
+      mode: 'FOR_SIGNATURE',
+      signers: [
+        { role: 'FIRM_SIGNER', signingOrder: 1 },
+        { role: 'TAXPAYER_1', signingOrder: 2 },
+        { role: 'TAXPAYER_2', signingOrder: 2 },
+      ],
+    });
+
+    const text = (await extractParagraphs(rendered.docx)).join('\n');
+
+    // The firm holds the earliest order, so it is Adobe's set 1.
+    expect(text).toContain('{{Sig_es_:signer1:signature}}');
+    expect(text).toContain('{{Dte_es_:signer1:date}}');
+
+    // Both taxpayers share order 2, so they share set 2. The manifest's old
+    // hardcoded literals put them at signer1 and signer2 with the firm at
+    // signer3 -- every field addressed to the wrong participant.
+    expect(text).toContain('{{Sig_es_:signer2:signature}}');
+    expect(text).toContain('{{Dte_es_:signer2:date}}');
+    expect(text).not.toContain('signer3');
+
+    // The email and telephone rules are left for the client to write on. The
+    // firm's decision is that a client fills nothing in Adobe.
+    expect(text).toContain('Email address');
   });
 
   it('refuses to render when a required signer is missing rather than leaving a blank', async () => {
