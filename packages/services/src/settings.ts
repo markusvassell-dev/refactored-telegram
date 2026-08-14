@@ -17,7 +17,6 @@ export const SETTING_KEYS = {
   priorYearFilenamePatterns: 'prior_year_filename_patterns',
   karbonStatusTriggers: 'karbon_status_triggers',
   karbonStatusMap: 'karbon_status_map',
-  entraRoleMapping: 'entra_role_mapping',
   productName: 'product_name',
   aiExtractionEnabled: 'ai_extraction_enabled',
   documentRetentionHours: 'document_retention_hours',
@@ -118,9 +117,5 @@ export class SettingsService {
   /** Application status -> Karbon work status. Unmapped statuses are skipped. */
   async karbonStatusMap(): Promise<Record<string, string>> {
     return this.getRaw<Record<string, string>>(SETTING_KEYS.karbonStatusMap, {});
-  }
-
-  async entraRoleMapping(): Promise<Record<string, Role[]>> {
-    return this.getRaw<Record<string, Role[]>>(SETTING_KEYS.entraRoleMapping, {});
   }
 }

@@ -1,7 +1,7 @@
 import { cookies } from 'next/headers';
 import { NextResponse } from 'next/server';
-import { EntraIdProvider, mapDirectoryRoles } from '@element/integrations';
-import { env, randomToken, unseal, type Role } from '@element/shared';
+import { EntraIdProvider } from '@element/integrations';
+import { env, randomToken, unseal } from '@element/shared';
 import { container } from '@/lib/container';
 import { createSession, requestContext } from '@/lib/session';
 import { ENTRA_FLOW_COOKIE, type EntraFlowState } from '@/lib/entra-flow';
@@ -16,9 +16,10 @@ export const dynamic = 'force-dynamic';
  * `state` must match, the flow must not have expired, and the id_token `nonce`
  * is verified inside the provider before any claim is trusted.
  *
- * Application roles come from the administrator-configured directory mapping.
- * An unmapped directory role grants nothing, so a new user without a mapping
- * signs in with no permissions rather than accidental ones.
+ * Signing in proves who somebody is; it grants them nothing. Roles are assigned
+ * on the Users page by an administrator, so a new person arrives with no
+ * permissions rather than accidental ones, and `BOOTSTRAP_ADMIN_EMAILS` exists
+ * to break the circle for the very first administrator.
  */
 export async function GET(request: Request): Promise<Response> {
   const configuration = env();
@@ -74,9 +75,6 @@ export async function GET(request: Request): Promise<Response> {
 
   store.delete(ENTRA_FLOW_COOKIE);
 
-  const roleMapping = await container.settings.entraRoleMapping();
-  const mappedRoles = mapDirectoryRoles(identity.directoryRoles, roleMapping);
-
   // Match on the directory object id first: an email address can change, an
   // object id does not.
   const existing =
@@ -120,27 +118,6 @@ export async function GET(request: Request): Promise<Response> {
     container.logger.warn('Granted ADMINISTRATOR from BOOTSTRAP_ADMIN_EMAILS', { userId: user.id });
   }
 
-  // Directory-mapped roles are applied on every sign-in, so a revocation in
-  // the directory takes effect here. Roles granted directly in this
-  // application are left alone.
-  if (mappedRoles.length > 0) {
-    for (const role of mappedRoles) {
-      await container.prisma.userRole.upsert({
-        where: { userId_role: { userId: user.id, role } },
-        create: { userId: user.id, role, grantedBy: 'entra-id' },
-        update: {},
-      });
-    }
-
-    await container.prisma.userRole.deleteMany({
-      where: {
-        userId: user.id,
-        grantedBy: 'entra-id',
-        role: { notIn: mappedRoles as Role[] },
-      },
-    });
-  }
-
   await createSession(user.id, randomToken(24));
 
   const context = await requestContext();
@@ -151,8 +128,6 @@ export async function GET(request: Request): Promise<Response> {
     userId: user.id,
     afterValue: {
       method: 'entra-id',
-      directoryRoleCount: identity.directoryRoles.length,
-      mappedRoles,
       isNewUser: !existing,
     },
     ipAddress: context.ipAddress,

@@ -231,7 +231,6 @@ async function seedSettings(): Promise<void> {
         'Karbon Work Item statuses that may trigger generation. Free-text comments are never used as a trigger.',
     },
     { key: 'karbon_status_map', value: {}, description: 'Application status to Karbon work status mapping.' },
-    { key: 'entra_role_mapping', value: {}, description: 'Entra group or app role to application role mapping.' },
     { key: 'product_name', value: 'Element Engagements', description: 'Displayed product name.' },
     { key: 'ai_extraction_enabled', value: false, description: 'AI-assisted extraction is opt-in.' },
     { key: 'document_retention_hours', value: 72, description: 'Retention period for temporary working copies.' },

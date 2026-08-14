@@ -1,5 +1,7 @@
 import Link from 'next/link';
+import { checkReadiness } from '@element/services';
 import { REVIEW_QUEUE_STATUSES } from '@element/workflows';
+import { can, env } from '@element/shared';
 import { container } from '@/lib/container';
 import { currentUser } from '@/lib/session';
 import { EmptyState, PageHeader, StatusBadge } from '@/components/shell';
@@ -175,9 +177,58 @@ export default async function DashboardPage() {
     good: 'border-emerald-300',
   };
 
+  // What this deployment still needs before it can produce a real letter.
+  //
+  // Only shown to somebody who can act on it — a preparer handed a list of
+  // settings screens they cannot open is noise, not information. And it renders
+  // nothing at all once everything passes: a permanent row of green ticks is
+  // furniture, and furniture stops being read.
+  const canConfigure = can(user, 'integration:manage') || can(user, 'system:manage_test_mode');
+
+  const readiness = canConfigure
+    ? await checkReadiness({
+        prisma,
+        providerDescription: (await container.providers()).description,
+        testMode: await container.testModeState(),
+        documentStorageDirectory: env().DOCUMENT_STORAGE_DIRECTORY,
+      })
+    : [];
+
   return (
     <>
       <PageHeader title="Dashboard" description={`Signed in as ${user.displayName}.`} />
+
+      {readiness.length > 0 ? (
+        <section aria-labelledby="readiness-heading" className="mb-8">
+          <h2 id="readiness-heading" className="mb-3 text-lg font-semibold text-slate-900">
+            Before this can be used
+          </h2>
+          <ul className="space-y-2">
+            {readiness.map((item) => (
+              <li key={item.key}>
+                <Link
+                  href={item.href}
+                  className={`block rounded-lg border-l-4 bg-white p-4 shadow-sm hover:shadow ${
+                    item.severity === 'BLOCKER' ? 'border-red-500' : 'border-amber-400'
+                  }`}
+                >
+                  <span className="flex items-baseline gap-2">
+                    <span className="text-sm font-semibold text-slate-900">{item.title}</span>
+                    <span
+                      className={`badge ${
+                        item.severity === 'BLOCKER' ? 'bg-red-100 text-red-800' : 'bg-amber-100 text-amber-900'
+                      }`}
+                    >
+                      {item.severity === 'BLOCKER' ? 'blocks use' : 'worth knowing'}
+                    </span>
+                  </span>
+                  <span className="mt-1 block text-sm text-slate-600">{item.detail}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
 
       <section aria-labelledby="widgets-heading">
         <h2 id="widgets-heading" className="sr-only">

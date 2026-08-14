@@ -17,7 +17,7 @@ import {
 import { factToken, type IntegrationProviderKey } from '@element/services';
 import type { FeeRuleLevel, ParticipantRole } from '@element/database';
 import { container } from '@/lib/container';
-import { assertCsrf, requirePermission, requireUser, requestContext } from '@/lib/session';
+import { assertCsrf, extendSession, requirePermission, requireUser, requestContext } from '@/lib/session';
 
 /**
  * Server actions.
@@ -43,6 +43,15 @@ type ActionOutcome = string | { message: string; blockers?: string[] };
 async function run(action: () => Promise<ActionOutcome>): Promise<ActionResult> {
   try {
     const outcome = await action();
+
+    // Doing something keeps you signed in. A Server Component cannot set a
+    // cookie, so page rendering cannot extend a session — this wrapper is the
+    // one place every mutation passes through, which makes it the place.
+    //
+    // After the action, not before: a session should not be extended by a
+    // request that turned out to be refused.
+    await extendSession();
+
     if (typeof outcome === 'string') return { ok: true, message: outcome };
     return { ok: true, message: outcome.message, ...(outcome.blockers?.length ? { blockers: outcome.blockers } : {}) };
   } catch (error) {
