@@ -4,7 +4,7 @@
   "templateVersion": 1,
   "sourceFileName": "T2 Engagement Letter.docx",
   "sourceFileHash": "01917c9e61eab58dfb8cb67c0376e42203fe99424da10187cddae8c1b8433870",
-  "normalizedFileHash": "4eaf53c868dd5bdef8be0cad90a1b87c1618f009fc9623e9b78f4b8bfad448cb",
+  "normalizedFileHash": "1c67da11aefee66f16d66b94922225754780994b405e7f131b87b1ad205357b2",
   "fields": [
     {
       "token": "corporation.legal_name",
@@ -454,9 +454,8 @@
     {
       "role": "AUTHORIZED_SIGNING_OFFICER",
       "token": "signature.officer_date",
-      "adobeTag": "{{Dte_es_:signer1:date}}",
+      "adobeFieldType": "AUTO_PLACED",
       "draftPlaceholder": "",
-      "signingOrder": 1,
       "required": true
     }
   ],

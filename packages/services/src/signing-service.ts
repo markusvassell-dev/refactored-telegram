@@ -13,7 +13,9 @@ import {
   type Logger,
   type Principal,
 } from '@element/shared';
+import { parseManifest, type TemplateManifest } from '@element/documents';
 import { evaluateSendGate, type GateResult } from '@element/workflows';
+import type { JobQueue } from './jobs/queue.js';
 import type { DocumentStore } from './storage.js';
 import type { WorkflowService } from './workflow-service.js';
 import type { NotificationService } from './notification-service.js';
@@ -36,6 +38,16 @@ export interface SigningServiceDeps {
   settings: SettingsService;
   logger: Logger;
   notifications: NotificationService;
+  /**
+   * Needed so a completed webhook can ask for the signed document.
+   *
+   * Without it `processWebhook` could apply a status and nothing else, which is
+   * how a signed letter used to stop dead: the poll was the only thing that
+   * enqueued the retrieval, and its query excludes agreements already COMPLETED.
+   * When the webhook arrived first — which it does — the poll then skipped that
+   * agreement forever.
+   */
+  queue: JobQueue;
 }
 
 export interface SendForSignatureInput {
@@ -52,6 +64,27 @@ export interface SendForSignatureInput {
 
 export class SigningService {
   constructor(private readonly deps: SigningServiceDeps) {}
+
+  /**
+   * The signature anchors of the template a version was rendered from.
+   *
+   * Returns null when the version predates template tracking, in which case the
+   * gate simply cannot say which roles the letter demands. That is a weaker
+   * check, not a false pass — `hasSignatureCopy` still blocks the send.
+   */
+  private async signatureManifest(
+    templateVersionId: string | null,
+  ): Promise<TemplateManifest | null> {
+    if (!templateVersionId) return null;
+
+    const templateVersion = await this.deps.prisma.templateVersion.findUnique({
+      where: { id: templateVersionId },
+      select: { manifest: true },
+    });
+    if (!templateVersion) return null;
+
+    return parseManifest(templateVersion.manifest);
+  }
 
   async evaluateSendGate(input: {
     engagementId: string;
@@ -81,6 +114,18 @@ export class SigningService {
 
     const report = (version.validationReport ?? { errorCount: 0 }) as { errorCount?: number };
 
+    // Which roles the letter itself demands a signature from, and whether the
+    // roster still matches the one the signature copy was rendered against.
+    const manifest = await this.signatureManifest(version.templateVersionId);
+    const requiredRoles = (manifest?.signatureAnchors ?? [])
+      .filter((anchor) => anchor.required)
+      .map((anchor) => anchor.role);
+
+    const heldRoles = new Set(participants.map((participant) => participant.role));
+    const snapshot = (version.renderedFieldValues ?? {}) as {
+      signers?: { role: string; signingOrder: number }[];
+    };
+
     return evaluateSendGate({
       status: engagement.status,
       hasApprovedPdf: version.status === 'APPROVED' && Boolean(version.generatedPdfReference),
@@ -93,6 +138,9 @@ export class SigningService {
       })),
       signingOrderConfirmed: participants.length > 0 && participants.every((p) => p.contactConfirmed),
       validationErrorCount: report.errorCount ?? 0,
+      hasSignatureCopy: Boolean(version.signaturePdfReference),
+      unfilledSignatureRoles: requiredRoles.filter((role) => !heldRoles.has(role)),
+      signersChangedSinceGeneration: rosterChanged(snapshot.signers, participants),
       testMode: input.testMode,
       productionSendingEnabled: input.productionSendingEnabled,
       sandboxConfigured: input.sandboxConfigured,
@@ -143,14 +191,6 @@ export class SigningService {
       return { agreementId: existing.agreementId, deduplicated: true };
     }
 
-    await this.deps.workflow.transition({
-      engagementId: input.engagementId,
-      to: 'SENDING_FOR_SIGNATURE',
-      userId: input.actor.id,
-      reason: 'Creating Adobe Sign agreement',
-      correlationId: input.correlationId,
-    });
-
     const title = buildFileName({
       year: engagement.taxYear,
       documentType: version.documentType,
@@ -159,9 +199,69 @@ export class SigningService {
       testMode: input.testMode,
     }).replace(/\.pdf$/, '');
 
-    const pdf = await this.deps.store.get(version.generatedPdfReference as string);
+    // Ask Adobe whether this key already produced an agreement.
+    //
+    // The local check above only sees what this database recorded. If the row
+    // was lost, or the process died between Adobe creating the agreement and the
+    // id being written back, the local check finds nothing and a retry sends the
+    // client a second copy of the same engagement letter. Adobe is the authority
+    // on what Adobe holds.
+    //
+    // `findByExternalId` throws rather than returning null when the lookup
+    // itself fails, so "could not check" stops the send instead of being read as
+    // "none exists".
+    const remote = await input.adobeSign.findByExternalId(idempotencyKey);
+    if (remote) {
+      this.deps.logger.warn('Adobe already holds an agreement for this key; adopting it rather than creating another', {
+        engagementId: input.engagementId,
+        agreementId: remote,
+      });
 
-    const engagementLeadEmail = engagement.participants.find((p) => p.role === 'ENGAGEMENT_LEAD')?.email;
+      await this.deps.prisma.adobeAgreement.upsert({
+        where: { idempotencyKey },
+        create: {
+          idempotencyKey,
+          engagementId: input.engagementId,
+          documentVersionId: input.documentVersionId,
+          agreementId: remote,
+          title,
+          status: 'OUT_FOR_SIGNATURE',
+          isTestMode: input.testMode,
+        },
+        update: { agreementId: remote },
+      });
+
+      return { agreementId: remote, deduplicated: true };
+    }
+
+    await this.deps.workflow.transition({
+      engagementId: input.engagementId,
+      to: 'SENDING_FOR_SIGNATURE',
+      userId: input.actor.id,
+      reason: 'Creating Adobe Sign agreement',
+      correlationId: input.correlationId,
+    });
+
+    // The signature copy, not the draft.
+    //
+    // This used to read `generatedPdfReference` — the human-readable draft, whose
+    // signature lines are rows of underscores. Adobe accepts such a document
+    // without complaint and creates an agreement with no signature fields in it,
+    // so the request went out looking correct and could never be signed. The
+    // gate above refuses when this copy is missing, so by here it exists.
+    const pdf = await this.deps.store.get(version.signaturePdfReference as string);
+
+    // Queried separately, because `engagement.participants` above is filtered to
+    // `isSigner: true` and an engagement lead is a CC recipient, not a signer.
+    // Looking for one in the filtered list always found nothing, so the lead was
+    // never copied on a single signature request — a silent omission, since an
+    // empty CC list is indistinguishable from one nobody asked for.
+    const lead = await this.deps.prisma.engagementParticipant.findFirst({
+      where: { engagementId: input.engagementId, role: { in: ['ENGAGEMENT_LEAD', 'ENGAGEMENT_PARTNER'] } },
+      orderBy: { role: 'asc' },
+      select: { email: true },
+    });
+    const engagementLeadEmail = lead?.email ?? undefined;
 
     // Reserve the row before calling Adobe so a crash mid-call cannot lose the
     // key and allow a duplicate on the next attempt.
@@ -470,6 +570,27 @@ export class SigningService {
 
     await this.applyAgreementState(event.agreementId, state, input.correlationId);
 
+    // Signed means go and fetch it.
+    //
+    // This used to end at `applyAgreementState`, so the engagement reached
+    // SIGNED and stopped. The poll was the only thing that ever enqueued the
+    // retrieval, and its query covers CREATED / OUT_FOR_SIGNATURE /
+    // PARTIALLY_SIGNED only — so once the webhook had moved the agreement to
+    // COMPLETED, the poll skipped it forever. The signed PDF was never
+    // downloaded and never reached Karbon, while the staff notification said it
+    // "is being filed into Karbon".
+    //
+    // The idempotency key is the same one the poll uses, so whichever arrives
+    // first wins and the other is deduplicated rather than fetching twice.
+    if (state.status === 'COMPLETED' || state.status === 'SIGNED') {
+      await this.deps.queue.enqueue({
+        jobType: 'RETRIEVE_SIGNED_DOCUMENTS',
+        idempotencyKey: `signed_${event.agreementId}`,
+        payload: { agreementId: event.agreementId },
+        correlationId: input.correlationId,
+      });
+    }
+
     await this.deps.prisma.adobeEvent.update({
       where: { providerEventId: event.eventId },
       data: { processedAt: new Date() },
@@ -493,6 +614,9 @@ export class SigningService {
       include: {
         engagement: { include: { client: true, karbonWorkItem: true } },
         documentVersion: true,
+        // Who signed and when — the note below reports it, so a reader of the
+        // Karbon work item can see it without opening Adobe.
+        signers: { orderBy: { signingOrder: 'asc' } },
       },
     });
 
@@ -563,13 +687,45 @@ export class SigningService {
     if (signedUpload.message) messages.push(signedUpload.message);
     if (certificateUpload.message) messages.push(certificateUpload.message);
 
+    // A mock adapter answers SUCCEEDED with an id from an in-memory map that
+    // dies with the process. Recording it would mark the signed letter as filed
+    // in Karbon when nothing was filed anywhere — and because the poll's safety
+    // net keys on this column being null, a fabricated id would also switch off
+    // the only thing that would ever retry it. Same rule as
+    // `external-signature-service.ts:371`.
+    const reallyFiled = !input.karbon.isMock;
+
+    if (!reallyFiled) {
+      messages.push(
+        'Karbon is not connected, so these were filed to the mock adapter only. The signed letter still exists nowhere but this application, and filing will be retried once Karbon is connected.',
+      );
+    }
+
+    // Keep the bytes regardless of what Karbon did with them.
+    //
+    // Previously they were downloaded, hashed, uploaded and dropped. If the
+    // upload failed, or the engagement had no linked work item, the one document
+    // proving a client accepted a fee existed nowhere at all.
+    const scope = record.engagementId.replace(/-/g, '');
+    const [storedSigned, storedCertificate] = await Promise.all([
+      this.deps.store.put({ content: signedPdf, fileName: signedName, mimeType: 'application/pdf', scope }),
+      this.deps.store.put({
+        content: certificate,
+        fileName: certificateName,
+        mimeType: 'application/pdf',
+        scope,
+      }),
+    ]);
+
     await this.deps.prisma.adobeAgreement.update({
       where: { id: record.id },
       data: {
-        signedPdfKarbonDocumentId: signedUpload.objectId ?? null,
-        certificateKarbonDocumentId: certificateUpload.objectId ?? null,
+        signedPdfKarbonDocumentId: reallyFiled ? (signedUpload.objectId ?? null) : null,
+        certificateKarbonDocumentId: reallyFiled ? (certificateUpload.objectId ?? null) : null,
         signedPdfHash: sha256Hex(signedPdf),
         certificateHash: sha256Hex(certificate),
+        signedPdfReference: storedSigned.reference,
+        certificateReference: storedCertificate.reference,
       },
     });
 
@@ -606,6 +762,50 @@ export class SigningService {
       data: { status: 'SIGNED' },
     });
 
+    // A note saying who signed, so the work item reads as a record on its own.
+    //
+    // Two PDFs appearing on a work item say a signature happened somewhere; they
+    // do not say who signed or when without opening them. Posted after the
+    // uploads so it cannot claim a filing that did not occur.
+    if (reallyFiled) {
+      const signedList = record.signers
+        .filter((signer) => signer.signedAt)
+        .map(
+          (signer) =>
+            `${signer.name} (${signer.email}) on ${signer.signedAt?.toISOString().slice(0, 10) ?? 'an unrecorded date'}`,
+        );
+
+      const note = [
+        `Engagement letter signed via Adobe Acrobat Sign${record.isTestMode ? ' (TEST MODE — not a real client signature)' : ''}.`,
+        signedList.length > 0 ? `Signed by: ${signedList.join('; ')}.` : 'No signer completion dates were recorded.',
+        `The signed letter and Adobe audit report are filed on this work item.`,
+      ].join(' ');
+
+      const comment = await input.karbon.addComment({
+        workItemKey,
+        body: note,
+        idempotencyKey: `signed_note_${record.id}`,
+      });
+
+      if (comment.message) messages.push(comment.message);
+
+      await this.deps.prisma.karbonActivity
+        .create({
+          data: {
+            engagementId: record.engagementId,
+            documentVersionId: record.documentVersionId,
+            karbonWorkItemKey: workItemKey,
+            type: 'COMMENT',
+            outcome: comment.outcome === 'SUCCEEDED' ? 'SUCCEEDED' : 'FAILED',
+            idempotencyKey: `signed_note_${record.id}`,
+            karbonObjectId: comment.objectId ?? null,
+            requestSummary: { kind: 'SIGNED_NOTE' } as never,
+            correlationId: input.correlationId,
+          },
+        })
+        .catch(() => undefined);
+    }
+
     await this.deps.audit.record({
       eventType: 'KARBON_UPLOAD',
       objectType: 'AdobeAgreement',
@@ -616,6 +816,7 @@ export class SigningService {
         signed: signedUpload.outcome,
         certificate: certificateUpload.outcome,
         signedHash: sha256Hex(signedPdf),
+        filedToKarbon: reallyFiled,
       },
     });
 
@@ -646,4 +847,32 @@ function mapAgreementStatusToEngagementStatus(
     default:
       return null;
   }
+}
+
+/**
+ * Whether the signer roster differs from the one a document was rendered against.
+ *
+ * Only role and signing order matter here: those are what the Adobe tags encode,
+ * because a tag names a participant *set* by position rather than a person. A
+ * corrected spelling or a new email address does not move anybody's field and so
+ * is not this function's business — the letter body carries those, and changing
+ * them already supersedes the version through the ordinary generation path.
+ *
+ * A missing snapshot counts as changed. Versions generated before the roster was
+ * recorded cannot prove their tags match the current signers, and assuming they
+ * do is exactly the silent misrouting this check exists to prevent.
+ */
+function rosterChanged(
+  snapshot: { role: string; signingOrder: number }[] | undefined,
+  current: readonly { role: string; signingOrder: number }[],
+): boolean {
+  if (!snapshot) return true;
+
+  const key = (roster: readonly { role: string; signingOrder: number }[]): string =>
+    roster
+      .map((signer) => `${signer.role}:${signer.signingOrder}`)
+      .sort()
+      .join('|');
+
+  return key(snapshot) !== key(current);
 }

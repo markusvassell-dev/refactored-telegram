@@ -159,14 +159,24 @@ export class MockAdobeSignProvider implements AdobeSignProvider {
     return a.length === b.length && timingSafeEqual(a, b);
   }
 
+  /**
+   * Deliberately identical to `AdobeSignRestClient.parseWebhook`.
+   *
+   * A mock that parses a shape the real client does not is a test that proves
+   * nothing about production. If the real parser changes, this must change with
+   * it — the point is that a test exercising this exercises that.
+   */
   parseWebhook(rawBody: string): AdobeWebhookEvent | null {
     try {
       const payload = JSON.parse(rawBody) as Record<string, unknown>;
+      const agreement = payload.agreement as Record<string, unknown> | undefined;
+      const participant = payload.participantUser as Record<string, unknown> | undefined;
+
       return {
-        eventId: String(payload.eventId ?? ''),
+        eventId: String(payload.webhookNotificationId ?? payload.eventId ?? ''),
         eventType: String(payload.event ?? ''),
-        agreementId: payload.agreementId ? String(payload.agreementId) : null,
-        participantEmail: payload.participantEmail ? String(payload.participantEmail) : null,
+        agreementId: agreement ? String(agreement.id ?? '') : null,
+        participantEmail: participant ? String(participant.email ?? '') : null,
         occurredAt: String(payload.eventDate ?? new Date().toISOString()),
         raw: payload,
       };
@@ -248,11 +258,21 @@ export class MockAdobeSignProvider implements AdobeSignProvider {
     eventId?: string,
   ): { body: string; headers: Record<string, string> } {
     this.eventCounter += 1;
+
+    // Adobe's real payload shape: the notification id is `webhookNotificationId`
+    // and both the agreement and the participant are nested objects.
+    //
+    // This used to emit a flat `{ eventId, agreementId, participantEmail }`,
+    // which only the mock's own parser understood. Every webhook test therefore
+    // exercised the mock parsing the mock, and the parser that runs in
+    // production had nothing pointed at it — a payload shape mismatch would have
+    // surfaced as agreementId: null on the first real delivery, and an event
+    // carrying no agreement id is discarded.
     const body = JSON.stringify({
-      eventId: eventId ?? `mock-event-${this.eventCounter}`,
+      webhookNotificationId: eventId ?? `mock-event-${this.eventCounter}`,
       event: eventType,
-      agreementId,
-      participantEmail: participantEmail ?? null,
+      agreement: { id: agreementId },
+      participantUser: participantEmail ? { email: participantEmail } : undefined,
       eventDate: new Date().toISOString(),
     });
 
@@ -280,8 +300,24 @@ export class MockAdobeSignProvider implements AdobeSignProvider {
     };
   }
 
+  async findByExternalId(idempotencyKey: string): Promise<string | null> {
+    return this.byIdempotencyKey.get(idempotencyKey) ?? null;
+  }
+
   agreementCount(): number {
     return this.agreements.size;
+  }
+
+  /**
+   * SHA-256 of the PDF an agreement was created from.
+   *
+   * Exists so a test can prove *which* rendered copy was uploaded. The draft and
+   * the signature copy are both valid PDFs of the same letter, so a test that
+   * only checks an agreement was created passes equally well when the untagged
+   * draft is sent — which is exactly the defect that shipped.
+   */
+  uploadedPdfHash(agreementId: string): string | null {
+    return this.agreements.get(agreementId)?.pdfHash ?? null;
   }
 }
 
@@ -298,6 +334,11 @@ export class BlockedAdobeSignProvider implements AdobeSignProvider {
   constructor(private readonly reason: string) {}
 
   async createAgreement(): Promise<CreateAgreementResult> {
+    throw new PreconditionError(this.reason);
+  }
+  async findByExternalId(): Promise<string | null> {
+    // Not "no agreement exists" — this adapter cannot look. Answering null would
+    // tell the caller it is safe to create one.
     throw new PreconditionError(this.reason);
   }
   async getAgreement(): Promise<AgreementState | null> {

@@ -626,38 +626,6 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
     },
 
     // ---------------------------------------------------------- Adobe Sign
-    CREATE_ADOBE_AGREEMENT: async ({ job }) => {
-      const engagementId = requireString(job.payload, 'engagementId');
-      const documentVersionId = requireString(job.payload, 'documentVersionId');
-      const actorId = requireString(job.payload, 'actorId');
-
-      const { adobeSign } = await context.providers();
-      const state = await context.testMode();
-
-      const actor = await context.prisma.user.findUniqueOrThrow({
-        where: { id: actorId },
-        include: { userRoles: true },
-      });
-
-      const result = await context.signing.sendForSignature({
-        engagementId,
-        documentVersionId,
-        actor: {
-          id: actor.id,
-          email: actor.email,
-          displayName: actor.displayName,
-          roles: actor.userRoles.map((row) => row.role),
-        },
-        adobeSign,
-        testMode: state.testMode,
-        productionSendingEnabled: state.productionSendingEnabled,
-        sandboxConfigured: adobeSign.isMock === false || adobeSign.name.includes('mock'),
-        correlationId: job.correlationId,
-      });
-
-      return { ...result };
-    },
-
     SEND_NOTIFICATION_EMAILS: async () => {
       // Delivery is separate from raising the notice: a signature must never
       // fail because a mail server was briefly unreachable, so the notice is
@@ -682,8 +650,23 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
     SYNC_ADOBE_STATUS: async ({ job }) => {
       const { adobeSign } = await context.providers();
 
+      // Agreements still in flight, plus any that finished without their signed
+      // document reaching Karbon.
+      //
+      // The second half is the safety net. A webhook that never arrives — or
+      // arrives while the worker is down — used to leave an agreement COMPLETED
+      // with nothing filed, and this query could not see it again because
+      // COMPLETED was not in the list. The engagement then sat finished-but-empty
+      // with no path back. Re-enqueueing is free when the work is already done:
+      // the idempotency key deduplicates it.
       const live = await context.prisma.adobeAgreement.findMany({
-        where: { status: { in: ['CREATED', 'OUT_FOR_SIGNATURE', 'PARTIALLY_SIGNED'] }, agreementId: { not: null } },
+        where: {
+          agreementId: { not: null },
+          OR: [
+            { status: { in: ['CREATED', 'OUT_FOR_SIGNATURE', 'PARTIALLY_SIGNED'] } },
+            { status: { in: ['COMPLETED', 'SIGNED'] }, signedPdfKarbonDocumentId: null },
+          ],
+        },
         select: { agreementId: true },
       });
 

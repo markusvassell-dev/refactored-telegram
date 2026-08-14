@@ -222,13 +222,33 @@ export class AdobeSignRestClient implements AdobeSignProvider {
     }
 
     // 2. Build participant sets. Signers sharing an order sign in parallel.
+    //
+    // Each member carries the identity check the request asked for. It used to
+    // carry none: `authenticationMethod` was declared on the request, passed by
+    // the caller, and never read here — so every agreement went out with
+    // whatever the Adobe account's default happened to be, and a firm that
+    // configured KBA would have got email verification without being told.
+    const authentication =
+      request.authenticationMethod === 'EMAIL'
+        ? undefined // Adobe's own default; sending NONE would disable the check.
+        : { authenticationMethod: request.authenticationMethod };
+
+    if (!request.allowDelegation) {
+      // Said out loud on every send rather than assumed. See the note on
+      // `allowDelegation` in types.ts: the caller has asked for something this
+      // client cannot yet express, and silence would read as compliance.
+      this.logger.warn('Delegation was requested off, but this client cannot yet tell Adobe that', {
+        idempotencyKey: request.idempotencyKey,
+      });
+    }
+
     const orders = [...new Set(request.signers.map((signer) => signer.order))].sort((a, b) => a - b);
     const participantSets = orders.map((order, index) => ({
       order: index + 1,
       role: 'SIGNER',
       memberInfos: request.signers
         .filter((signer) => signer.order === order)
-        .map((signer) => ({ email: signer.email, name: signer.name })),
+        .map((signer) => ({ email: signer.email, name: signer.name, ...authentication })),
     }));
 
     const created = await this.request<{ id?: string }>('/agreements', {

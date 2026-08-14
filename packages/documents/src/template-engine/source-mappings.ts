@@ -228,9 +228,20 @@ export const T2_ENGAGEMENT_LETTER_SPEC: TemplateSpec = {
     {
       role: 'AUTHORIZED_SIGNING_OFFICER',
       token: 'signature.officer_date',
-      adobeTag: '{{Dte_es_:signer1:date}}',
+      // T2 is sent with no Adobe tags at all, so Adobe places both the signature
+      // block and its date itself.
+      //
+      // The T2 template has no signature line to anchor to — only this date —
+      // and the firm chose not to edit the approved wording to add one. That
+      // leaves a choice: send a document carrying a date tag but no signature
+      // tag, or send one carrying nothing. Adobe's documented behaviour for an
+      // untagged document is to auto-place a signature field per participant;
+      // its behaviour when *some* fields are tagged is that tagging takes over
+      // placement, which would give the officer a date field and no way to sign.
+      // An agreement nobody can sign is worse than a blank date line, so until a
+      // live send proves otherwise this stays AUTO_PLACED.
+      adobeFieldType: 'AUTO_PLACED',
       draftPlaceholder: '',
-      signingOrder: 1,
       required: true,
     },
   ],
@@ -273,6 +284,71 @@ export const T2_ENGAGEMENT_LETTER_SPEC: TemplateSpec = {
 const T1_JOINT_HEADER_TABLE = 'Prepared by';
 const T1_JOINT_SIGNATURE_TABLE = 'Electronic signature';
 
+/**
+ * The signature rules in the T1 joint acceptance tables.
+ *
+ * `SIGNATURE_RULE` is the exact underscore run the approved template uses; the
+ * firm block below uses a shorter one. Both are matched literally, so a template
+ * whose rules change length reports the placeholder as unlocatable rather than
+ * silently putting a signature field somewhere else.
+ */
+const SIGNATURE_RULE = '________________________________';
+
+const T1_JOINT_ACCEPTANCE_TABLE = 'Electronic signature';
+const T1_JOINT_FIRM_TABLE = 'Authorized signature';
+
+const T1_JOINT_SIGNATURE_MAPPINGS: PlaceholderMapping[] = [
+  // Taxpayer 1 — first cell of the acceptance table.
+  {
+    placeholder: SIGNATURE_RULE,
+    token: 'signature.taxpayer1',
+    scope: { kind: 'TABLE_CELL', tableContains: T1_JOINT_ACCEPTANCE_TABLE, rowIndex: 0, cellIndex: 0 },
+    afterLabel: 'Electronic signature',
+    isSignatureAnchor: true,
+  },
+  {
+    placeholder: SIGNATURE_RULE,
+    token: 'signature.taxpayer1_date',
+    scope: { kind: 'TABLE_CELL', tableContains: T1_JOINT_ACCEPTANCE_TABLE, rowIndex: 0, cellIndex: 0 },
+    afterLabel: 'Date signed',
+    isSignatureAnchor: true,
+  },
+
+  // Taxpayer 2 — second cell. "Both taxpayers must sign separately", so this is
+  // a distinct participant with its own fields, not a copy of the first.
+  {
+    placeholder: SIGNATURE_RULE,
+    token: 'signature.taxpayer2',
+    scope: { kind: 'TABLE_CELL', tableContains: T1_JOINT_ACCEPTANCE_TABLE, rowIndex: 0, cellIndex: 1 },
+    afterLabel: 'Electronic signature',
+    isSignatureAnchor: true,
+  },
+  {
+    placeholder: SIGNATURE_RULE,
+    token: 'signature.taxpayer2_date',
+    scope: { kind: 'TABLE_CELL', tableContains: T1_JOINT_ACCEPTANCE_TABLE, rowIndex: 0, cellIndex: 1 },
+    afterLabel: 'Date signed',
+    isSignatureAnchor: true,
+  },
+
+  // The firm, which signs first. Its rules live in a separate table below the
+  // client one, one per cell.
+  {
+    placeholder: SIGNATURE_RULE,
+    token: 'signature.firm',
+    scope: { kind: 'TABLE_CELL', tableContains: T1_JOINT_FIRM_TABLE, rowIndex: 0, cellIndex: 0 },
+    afterLabel: 'Authorized signature',
+    isSignatureAnchor: true,
+  },
+  {
+    placeholder: SIGNATURE_RULE,
+    token: 'signature.firm_date',
+    scope: { kind: 'TABLE_CELL', tableContains: T1_JOINT_FIRM_TABLE, rowIndex: 0, cellIndex: 1 },
+    afterLabel: 'Date',
+    isSignatureAnchor: true,
+  },
+];
+
 export const T1_JOINT_ENGAGEMENT_LETTER_SPEC: TemplateSpec = {
   documentType: 'T1_JOINT_ENGAGEMENT_LETTER',
   sourceFileName: 'T1 Joint Taxpayer Engagement Letter.docx',
@@ -293,6 +369,20 @@ export const T1_JOINT_ENGAGEMENT_LETTER_SPEC: TemplateSpec = {
       scope: { kind: 'PARAGRAPH', startsWith: '☐ As set out in a separate proposal' },
     },
     { placeholder: '[UPON RECEIPT / WITHIN __ DAYS]', token: 'pricing.payment_terms' },
+
+    // Signature lines.
+    //
+    // These are underscore rules, not bracketed placeholders, so normalisation
+    // never touched them and the template reached the manifest declaring three
+    // signature anchors whose tokens appeared nowhere in the document. Every
+    // joint letter would have gone to Adobe with no signature fields at all.
+    //
+    // Each acceptance cell holds four identical rules — signature, date signed,
+    // email, telephone — so `matchIndex` picks the one under each label. Email
+    // and telephone are deliberately left as rules: the letter asks the client
+    // to write them, and the firm's decision is that a client fills nothing in
+    // Adobe.
+    ...T1_JOINT_SIGNATURE_MAPPINGS,
   ],
   fields: [
     field('taxpayer1.full_legal_name', 'Taxpayer 1 full legal name', 'STRING', { required: true, displayGroup: 'CLIENT', displayOrder: 1 }),
@@ -326,9 +416,14 @@ export const T1_JOINT_ENGAGEMENT_LETTER_SPEC: TemplateSpec = {
     { code: 't1.fee_proposal', label: 'Separate proposal or pricing schedule', anchorText: 'As set out in a separate proposal or pricing schedule', defaultChecked: false, alwaysChecked: false },
   ],
   signatureAnchors: [
-    { role: 'TAXPAYER_1', token: 'signature.taxpayer1', adobeTag: '{{Sig_es_:signer1:signature}}', draftPlaceholder: '________________________________', signingOrder: 1, required: true },
-    { role: 'TAXPAYER_2', token: 'signature.taxpayer2', adobeTag: '{{Sig_es_:signer2:signature}}', draftPlaceholder: '________________________________', signingOrder: 1, required: true },
-    { role: 'FIRM_SIGNER', token: 'signature.firm', adobeTag: '{{Sig_es_:signer3:signature}}', draftPlaceholder: '________________________________', signingOrder: 2, required: false },
+    { role: 'TAXPAYER_1', token: 'signature.taxpayer1', adobeFieldType: 'SIGNATURE', draftPlaceholder: SIGNATURE_RULE, required: true },
+    { role: 'TAXPAYER_1', token: 'signature.taxpayer1_date', adobeFieldType: 'DATE', draftPlaceholder: SIGNATURE_RULE, required: true },
+    { role: 'TAXPAYER_2', token: 'signature.taxpayer2', adobeFieldType: 'SIGNATURE', draftPlaceholder: SIGNATURE_RULE, required: true },
+    { role: 'TAXPAYER_2', token: 'signature.taxpayer2_date', adobeFieldType: 'DATE', draftPlaceholder: SIGNATURE_RULE, required: true },
+    // The firm signs first, so this is never optional in practice; kept
+    // not-required so a letter can still be drafted before a firm signer is set.
+    { role: 'FIRM_SIGNER', token: 'signature.firm', adobeFieldType: 'SIGNATURE', draftPlaceholder: SIGNATURE_RULE, required: false },
+    { role: 'FIRM_SIGNER', token: 'signature.firm_date', adobeFieldType: 'DATE', draftPlaceholder: SIGNATURE_RULE, required: false },
   ],
   internalOnlySections: [],
   editableSections: [],
@@ -347,6 +442,54 @@ export const T1_JOINT_ENGAGEMENT_LETTER_SPEC: TemplateSpec = {
 // ===========================================================================
 // T3 TRUST ENGAGEMENT LETTER
 // ===========================================================================
+
+/**
+ * The signature rules in the T3 acceptance table.
+ *
+ * T3 uses a shorter rule than T1 joint and keeps the representative and the firm
+ * in two cells of a single table, with the firm's three rules stacked in one
+ * cell. Matched literally, so a template whose rules change length reports the
+ * placeholder as unlocatable rather than quietly moving a signature field.
+ */
+const T3_SIGNATURE_RULE = '____________________________';
+
+const T3_ACCEPTANCE_TABLE = 'Electronic signature';
+
+const T3_SIGNATURE_MAPPINGS: PlaceholderMapping[] = [
+  // The representative — first cell: signature, then date signed.
+  {
+    placeholder: T3_SIGNATURE_RULE,
+    token: 'signature.representative',
+    scope: { kind: 'TABLE_CELL', tableContains: T3_ACCEPTANCE_TABLE, rowIndex: 0, cellIndex: 0 },
+    afterLabel: 'Electronic signature',
+    isSignatureAnchor: true,
+  },
+  {
+    placeholder: T3_SIGNATURE_RULE,
+    token: 'signature.representative_date',
+    scope: { kind: 'TABLE_CELL', tableContains: T3_ACCEPTANCE_TABLE, rowIndex: 0, cellIndex: 0 },
+    afterLabel: 'Date signed',
+    isSignatureAnchor: true,
+  },
+
+  // The firm — second cell, three rules stacked: signature, date, name and
+  // title. Only the first two are Adobe fields; the name is printed text the
+  // firm already knows, left as a rule for now.
+  {
+    placeholder: T3_SIGNATURE_RULE,
+    token: 'signature.firm',
+    scope: { kind: 'TABLE_CELL', tableContains: T3_ACCEPTANCE_TABLE, rowIndex: 0, cellIndex: 1 },
+    afterLabel: 'Authorized signature',
+    isSignatureAnchor: true,
+  },
+  {
+    placeholder: T3_SIGNATURE_RULE,
+    token: 'signature.firm_date',
+    scope: { kind: 'TABLE_CELL', tableContains: T3_ACCEPTANCE_TABLE, rowIndex: 0, cellIndex: 1 },
+    afterLabel: 'Date',
+    isSignatureAnchor: true,
+  },
+];
 
 export const T3_ENGAGEMENT_LETTER_SPEC: TemplateSpec = {
   documentType: 'T3_ENGAGEMENT_LETTER',
@@ -370,6 +513,9 @@ export const T3_ENGAGEMENT_LETTER_SPEC: TemplateSpec = {
       scope: { kind: 'PARAGRAPH', startsWith: '☐ As set out in a separate proposal' },
     },
     { placeholder: '[UPON RECEIPT / WITHIN __ DAYS]', token: 'pricing.payment_terms' },
+
+    // Signature lines — see the T1 joint note; the same gap existed here.
+    ...T3_SIGNATURE_MAPPINGS,
   ],
   fields: [
     field('trust.legal_name', 'Full legal name of trust or estate', 'STRING', { required: true, displayGroup: 'CLIENT', displayOrder: 1 }),
@@ -409,8 +555,10 @@ export const T3_ENGAGEMENT_LETTER_SPEC: TemplateSpec = {
     { code: 't3.fee_proposal', label: 'Separate proposal or pricing schedule', anchorText: 'As set out in a separate proposal or pricing schedule', defaultChecked: false, alwaysChecked: false },
   ],
   signatureAnchors: [
-    { role: 'AUTHORIZED_REPRESENTATIVE', token: 'signature.representative', adobeTag: '{{Sig_es_:signer1:signature}}', draftPlaceholder: '________________________________', signingOrder: 1, required: true },
-    { role: 'FIRM_SIGNER', token: 'signature.firm', adobeTag: '{{Sig_es_:signer2:signature}}', draftPlaceholder: '________________________________', signingOrder: 2, required: false },
+    { role: 'AUTHORIZED_REPRESENTATIVE', token: 'signature.representative', adobeFieldType: 'SIGNATURE', draftPlaceholder: T3_SIGNATURE_RULE, required: true },
+    { role: 'AUTHORIZED_REPRESENTATIVE', token: 'signature.representative_date', adobeFieldType: 'DATE', draftPlaceholder: T3_SIGNATURE_RULE, required: true },
+    { role: 'FIRM_SIGNER', token: 'signature.firm', adobeFieldType: 'SIGNATURE', draftPlaceholder: T3_SIGNATURE_RULE, required: false },
+    { role: 'FIRM_SIGNER', token: 'signature.firm_date', adobeFieldType: 'DATE', draftPlaceholder: T3_SIGNATURE_RULE, required: false },
   ],
   internalOnlySections: [],
   editableSections: [],

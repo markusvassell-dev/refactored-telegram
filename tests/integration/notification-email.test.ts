@@ -134,6 +134,19 @@ describe('sending', () => {
     await notifications.notify({ userIds: [activeId], eventType: 'A', title: 'First', body: 'x' });
     await notifications.notify({ userIds: [activeId], eventType: 'B', title: 'Second', body: 'y' });
 
+    // Backdated explicitly, because two rows created back to back can share a
+    // millisecond on a fast machine. `drain` orders by createdAt and breaks ties
+    // on a random uuid, so with equal timestamps this asserted insertion luck
+    // rather than ordering — it passed for months locally and failed on the
+    // first CI run, which is the whole distinction the test claims to test.
+    //
+    // Equally-old notices may drain in any order; that is not a defect. What
+    // must hold is that an *older* one is never stranded behind a newer one.
+    await prisma.notification.updateMany({
+      where: { userId: activeId, title: 'First' },
+      data: { createdAt: new Date(Date.now() - 60_000) },
+    });
+
     const mailer = new MockEmailSender();
     await service(mailer).drain();
 

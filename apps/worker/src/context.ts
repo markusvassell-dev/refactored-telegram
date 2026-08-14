@@ -109,7 +109,7 @@ export function buildWorkerContext(): WorkerContext {
   const sourceDocuments = new SourceDocumentService({ prisma, audit, store });
   const approvals = new ApprovalService({ prisma, audit, workflow, settings });
   const userNotifications = new NotificationService({ prisma });
-  const signing = new SigningService({ notifications: userNotifications, prisma, audit, store, workflow, settings, logger });
+  const signing = new SigningService({ notifications: userNotifications, prisma, audit, store, workflow, settings, logger, queue });
   const externalSignature = new ExternalSignatureService({
     notifications: userNotifications,
     prisma,

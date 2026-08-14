@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { JOB_TYPES, type JobType } from '@element/services';
@@ -35,12 +35,6 @@ import { JOB_TYPES, type JobType } from '@element/services';
  * dead or waiting on work that has not been done — it is not "fine".
  */
 const UNREACHABLE_BY_DESIGN: Partial<Record<JobType, string>> = {
-  // Adobe Acrobat Sign is not built yet. The firm holds Acrobat Pro, which has
-  // no agreement API; signing goes through the external-signature bridge
-  // instead. This handler is the placeholder for when that changes.
-  CREATE_ADOBE_AGREEMENT:
-    'Adobe Sign integration is not built. Signatures are recorded through the external-signature bridge.',
-
   // Superseded: generation and cover-letter rendering both convert inline
   // (generation-service.ts, cover-letter-service.ts) because the review screen
   // needs the PDF in the same request that produced the DOCX.
@@ -83,6 +77,27 @@ async function enqueuedJobTypes(): Promise<Set<string>> {
   }
 
   return found;
+}
+
+/** Every .ts/.tsx file under the given directories, read once. */
+async function collectSources(directories: string[]): Promise<string[]> {
+  const files: string[] = [];
+
+  async function walk(directory: string): Promise<void> {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === 'generated') continue;
+        await walk(full);
+      } else if (/\.tsx?$/.test(entry.name)) {
+        files.push(full);
+      }
+    }
+  }
+
+  for (const directory of directories) await walk(directory);
+  return Promise.all(files.map((file) => readFile(file, 'utf8')));
 }
 
 /** Job types the worker actually registers a handler for. */
@@ -129,6 +144,46 @@ describe('background job reachability', () => {
     expect(stale, `These are now enqueued and must be removed from UNREACHABLE_BY_DESIGN: ${stale.join(', ')}`).toEqual(
       [],
     );
+  });
+
+  /**
+   * The same defect, one layer down: a *table* the app can read and cannot write.
+   *
+   * `EngagementParticipant` was written only by the demo seed. Every real
+   * engagement therefore had no signers, `evaluateSendGate` refuses an
+   * engagement with no signers, and an approved letter had nowhere to go by
+   * either route — Adobe could not be asked, and the manual bridge refused too,
+   * telling the reviewer the engagement "names nobody who must sign" while
+   * offering no way to name anybody. The Signers tab rendered the empty table
+   * faithfully, so nothing looked broken.
+   *
+   * A model the UI displays but nothing can create is a dead end wearing the
+   * costume of a feature.
+   */
+  it('can write every model whose rows the workspace displays', async () => {
+    const root = process.cwd();
+
+    // Models the engagement workspace reads and a person is expected to fill.
+    const displayed = ['engagementParticipant', 'sourceDocument', 'extractedField', 'reviewComment'];
+
+    const sources = await collectSources([
+      join(root, 'packages/services/src'),
+      join(root, 'apps/web/src/app'),
+      join(root, 'apps/worker/src'),
+    ]);
+
+    const unwritable = displayed.filter(
+      (model) =>
+        !sources.some((source) =>
+          new RegExp(`${model}\\.(create|createMany|upsert|update)`).test(source),
+        ),
+    );
+
+    expect(
+      unwritable,
+      'These models are shown in the UI but nothing outside the seed can create or update them:\n' +
+        unwritable.map((model) => `  - ${model}`).join('\n'),
+    ).toEqual([]);
   });
 
   it('starts the prior-year search from preparation, not only from a webhook', async () => {

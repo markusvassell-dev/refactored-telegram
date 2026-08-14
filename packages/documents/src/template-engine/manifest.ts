@@ -93,7 +93,32 @@ export const checkboxRuleSchema = z.object({
 });
 export type CheckboxRule = z.infer<typeof checkboxRuleSchema>;
 
-export const signatureAnchorSchema = z.object({
+/**
+ * Reads a manifest written before signature anchors carried `adobeFieldType`.
+ *
+ * A published `TemplateVersion` is immutable — the database enforces it, and the
+ * seed skips any version that already exists — so manifests stored under the old
+ * encoding cannot be rewritten in place, and every one of them would otherwise
+ * throw on read the moment this schema changed. That would take out every
+ * engagement already using a seeded template, not just new ones.
+ *
+ * The old encoding held a finished tag with the participant index baked in
+ * (`{{Sig_es_:signer1:signature}}`). Only the *kind* of field survives the
+ * upgrade; the index is deliberately discarded, because computing it from the
+ * real participants is the fix — an old version gets the correct index too.
+ *
+ * Removable once no stored manifest predates this change.
+ */
+function upgradeLegacySignatureAnchor(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object' || 'adobeFieldType' in raw) return raw;
+
+  const legacyTag = (raw as { adobeTag?: unknown }).adobeTag;
+  if (typeof legacyTag !== 'string') return raw;
+
+  return { ...raw, adobeFieldType: legacyTag.includes(':date') ? 'DATE' : 'SIGNATURE' };
+}
+
+export const signatureAnchorSchema = z.preprocess(upgradeLegacySignatureAnchor, z.object({
   /** Participant role that signs here. */
   role: z.enum([
     'TAXPAYER_1',
@@ -104,13 +129,27 @@ export const signatureAnchorSchema = z.object({
   ]),
   /** Token inserted into the normalised template at the signature position. */
   token: z.string().min(1),
-  /** Adobe Sign text tag written in place of the token when sending. */
-  adobeTag: z.string().min(1),
+  /**
+   * What Adobe should collect here.
+   *
+   * Deliberately not a literal tag. This field used to hold the finished string
+   * — `{{Sig_es_:signer1:signature}}` — with the participant index baked in, and
+   * an index written by hand at authoring time is a claim about signing order
+   * that nothing kept true. Moving the firm to order 1 silently reassigned every
+   * field to the wrong person: the client's signature block would have collected
+   * the firm's signature. The index is now computed from the engagement's actual
+   * participants at render time by `buildAdobeTag`, so it cannot disagree with
+   * the order Adobe is actually given.
+   *
+   * `AUTO_PLACED` emits no tag at all and leaves the draft placeholder standing,
+   * which tells Adobe to position its own field. T2 uses it — see the note on
+   * that spec.
+   */
+  adobeFieldType: z.enum(['SIGNATURE', 'DATE', 'AUTO_PLACED']),
   /** What is rendered instead for an unsigned draft or preview. */
   draftPlaceholder: z.string().default('________________________________'),
-  signingOrder: z.number().int().min(1).default(1),
   required: z.boolean().default(true),
-});
+}));
 export type SignatureAnchor = z.infer<typeof signatureAnchorSchema>;
 
 export const internalOnlySectionSchema = z.object({
@@ -210,4 +249,55 @@ export function requiredFieldTokens(
   }
 
   return [...tokens].sort();
+}
+
+/**
+ * The Adobe Sign text tag for one anchor, at a computed participant index.
+ *
+ * Adobe addresses fields by participant *set* — `signer1` is whoever occupies
+ * the first signing order, not a fixed person — so the index is a property of
+ * the engagement, never of the template. Callers pass the index resolved from
+ * the engagement's actual participants; see `resolveSignerIndices`.
+ *
+ * Returns `null` for `AUTO_PLACED`, meaning: write no tag, leave the draft
+ * placeholder, and let Adobe position its own field.
+ */
+export function buildAdobeTag(fieldType: SignatureAnchor['adobeFieldType'], signerIndex: number): string | null {
+  if (fieldType === 'AUTO_PLACED') return null;
+
+  if (!Number.isInteger(signerIndex) || signerIndex < 1) {
+    // A zero or fractional index would produce a tag Adobe silently ignores,
+    // and a silently ignored signature field is an unsigned agreement.
+    throw new Error(`A signer index must be a positive integer, got ${signerIndex}.`);
+  }
+
+  return fieldType === 'SIGNATURE'
+    ? `{{Sig_es_:signer${signerIndex}:signature}}`
+    : `{{Dte_es_:signer${signerIndex}:date}}`;
+}
+
+/**
+ * Maps each signing role to the Adobe participant-set index it occupies.
+ *
+ * Mirrors how `AdobeSignRestClient.createAgreement` builds participant sets: it
+ * groups participants by distinct `signingOrder`, ascending, and Adobe numbers
+ * those sets from 1. Deriving the index the same way here is what keeps the tags
+ * in the document and the sets in the request describing the same people.
+ *
+ * Roles absent from `participants` are absent from the result — the caller
+ * decides whether that is fatal, because it depends on whether the anchor is
+ * required.
+ */
+export function resolveSignerIndices(
+  participants: readonly { role: string; signingOrder: number }[],
+): Map<string, number> {
+  const orders = [...new Set(participants.map((participant) => participant.signingOrder))].sort((a, b) => a - b);
+  const indexByOrder = new Map(orders.map((order, position) => [order, position + 1]));
+
+  const result = new Map<string, number>();
+  for (const participant of participants) {
+    const index = indexByOrder.get(participant.signingOrder);
+    if (index !== undefined) result.set(participant.role, index);
+  }
+  return result;
 }

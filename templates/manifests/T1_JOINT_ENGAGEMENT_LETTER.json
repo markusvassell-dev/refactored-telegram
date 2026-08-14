@@ -4,7 +4,7 @@
   "templateVersion": 1,
   "sourceFileName": "T1 Joint Taxpayer Engagement Letter.docx",
   "sourceFileHash": "d4c93ea2c582526d5465d2cadac4d0fe7c7873d0057a0f5810c9cf8566e37010",
-  "normalizedFileHash": "f69d2dc112cec4546bf75ab9c1b63f908f972b0929b900dde4393cb2a675fb3c",
+  "normalizedFileHash": "f9e267d72b80eef60bca9a9269cb4b9eb19b01e3c31a119df42aa7d77bc0e3c6",
   "fields": [
     {
       "token": "taxpayer1.full_legal_name",
@@ -240,25 +240,43 @@
     {
       "role": "TAXPAYER_1",
       "token": "signature.taxpayer1",
-      "adobeTag": "{{Sig_es_:signer1:signature}}",
+      "adobeFieldType": "SIGNATURE",
       "draftPlaceholder": "________________________________",
-      "signingOrder": 1,
+      "required": true
+    },
+    {
+      "role": "TAXPAYER_1",
+      "token": "signature.taxpayer1_date",
+      "adobeFieldType": "DATE",
+      "draftPlaceholder": "________________________________",
       "required": true
     },
     {
       "role": "TAXPAYER_2",
       "token": "signature.taxpayer2",
-      "adobeTag": "{{Sig_es_:signer2:signature}}",
+      "adobeFieldType": "SIGNATURE",
       "draftPlaceholder": "________________________________",
-      "signingOrder": 1,
+      "required": true
+    },
+    {
+      "role": "TAXPAYER_2",
+      "token": "signature.taxpayer2_date",
+      "adobeFieldType": "DATE",
+      "draftPlaceholder": "________________________________",
       "required": true
     },
     {
       "role": "FIRM_SIGNER",
       "token": "signature.firm",
-      "adobeTag": "{{Sig_es_:signer3:signature}}",
+      "adobeFieldType": "SIGNATURE",
       "draftPlaceholder": "________________________________",
-      "signingOrder": 2,
+      "required": false
+    },
+    {
+      "role": "FIRM_SIGNER",
+      "token": "signature.firm_date",
+      "adobeFieldType": "DATE",
+      "draftPlaceholder": "________________________________",
       "required": false
     }
   ],

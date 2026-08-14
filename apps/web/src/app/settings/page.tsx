@@ -3,7 +3,7 @@ import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
 import { PageHeader } from '@/components/shell';
 import { ActionForm } from '@/components/action-form';
-import { setProductionSending, setTestMode } from '@/app/actions';
+import { setFirmSigner, setProductionSending, setTestMode } from '@/app/actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,7 +12,7 @@ export default async function SettingsPage() {
   const csrfToken = (await sessionCsrfToken()) ?? '';
   const configuration = env();
 
-  const [state, settings, storage, unfiledSignatures] = await Promise.all([
+  const [state, settings, storage, unfiledSignatures, activeUsers] = await Promise.all([
     container.testModeState(),
     container.prisma.systemSetting.findMany({ orderBy: { key: 'asc' } }),
     // The deploy log said this too, once, and then scrolled away. Somebody
@@ -22,7 +22,16 @@ export default async function SettingsPage() {
     // A warning that can count them is one somebody acts on; "documents may be
     // lost" is one they read past.
     container.prisma.externalSignature.count({ where: { karbonDocumentId: null } }),
+    // Candidates for the firm signer, and whoever currently holds it.
+    container.prisma.user.findMany({
+      where: { isActive: true },
+      orderBy: { displayName: 'asc' },
+      select: { id: true, displayName: true, email: true },
+    }),
   ]);
+
+  const firmSignerId = settings.find((setting) => setting.key === 'firm_signer_user_id')?.value;
+  const currentFirmSigner = typeof firmSignerId === 'string' ? firmSignerId : '';
 
   const isAdministrator = user.roles.includes('ADMINISTRATOR');
 
@@ -117,6 +126,54 @@ export default async function SettingsPage() {
             </div>
           ) : (
             <p className="text-sm text-slate-500">Only an administrator can change these.</p>
+          )}
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="card-header">
+          <h2 className="text-base font-semibold">Firm signer</h2>
+        </div>
+        <div className="card-body space-y-3">
+          <p className="text-sm text-slate-600">
+            Who signs on the firm&rsquo;s behalf. The firm signs first, so the letter a client receives has already been
+            countersigned. Preparing an engagement proposes this person; the Signers tab can override it for one
+            engagement without changing the default.
+          </p>
+
+          {currentFirmSigner ? null : (
+            <p className="rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+              No firm signer is set, so preparation cannot propose one and nothing can be sent for signature until a
+              signer is named on each engagement by hand.
+            </p>
+          )}
+
+          {isAdministrator ? (
+            <ActionForm action={setFirmSigner} csrfToken={csrfToken} submitLabel="Save firm signer">
+              <label className="label" htmlFor="firm-signer">
+                Default firm signer
+              </label>
+              <select id="firm-signer" name="userId" className="input" defaultValue={currentFirmSigner}>
+                <option value="">Nobody &mdash; name a signer on each engagement</option>
+                {activeUsers.map((candidate) => (
+                  <option key={candidate.id} value={candidate.id}>
+                    {candidate.displayName} ({candidate.email})
+                  </option>
+                ))}
+              </select>
+              <p className="field-note">
+                Changing this affects engagements prepared from now on. Ones already prepared keep the signer they have,
+                because a reviewer may already have confirmed it.
+              </p>
+            </ActionForm>
+          ) : (
+            <p className="text-sm text-slate-600">
+              {currentFirmSigner
+                ? activeUsers.find((candidate) => candidate.id === currentFirmSigner)?.displayName ??
+                  'A user who no longer exists.'
+                : 'Not set.'}{' '}
+              Only an administrator can change this.
+            </p>
           )}
         </div>
       </section>

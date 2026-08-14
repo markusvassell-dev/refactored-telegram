@@ -736,6 +736,12 @@ model DocumentVersion {
   generatedPdfReference  String?
   docxHash               String?
   pdfHash                String?
+  /// The copy carrying Adobe signature tags, rendered from the same values in
+  /// the same operation as the draft above. Two renders exist because a person
+  /// approves a readable document and Adobe needs a tagged one; rendering the
+  /// tagged copy later would send bytes nobody approved.
+  signaturePdfReference  String?
+  signaturePdfHash       String?
   pageCount              Int?
   karbonDocumentId       String?
   karbonPdfDocumentId    String?
@@ -1141,6 +1147,13 @@ model AdobeAgreement {
   certificateKarbonDocumentId String?
   signedPdfHash               String?
   certificateHash             String?
+  /// Where the signed PDF and audit report are held by this application.
+  /// Kept because the Karbon upload can fail, or the work item can be missing,
+  /// and until now the bytes were downloaded, hashed, uploaded and dropped --
+  /// so on either of those paths the one document proving a client agreed to a
+  /// fee existed nowhere at all.
+  signedPdfReference          String?
+  certificateReference        String?
   createdAt                   DateTime             @default(now())
   updatedAt                   DateTime             @updatedAt
 

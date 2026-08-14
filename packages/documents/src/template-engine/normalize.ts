@@ -62,6 +62,23 @@ export interface PlaceholderMapping {
    * Sign text tag when the document is sent for signature.
    */
   isSignatureAnchor?: boolean;
+  /**
+   * Rewrite only the first occurrence that follows this text.
+   * Omit to rewrite every occurrence.
+   *
+   * Needed because a signature block is a stack of identical underscore rules —
+   * signature, date signed, email, telephone — distinguished only by the label
+   * above them. Without this, mapping the rule for a signature rewrites the
+   * three below it as well, and one token cannot mean four things.
+   *
+   * Deliberately a label rather than an ordinal. Mappings apply in sequence, each
+   * seeing the previous one's output, so "the second rule in this cell" stops
+   * being true the moment the first is rewritten — an ordinal quietly walks up
+   * the block and puts the date field on the email line. A label still means the
+   * same thing after its neighbours change, and if the template's wording moves
+   * the mapping fails loudly instead of landing somewhere plausible.
+   */
+  afterLabel?: string;
 }
 
 export interface NormalizationIssue {
@@ -133,19 +150,37 @@ function resolveTargets(parsed: ParsedBody, scope: MappingScope | undefined): Ta
  * Rewrites `[PLACEHOLDER]` occurrences into `[[token]]` inside the given
  * fragment of a block, returning the updated block XML.
  */
-function applyToFragment(blockXml: string, target: Target, pattern: RegExp, replacement: string): {
+function applyToFragment(
+  blockXml: string,
+  target: Target,
+  pattern: RegExp,
+  replacement: string,
+  afterLabel?: string,
+): {
   xml: string;
   count: number;
 } {
   const fragment = blockXml.slice(target.start, target.end);
   const text = blockText(fragment);
 
-  const ranges: { start: number; end: number; value: string }[] = [];
+  const found: { start: number; end: number; value: string }[] = [];
   const scan = new RegExp(pattern.source, 'g');
   let match: RegExpExecArray | null;
   while ((match = scan.exec(text)) !== null) {
-    ranges.push({ start: match.index, end: match.index + match[0].length, value: replacement });
+    found.push({ start: match.index, end: match.index + match[0].length, value: replacement });
     if (match[0].length === 0) scan.lastIndex += 1;
+  }
+
+  // Restricted to the first occurrence after the label, when one is given. A
+  // mapping whose label is absent rewrites nothing, so the rule survives and
+  // normalisation reports an error. Falling back to another occurrence would put
+  // a signature field on the wrong line, which is worse than leaving it undone.
+  let ranges = found;
+  if (afterLabel !== undefined) {
+    const label = flexiblePattern(afterLabel, '').exec(text);
+    const from = label ? label.index + label[0].length : -1;
+    const first = from < 0 ? undefined : found.find((range) => range.start >= from);
+    ranges = first ? [first] : [];
   }
 
   if (ranges.length === 0) return { xml: blockXml, count: 0 };
@@ -198,7 +233,7 @@ export function normalizeDocumentXml(
       let xml = block.xml;
       const ordered = [...blockTargets].sort((a, b) => b.start - a.start);
       for (const target of ordered) {
-        const applied = applyToFragment(xml, target, pattern, replacement);
+        const applied = applyToFragment(xml, target, pattern, replacement, mapping.afterLabel);
         xml = applied.xml;
         mappingCount += applied.count;
       }

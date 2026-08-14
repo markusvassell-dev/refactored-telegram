@@ -24,6 +24,7 @@ export type FileRole =
   | 'DRAFT_DOCX'
   | 'DRAFT_PDF'
   | 'APPROVED_PDF'
+  | 'FOR_SIGNATURE_PDF'
   | 'SIGNED_PDF'
   | 'SIGNING_CERTIFICATE'
   | 'COVER_LETTER_DRAFT_DOCX'
@@ -35,6 +36,11 @@ const ROLE_SUFFIX: Record<FileRole, { suffix: string; extension: string }> = {
   DRAFT_DOCX: { suffix: 'DRAFT', extension: 'docx' },
   DRAFT_PDF: { suffix: 'DRAFT', extension: 'pdf' },
   APPROVED_PDF: { suffix: 'APPROVED', extension: 'pdf' },
+  // The copy carrying Adobe's signature tags. Named distinctly because it is
+  // not the document a reviewer reads -- opening it shows tag text where the
+  // signature lines belong, and mistaking it for the approved draft would put
+  // that in front of a client.
+  FOR_SIGNATURE_PDF: { suffix: 'FOR SIGNATURE', extension: 'pdf' },
   SIGNED_PDF: { suffix: 'SIGNED', extension: 'pdf' },
   SIGNING_CERTIFICATE: { suffix: 'SIGNING CERTIFICATE', extension: 'pdf' },
   COVER_LETTER_DRAFT_DOCX: { suffix: 'COVER LETTER - DRAFT', extension: 'docx' },

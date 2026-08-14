@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -62,6 +62,17 @@ export async function convertDocxToPdf(
   const base = options.tempDirectory ?? process.env.DOCUMENT_TEMP_DIRECTORY ?? tmpdir();
 
   const started = Date.now();
+
+  // `mkdtemp` does not create parents, and the configured directory —
+  // `/tmp/element-engagements` by default — does not exist on a machine that has
+  // never run a conversion. Every PDF then fails with a bare ENOENT naming a
+  // path nobody configured by hand.
+  //
+  // Not hypothetical: this passed for a day on a developer machine where an
+  // earlier run had left the directory behind, and failed on the first clean
+  // CI run. A fresh production container is the same clean machine.
+  await mkdir(base, { recursive: true });
+
   const workDir = await mkdtemp(join(base, 'pdf-'));
   const inputPath = join(workDir, 'document.docx');
   const outputPath = join(workDir, 'document.pdf');

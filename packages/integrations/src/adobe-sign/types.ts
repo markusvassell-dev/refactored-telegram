@@ -39,7 +39,19 @@ export interface CreateAgreementRequest {
   /** Reminder cadence, expressed in business days. */
   reminderEveryBusinessDays: number;
   locale: string;
-  /** Whether a signer may delegate. Off by default. */
+  /**
+   * Whether a signer may hand the letter to somebody else to sign.
+   *
+   * NOT YET HONOURED, and deliberately left that way rather than guessed. The
+   * field a request uses to forbid delegation could not be confirmed against
+   * Adobe's specification from this environment, and inventing a field name is
+   * worse than sending none: an unrecognised key is ignored silently, which
+   * would leave this reading as enforced while Adobe applied its own default.
+   *
+   * `AdobeSignRestClient.createAgreement` logs a warning when this is false so
+   * the gap is visible in the record of every send that assumed otherwise.
+   * Resolve it against the published spec before relying on it.
+   */
   allowDelegation: boolean;
   /** Identity verification: email verification by default. */
   authenticationMethod: 'EMAIL' | 'PHONE' | 'KBA';
@@ -98,6 +110,20 @@ export interface AdobeSignProvider {
   readonly isMock: boolean;
 
   createAgreement(request: CreateAgreementRequest): Promise<CreateAgreementResult>;
+  /**
+   * The agreement already created under this idempotency key, if any.
+   *
+   * On the interface rather than only on the REST client, because it is the last
+   * defence against sending a client two copies of the same engagement letter.
+   * It existed on the client, documented as preventing duplicates, and was never
+   * on the interface and never called — so it prevented nothing. Required, so a
+   * new adapter cannot omit it and quietly lose the protection.
+   *
+   * Throws rather than returning null when the lookup itself fails: "no
+   * agreement" and "could not check" must not be the same answer, because the
+   * caller creates one on the first and must not on the second.
+   */
+  findByExternalId(idempotencyKey: string): Promise<string | null>;
   getAgreement(agreementId: string): Promise<AgreementState | null>;
   cancelAgreement(agreementId: string, reason: string): Promise<void>;
 
@@ -111,19 +137,6 @@ export interface AdobeSignProvider {
   parseWebhook(rawBody: string): AdobeWebhookEvent | null;
 
   healthCheck(): Promise<{ ok: boolean; detail?: string }>;
-}
-
-/**
- * Default signing order per engagement type.
- *
- * T1 joint  — both taxpayers in parallel, firm signer afterwards.
- * T2        — signing officer first, firm representative last.
- * T3        — authorised representative first, firm signer last.
- */
-export function defaultSigningOrder(engagementType: EngagementType, role: SignerRole): number {
-  if (role === 'FIRM_SIGNER') return 2;
-  if (engagementType === 'T1_JOINT') return 1; // Taxpayer 1 and 2 both order 1.
-  return 1;
 }
 
 export const DEFAULT_AGREEMENT_SETTINGS = {

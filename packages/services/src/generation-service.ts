@@ -333,6 +333,66 @@ export class GenerationService {
       scope,
     });
 
+    // The signature copy: the same values, rendered again with Adobe's tags
+    // where the blank signature lines are.
+    //
+    // Two files exist because a reviewer approves a document they can read and
+    // Adobe needs one carrying tags. Both are rendered here, from the same
+    // values in the same operation, so what goes out for signature provably
+    // came from the inputs that were approved. Rendering it at send time
+    // instead would produce bytes nobody had seen.
+    //
+    // Skipped when nobody has been named yet — naming signers is a separate
+    // step, and a reviewer may reasonably want to read a draft first. The send
+    // gate refuses when this copy is missing, so skipping delays sending rather
+    // than letting an untagged document out.
+    const signers = await this.deps.prisma.engagementParticipant.findMany({
+      where: { engagementId: input.engagementId, isSigner: true },
+      orderBy: { signingOrder: 'asc' },
+      select: { role: true, signingOrder: true },
+    });
+
+    let storedSignaturePdf: { reference: string; hash: string } | null = null;
+
+    if (manifest.signatureAnchors.length > 0 && signers.length > 0) {
+      try {
+        const signatureRender = await renderDocx(templateDocx, {
+          manifest,
+          values,
+          selections,
+          includedSections,
+          mode: 'FOR_SIGNATURE',
+          wordingExceptions: approvedExceptions,
+          signers,
+        });
+
+        const signaturePdf = await this.deps.pdfConverter.convert(signatureRender.docx);
+
+        storedSignaturePdf = await this.deps.store.put({
+          content: signaturePdf.pdf,
+          fileName: buildFileName({
+            year: engagement.taxYear,
+            documentType: input.documentType,
+            clientLegalName: engagement.client.legalName,
+            role: 'FOR_SIGNATURE_PDF',
+            testMode: input.testMode,
+          }),
+          mimeType: 'application/pdf',
+          scope,
+        });
+      } catch (error) {
+        // Thrown when a required anchor has no participant to fill it — a
+        // half-named engagement, which is ordinary mid-preparation. Recorded
+        // rather than raised: failing generation here would stop a reviewer
+        // reading the draft that tells them who is missing.
+        this.deps.logger.warn('Could not render the signature copy', {
+          engagementId: input.engagementId,
+          documentType: input.documentType,
+          reason: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     // A new version is always created; an existing one is never rewritten.
     const previous = await this.deps.prisma.documentVersion.findFirst({
       where: { engagementId: input.engagementId, documentType: input.documentType },
@@ -354,8 +414,19 @@ export class GenerationService {
         generatedPdfReference: storedPdf.reference,
         docxHash: storedDocx.hash,
         pdfHash: storedPdf.hash,
+        signaturePdfReference: storedSignaturePdf?.reference ?? null,
+        signaturePdfHash: storedSignaturePdf?.hash ?? null,
         pageCount: pdf.pageCount,
-        renderedFieldValues: { values, selections, includedSections } as unknown as Prisma.InputJsonValue,
+        // The signers are part of what this render was built from — the tags in
+        // the signature copy address participant sets by position — so they
+        // belong in the audit-grade snapshot alongside the values. The send gate
+        // compares the roster against this to catch an edit made afterwards.
+        renderedFieldValues: {
+          values,
+          selections,
+          includedSections,
+          signers: signers.map((signer) => ({ role: signer.role, signingOrder: signer.signingOrder })),
+        } as unknown as Prisma.InputJsonValue,
         validationReport: validation as unknown as Prisma.InputJsonValue,
         changeSummary:
           rendered.removedSections.length > 0
@@ -387,6 +458,7 @@ export class GenerationService {
         validationErrors: validation.errorCount,
         docxHash: storedDocx.hash,
         pdfHash: storedPdf.hash,
+        signaturePdfHash: storedSignaturePdf?.hash ?? null,
         testMode: input.testMode,
       },
     });
