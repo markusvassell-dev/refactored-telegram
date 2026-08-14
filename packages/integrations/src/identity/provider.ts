@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { AppError, ValidationError, type Role } from '@element/shared';
+import { AppError, ValidationError } from '@element/shared';
 
 /**
  * Authentication provider interface.
@@ -16,7 +16,13 @@ export interface AuthenticatedIdentity {
   subject: string;
   email: string;
   displayName: string;
-  /** Directory groups or app roles, mapped to application roles by policy. */
+  /**
+   * Directory groups or app roles as Entra reported them.
+   *
+   * Recorded rather than acted on. Roles are granted on the Users page, because
+   * the setting that mapped these onto application roles could be read and
+   * never written — so it granted nothing while looking like it did.
+   */
   directoryRoles: string[];
 }
 
@@ -198,19 +204,4 @@ export class DevelopmentIdentityProvider implements IdentityProvider {
       category: 'VALIDATION',
     });
   }
-}
-
-/**
- * Maps Entra directory groups or app roles onto application roles.
- * Configured by an administrator; an unmapped directory role grants nothing.
- */
-export function mapDirectoryRoles(
-  directoryRoles: readonly string[],
-  mapping: Record<string, Role[]>,
-): Role[] {
-  const granted = new Set<Role>();
-  for (const directoryRole of directoryRoles) {
-    for (const role of mapping[directoryRole] ?? []) granted.add(role);
-  }
-  return [...granted];
 }

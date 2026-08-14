@@ -21,10 +21,42 @@ import {
  */
 
 const COOKIE_NAME = 'element_session';
-const MAX_AGE_SECONDS = 8 * 60 * 60;
+
+/**
+ * How long a session survives without activity.
+ *
+ * Four hours rather than a working day, deliberately. This is what an abandoned
+ * browser on a shared desk is worth, and the sliding refresh below means an
+ * active person never meets it. The old fixed eight hours was the worst of both:
+ * long enough to matter if left unattended, and still capable of signing out a
+ * reviewer part-way through a document.
+ */
+const IDLE_SECONDS = 4 * 60 * 60;
+
+/**
+ * The longest a session can live however active its owner.
+ *
+ * A session that slides forever is not a session. Twelve hours covers the
+ * longest plausible working day and then ends.
+ */
+const ABSOLUTE_SECONDS = 12 * 60 * 60;
+
+/**
+ * Refresh only once a session is half-used.
+ *
+ * Rewriting the cookie on every action would be a Set-Cookie on every mutation
+ * for no benefit; this makes it occasional while keeping an active session well
+ * clear of expiry.
+ *
+ * The ratio to the idle window is what makes the sliding real. An idle window
+ * close to the absolute cap would mean the cap binds on the first refresh and
+ * the session never slides again — one extension wearing the name of many.
+ */
+const REFRESH_AFTER_SECONDS = IDLE_SECONDS / 2;
 
 interface SessionPayload {
   userId: string;
+  /** When the session first began. The absolute cap is measured from here. */
   issuedAt: number;
   expiresAt: number;
   /** Bound to the CSRF token issued with the session. */
@@ -32,24 +64,52 @@ interface SessionPayload {
 }
 
 export async function createSession(userId: string, csrfToken: string): Promise<void> {
-  const configuration = env();
   const now = Math.floor(Date.now() / 1000);
+  await writeSession({ userId, issuedAt: now, expiresAt: now + IDLE_SECONDS, csrfToken });
+}
 
-  const payload: SessionPayload = {
-    userId,
-    issuedAt: now,
-    expiresAt: now + MAX_AGE_SECONDS,
-    csrfToken,
-  };
-
+async function writeSession(payload: SessionPayload): Promise<void> {
+  const configuration = env();
   const store = await cookies();
+
   store.set(COOKIE_NAME, seal(payload, configuration.SESSION_SECRET), {
     httpOnly: true,
     sameSite: 'lax',
     secure: configuration.APP_ENV !== 'development',
     path: '/',
-    maxAge: MAX_AGE_SECONDS,
+    maxAge: Math.max(0, payload.expiresAt - Math.floor(Date.now() / 1000)),
   });
+}
+
+/**
+ * Extends the current session, if it is live and not past its absolute cap.
+ *
+ * Called from the server-action wrapper rather than from page rendering,
+ * because a Server Component cannot set a cookie — Next.js permits that only in
+ * a Server Action, a Route Handler or middleware, and middleware here runs on
+ * the Edge runtime, which cannot open the cookie at all (`seal` is AES-256-GCM
+ * from `node:crypto`).
+ *
+ * Acting is what keeps a session alive, then — editing a field, saving a
+ * comment, approving a document. Someone who reads pages for eight hours and
+ * touches nothing is signed out, which is the behaviour the idle window
+ * describes anyway.
+ *
+ * Returns quietly rather than throwing: failing to extend a session must never
+ * fail the action the person actually asked for.
+ */
+export async function extendSession(): Promise<void> {
+  const session = await readSession();
+  if (!session) return;
+
+  const now = Math.floor(Date.now() / 1000);
+
+  if (session.issuedAt + ABSOLUTE_SECONDS <= now) return;
+  if (session.expiresAt - now > REFRESH_AFTER_SECONDS) return;
+
+  // Never past the absolute cap, however long the idle window would allow.
+  const expiresAt = Math.min(now + IDLE_SECONDS, session.issuedAt + ABSOLUTE_SECONDS);
+  await writeSession({ ...session, expiresAt });
 }
 
 export async function destroySession(): Promise<void> {
@@ -64,7 +124,12 @@ async function readSession(): Promise<SessionPayload | null> {
 
   const payload = unseal<SessionPayload>(raw, env().SESSION_SECRET);
   if (!payload) return null;
-  if (payload.expiresAt < Math.floor(Date.now() / 1000)) return null;
+
+  const now = Math.floor(Date.now() / 1000);
+  if (payload.expiresAt < now) return null;
+  // The cap is enforced on read as well as on refresh, so a cookie that somehow
+  // carries a later expiry than the cap allows is still refused.
+  if (payload.issuedAt + ABSOLUTE_SECONDS <= now) return null;
   return payload;
 }
 
