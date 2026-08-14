@@ -58,10 +58,30 @@ jobs:
       # The integration tests convert real .docx files through a real
       # LibreOffice — that is deliberate, because a PDF that never converted is
       # a document nobody can send. It has to exist here too.
+      #
+      # The same packages the runtime image installs, rather than the whole
+      # `libreoffice` suite. Two reasons, and the second is the important one:
+      # the suite is a much larger download for no gain, and installing a
+      # different set from production meant the conversion was verified against
+      # packages nothing actually runs on. `libreoffice-writer` is what loads
+      # .docx; the fonts are what keep the rendered PDF faithful to Word, and
+      # their absence is a silently different document rather than an error.
+      #
+      # Bounded, because it is the one step that reaches outside GitHub. Two
+      # consecutive runs sat on the full-suite install for over ten minutes on
+      # separate runners and would have burned the job's whole 25-minute budget
+      # before reaching a single test. Failing in four is a result; hanging for
+      # twenty-five is not.
       - name: Install LibreOffice
+        timeout-minutes: 4
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libreoffice
+          sudo apt-get install -y --no-install-recommends \
+            libreoffice-writer \
+            libreoffice-core \
+            fonts-liberation \
+            fonts-dejavu-core \
+            fontconfig
           soffice --version
 
       - uses: pnpm/action-setup@v4
