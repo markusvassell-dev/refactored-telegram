@@ -184,17 +184,19 @@ describe('removing a role', () => {
     });
   });
 
-  it('leaves a directory-granted role alone, because the directory would put it back', async () => {
+  it('revokes a legacy directory-granted role, since nothing reapplies it now', async () => {
+    // This was once refused, on the grounds that the sign-in mapping would put
+    // the role straight back and a revocation that undid itself would be a lie.
+    // The mapping is gone, so the refusal would now strand the role instead:
+    // unrevokable, with nothing on the other side maintaining it.
     await prisma.userRole.updateMany({
       where: { userId: subjectId, role: 'PREPARER' },
       data: { grantedBy: 'entra-id' },
     });
 
-    await expect(
-      users.revokeRole({ userId: subjectId, role: 'PREPARER', reason: REASON, actor: admin }),
-    ).rejects.toThrow(/Entra ID directory/i);
+    await users.revokeRole({ userId: subjectId, role: 'PREPARER', reason: REASON, actor: admin });
 
-    expect(await prisma.userRole.count({ where: { userId: subjectId, role: 'PREPARER' } })).toBe(1);
+    expect(await prisma.userRole.count({ where: { userId: subjectId, role: 'PREPARER' } })).toBe(0);
   });
 });
 

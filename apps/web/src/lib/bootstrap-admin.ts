@@ -4,8 +4,8 @@ import type { AuditLogger } from '@element/audit';
 /**
  * The first administrator.
  *
- * Directory role mapping starts empty, so on a first deployment the first
- * person to sign in gets a user record and no roles — and granting a role
+ * Signing in proves who you are and grants nothing, so on a first deployment the
+ * first person to sign in gets a user record and no roles — and granting a role
  * requires an administrator who does not exist yet. Without a way out of that,
  * a correctly deployed application is unusable.
  *

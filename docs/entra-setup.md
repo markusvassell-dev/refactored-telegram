@@ -85,18 +85,67 @@ It grants nothing on its own: the address must be authenticated by Entra first.
 
 ## Sessions
 
-A session lasts **four hours without activity** and is extended by acting —
-saving a field, leaving a comment, approving a document — up to an absolute
-**twelve hours** from sign-in, after which it ends whatever you are doing.
+**Two clocks run at once, and the session ends when either of them runs out.**
 
-Page views do not extend it. A Server Component cannot set a cookie, and the
-middleware that normally would runs on a runtime that cannot open this one, so
-activity means a mutation rather than a navigation.
+| | Length | Resets? |
+| --- | --- | --- |
+| **Idle** | 4 hours | Yes — every time you change something |
+| **Absolute** | 12 hours | No — it starts at sign-in and runs to the end |
+
+The idle clock is what people notice. It resets on a *mutation*: saving a field,
+leaving a comment, approving a document, granting a role. It does **not** reset
+on a page view, so reading for four hours signs you out and editing for eleven
+does not.
+
+The refresh does not happen on every action — that would mean a `Set-Cookie` on
+every save for no benefit. It waits until the session is **half used**, so an
+action two hours in moves expiry to four hours from then, while an action ten
+minutes in changes nothing.
+
+A worked day, signing in at 09:00:
+
+| Time | | Idle expiry |
+| --- | --- | --- |
+| 09:00 | Sign in | 13:00 (absolute: 21:00) |
+| 10:00 | Save a field — more than half remains | 13:00, unchanged |
+| 11:30 | Approve a document — past halfway | 15:30 |
+| 14:00 | Lunch, then reading. Nothing changed | 15:30, unchanged |
+| 15:00 | Leave a comment | 19:00 |
+| 19:30 | Act again — but the absolute cap binds | 21:00, not 23:30 |
+| 21:00 | Signed out mid-anything. Sign in again | both clocks restart |
+
+### Why four hours and twelve
+
+Four is what an abandoned browser on a shared desk is worth. Twelve covers the
+longest plausible working day and then ends, because a session that slides
+forever is not a session.
+
+The **ratio** matters more than either number. An idle window close to the
+absolute cap would mean the cap binds on the very first refresh and the session
+never slides again — one extension wearing the name of many. The original design
+here was eight against twelve, and a test caught exactly that.
+
+### Why activity means changing rather than viewing
+
+Extending a session means writing a new cookie. Next.js permits that only in a
+Server Action, a Route Handler or middleware — never while rendering a page.
+Middleware would have been the natural home, but it runs on the Edge runtime,
+which cannot open this cookie at all: `seal` is AES-256-GCM from `node:crypto`.
+
+So the extension lives in the server-action wrapper that every mutation already
+passes through (`apps/web/src/app/actions.ts`), and it runs *after* the action
+succeeds. Failing to extend a session must never fail the thing the person
+actually asked for, so `extendSession` returns quietly rather than throwing.
+
+### Revocation does not wait for expiry
 
 Deactivating a user on the Users page ends their session **immediately**,
 everywhere. Roles and the active flag are re-read from the database on every
-request rather than trusted from the cookie, so revoking access does not wait
-for a sign-out.
+request rather than trusted from the cookie — the cookie carries only a user id,
+an issue time and an expiry.
+
+The cap is checked on read as well as on refresh, so a cookie somehow carrying a
+later expiry than twelve hours allows is refused rather than honoured.
 
 Signing out clears the session here but **leaves the Microsoft session live**, so
 on a shared machine the next person can sign back in without re-entering

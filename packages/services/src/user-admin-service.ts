@@ -47,9 +47,6 @@ export interface ManagedUser {
   roles: { role: Role; grantedBy: string | null; grantedAt: Date }[];
 }
 
-/** Roles the directory owns; this service will not touch them. */
-const DIRECTORY_GRANTED = 'entra-id';
-
 const MINIMUM_REASON_LENGTH = 5;
 
 export class UserAdminService {
@@ -114,11 +111,12 @@ export class UserAdminService {
       throw new ValidationError(`${user.displayName} does not hold ${input.role}.`);
     }
 
-    if (existing.grantedBy === DIRECTORY_GRANTED) {
-      throw new PreconditionError(
-        `${input.role} comes from the Entra ID directory and is reapplied at every sign-in. Change the directory role mapping in Settings, or the person's directory roles, instead.`,
-      );
-    }
+    // A role recorded as directory-granted used to be refused here, because the
+    // sign-in mapping would reapply it and the refusal was more honest than a
+    // revocation that silently undid itself. That mapping is gone — nothing
+    // reapplies anything — so refusing now would leave such a role permanently
+    // unrevokable, which is the worse failure. Only rows predating the removal
+    // can carry the marker, and this deployment never ran the mapping at all.
 
     // Removing your own administrator role locks you out of the screen that
     // would let you put it back.

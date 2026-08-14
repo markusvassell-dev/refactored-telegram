@@ -63,9 +63,9 @@ export const envSchema = z
     /**
      * Comma-separated e-mail addresses granted ADMINISTRATOR on sign-in.
      *
-     * Without this a first deployment is unusable: directory role mapping is
-     * empty until an administrator configures it, so the first person to sign in
-     * arrives with no roles and no way to grant themselves any. This is the only
+     * Without this a first deployment is unusable: signing in grants nothing on
+     * its own, so the first person to sign in arrives with no roles and no way
+     * to grant themselves any. This is the only
      * way a role is granted without an existing administrator, so it is narrow
      * on purpose — it grants nothing by itself, it takes effect only after
      * Entra ID has authenticated the address, and every grant is audited.

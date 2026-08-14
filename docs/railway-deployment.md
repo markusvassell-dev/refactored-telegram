@@ -112,14 +112,14 @@ still means what it always did.
 
 #### The first administrator
 
-Directory role mapping starts empty, so the first person to sign in gets a user
-record and no roles — and granting a role requires an administrator who does
-not exist yet. `BOOTSTRAP_ADMIN_EMAILS` breaks that deadlock: a listed address
-is granted `ADMINISTRATOR` **after** Entra ID authenticates it, never before,
-and the grant is written to the audit trail as `ROLE_GRANTED`.
+Signing in proves who you are and grants nothing, so the first person to sign in
+gets a user record and no roles — and granting a role requires an administrator
+who does not exist yet. `BOOTSTRAP_ADMIN_EMAILS` breaks that deadlock: a listed
+address is granted `ADMINISTRATOR` **after** Entra ID authenticates it, never
+before, and the grant is written to the audit trail as `ROLE_GRANTED`.
 
-Sign in once, configure the directory role mapping under Settings, then clear
-the variable.
+Sign in once, grant the other administrators their roles on the Users page, then
+clear the variable.
 
 If the address does not match, the result is a dead end that cannot be escaped
 from inside the application: you are signed in, you hold no roles, every screen
@@ -344,8 +344,14 @@ here — it passed the whole time it was pointed at the wrong database.
    the application displays. Every console grant is audited as `ROLE_GRANTED`
    with `grantedBy: 'console'`, so it is distinguishable from one made by an
    administrator in the application.
-8. Under Settings, configure the directory role mapping, then clear
-   `BOOTSTRAP_ADMIN_EMAILS`.
+8. Grant the other staff their roles on the **Users** page — everyone signs in
+   once and arrives with none — then clear `BOOTSTRAP_ADMIN_EMAILS` once a
+   second administrator exists.
+
+   Roles are **not** taken from Entra. Directory groups and app roles are
+   recorded from the token and deliberately not acted on; the setting that once
+   claimed to map them granted nothing, because nothing could write it. See
+   `docs/entra-setup.md`.
 9. Configure integrations against **sandbox** credentials and health check.
 10. Exercise a full engagement in Test Mode.
 11. Only then: turn Test Mode off, and arm production sending in Settings.

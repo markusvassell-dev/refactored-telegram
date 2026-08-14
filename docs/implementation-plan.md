@@ -222,13 +222,15 @@ and size.
 **Production CSP still allows `'unsafe-inline'` for scripts.** Next.js needs it
 for hydration data unless a nonce is issued from middleware.
 
-**Entra sign-in has not been exercised against a real tenant.** The
-authorization-code flow with PKCE is implemented end to end — `/api/auth/entra/start`
-and `/api/auth/entra/callback`, with `state`, `nonce` and the PKCE verifier
-sealed into a short-lived cookie and verified on return, directory roles mapped
-through the `entra_role_mapping` setting, and the user created or updated on
-first sign-in. It has only been typechecked and reviewed, not run against a
-live directory. Browser tests use the development login.
+**Entra sign-in works, and browser tests still do not use it.** A live sign-in
+against the Gordon and Company tenant on 14 August 2026 issued an administrator
+session, so the authorization-code flow with PKCE — `/api/auth/entra/start` and
+`/api/auth/entra/callback`, with `state`, `nonce` and the PKCE verifier sealed
+into a short-lived cookie and verified on return — is observed rather than
+inferred. Roles are **not** taken from the directory: groups and app roles are
+recorded from the token and deliberately not acted on. What remains outstanding
+is coverage — the Playwright suite still signs in through the development login,
+so the real flow is exercised by people rather than by CI.
 
 **`sourcePlaceholder` needs a new template version to appear.** The bracketed
 text a token replaced is derived during normalisation and written into the

@@ -492,8 +492,8 @@ Each was fixed in the code, not the test:
 18. Confirming an uploaded document on "no disqualifiers" would have accepted
     another client's letter, which raises none. Confirmation now needs the
     contents to clear the acceptance threshold.
-19. A correctly deployed application was unusable. Directory role mapping starts
-    empty, so the first person to sign in got a user record and no roles — and
+19. A correctly deployed application was unusable. Signing in grants nothing on
+    its own, so the first person to sign in got a user record and no roles — and
     granting a role requires an administrator who did not exist yet. There was
     no way in. `BOOTSTRAP_ADMIN_EMAILS` is the way out of that deadlock, and it
     is the only path to a role that does not go through an existing
