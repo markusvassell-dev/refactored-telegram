@@ -10,12 +10,37 @@ import {
   MicrosoftGraphMailer,
   MockEmailSender,
   BlockedEmailSender,
+  RateLimiter,
+  KARBON_DOCUMENTED_REQUESTS_PER_MINUTE,
   type AdobeSignProvider,
   type EmailSender,
   type KarbonProvider,
 } from '@element/integrations';
 import { decryptSecret, isKnownProductionHost, type Env, type Logger } from '@element/shared';
 import type { TestModeState } from './settings.js';
+
+/**
+ * One Karbon request budget for this process.
+ *
+ * Karbon's limit is **per account per application**, and `resolveProviders`
+ * runs on every request — so a client built per request got a full bucket of
+ * 120 tokens each time and the limiter protected nothing. Two previews in the
+ * same minute each believed they had the whole budget, the second one spent an
+ * allowance the first had already used, and Karbon answered 429 until the
+ * retries ran out. Observed exactly that way on the live tenant: the first
+ * preview returned, the next stopped working.
+ *
+ * `KarbonClientConfig.rateLimiter` existed for this from the start — "shared
+ * across clients when one is supplied" — and simply was not passed.
+ *
+ * Honest about its reach: this makes the budget shared **within one process**.
+ * The web service and the worker are separate processes drawing on the same
+ * account, so the real limit still needs coordination this does not provide.
+ * Per-request to per-process is most of the error, not all of it.
+ */
+const karbonRequestBudget = new RateLimiter({
+  requestsPerMinute: KARBON_DOCUMENTED_REQUESTS_PER_MINUTE,
+});
 
 /**
  * Provider resolution.
@@ -138,6 +163,7 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
           accessKey: karbonConnection.credentials.accessKey as string,
           noteAuthorEmail: env.KARBON_NOTE_AUTHOR_EMAIL,
           logger: options.logger,
+          rateLimiter: karbonRequestBudget,
         }),
         'Test Mode is active and this is a production Karbon connection, so nothing was written to Karbon.',
       );
@@ -156,6 +182,7 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
       accessKey: karbonConnection.credentials.accessKey as string,
       noteAuthorEmail: env.KARBON_NOTE_AUTHOR_EMAIL,
       logger: options.logger,
+      rateLimiter: karbonRequestBudget,
     });
     karbonDescription = karbonIsProduction ? 'Karbon production connection' : 'Karbon sandbox connection';
   } else {

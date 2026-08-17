@@ -121,6 +121,45 @@ describe('the rate limiter', () => {
     };
   }
 
+  it('is spent in common by every client that shares it', async () => {
+    // The defect this covers, seen on the live tenant as "it worked once and
+    // then stopped working". Karbon's limit is per account, and the provider
+    // factory runs per request — so each request built a client with its own
+    // full bucket. The first preview stayed inside the account budget; the
+    // second believed it had a fresh 120, spent an allowance already gone, and
+    // Karbon answered 429 until the retries ran out.
+    //
+    // A limiter that resets per caller is not a limiter. Two clients handed the
+    // same one have to draw down the same tokens.
+    const clock = virtualClock();
+    const shared = new RateLimiter({ requestsPerMinute: 10, now: clock.now, sleep: clock.sleep });
+
+    const first = new KarbonRestClient({
+      baseUrl: 'https://api.karbonhq.test/v3',
+      bearerToken: 't',
+      accessKey: 'k',
+      rateLimiter: shared,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+    const second = new KarbonRestClient({
+      baseUrl: 'https://api.karbonhq.test/v3',
+      bearerToken: 't',
+      accessKey: 'k',
+      rateLimiter: shared,
+      fetchImpl: async () => new Response('{}', { status: 200 }),
+    });
+
+    // Ten requests split across the two clients is the whole budget.
+    for (let index = 0; index < 5; index += 1) await first.getWorkItem(`a-${index}`);
+    for (let index = 0; index < 5; index += 1) await second.getWorkItem(`b-${index}`);
+    expect(clock.waits).toEqual([]);
+
+    // The eleventh has to wait, whichever client asks for it. Before the fix
+    // this passed instantly, because the second client had its own budget.
+    await second.getWorkItem('over');
+    expect(clock.waits.length).toBe(1);
+  });
+
   it('lets a burst through up to the minute budget, which is what the limit means', async () => {
     const clock = virtualClock();
     const limiter = new RateLimiter({ requestsPerMinute: 120, now: clock.now, sleep: clock.sleep });
