@@ -454,15 +454,13 @@ describe('importing clients from Karbon', () => {
     expect(list.more).toBe(false);
   });
 
-  it('counts the tenant contact types it saw, without filtering on them', async () => {
-    // The live tenant labels clients `Client` and `Inactive`. Nothing filters on
-    // that — the vocabulary is tenant-defined — so the only way somebody learns
-    // their Karbon holds inactive clients is if the import counts them out loud.
+  /** The live tenant's two types, one of each, plus the ordinary seed. */
+  function karbonWithInactive(): MockKarbonProvider {
     const seeded = seed();
     const inactiveKey = `ci-org-${suffix}-inactive`;
-    entityKeys.push(inactiveKey);
+    if (!entityKeys.includes(inactiveKey)) entityKeys.push(inactiveKey);
 
-    const karbon = Object.create(
+    return Object.create(
       new MockKarbonProvider({
         clients: [
           ...seeded.clients,
@@ -478,14 +476,80 @@ describe('importing clients from Karbon', () => {
       }),
       { isMock: { value: false, enumerable: true } },
     ) as MockKarbonProvider;
+  }
+
+  it('does not import a client Karbon marks Inactive', async () => {
+    const result = await service.run({ karbon: karbonWithInactive(), actor: admin, dryRun: true });
+
+    expect(result.created.map((entry) => entry.legalName)).not.toContain('Retired Holdings Ltd.');
+    expect(result.skippedByContactType).toEqual([{ contactType: 'Inactive', count: 1 }]);
+  });
+
+  it('never skips silently, and says how to undo it', async () => {
+    // A client absent from the list with no explanation is the failure this area
+    // keeps producing. Excluding by label is only defensible if the person can
+    // see it was applied, to how many, and how to reverse it.
+    const result = await service.run({ karbon: karbonWithInactive(), actor: admin, dryRun: true });
+
+    const notes = result.notes.join(' ');
+    expect(notes).toMatch(/skipped 1 Inactive/i);
+    expect(notes).toMatch(/include every contact type/i);
+  });
+
+  it('imports the excluded types when asked to', async () => {
+    // A current client left labelled Inactive in Karbon must not be unreachable.
+    const result = await service.run({
+      karbon: karbonWithInactive(),
+      actor: admin,
+      dryRun: true,
+      includeAllContactTypes: true,
+    });
+
+    expect(result.created.map((entry) => entry.legalName)).toContain('Retired Holdings Ltd.');
+    expect(result.skippedByContactType).toEqual([]);
+  });
+
+  it('matches a contact type regardless of case or padding', async () => {
+    // A type is a label somebody typed into Karbon, so "inactive " has to count.
+    const seeded = seed();
+    const key = `ci-org-${suffix}-lowercase`;
+    if (!entityKeys.includes(key)) entityKeys.push(key);
+
+    const karbon = Object.create(
+      new MockKarbonProvider({
+        clients: [
+          ...seeded.clients,
+          {
+            entityKey: key,
+            entityType: 'Organization' as const,
+            legalName: 'Lowercase Inactive Ltd.',
+            contactType: '  inactive ',
+            contacts: [],
+          },
+        ],
+        workItems: seeded.workItems,
+      }),
+      { isMock: { value: false, enumerable: true } },
+    ) as MockKarbonProvider;
 
     const result = await service.run({ karbon, actor: admin, dryRun: true });
 
-    expect(result.notes.join(' ')).toMatch(/contact types among them/i);
-    expect(result.notes.join(' ')).toMatch(/1 Inactive/);
-    // Counted, and still imported — the decision is the firm's, not a string
-    // comparison's.
-    expect(result.created.map((entry) => entry.entityKey)).toContain(inactiveKey);
+    expect(result.created.map((entry) => entry.entityKey)).not.toContain(key);
+    // Reported as the tenant spells it, not as the constant does.
+    expect(result.skippedByContactType).toEqual([{ contactType: 'inactive', count: 1 }]);
+  });
+
+  it('counts every contact type it saw, including the ones it skipped', async () => {
+    // The live tenant labels contacts `Client` and `Inactive`. The breakdown is
+    // of what Karbon holds, not of what was imported — a reader working out why
+    // 63 became 54 needs the population, and reporting only the kept types would
+    // describe the outcome while hiding the cause.
+    const result = await service.run({ karbon: karbonWithInactive(), actor: admin, dryRun: true });
+
+    const notes = result.notes.join(' ');
+    expect(notes).toMatch(/contact types among them/i);
+    expect(notes).toMatch(/3 Client/);
+    expect(notes).toMatch(/1 Inactive/);
   });
 
   it('says what differs, not merely how many do', async () => {

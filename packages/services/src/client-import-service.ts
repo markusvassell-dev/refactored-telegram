@@ -64,6 +64,15 @@ interface Discovered {
   truncated: boolean;
   /** Karbon contact type to count, for the client-list source only. */
   byContactType: Map<string, number>;
+  /** Passed over for their contact type, by type. */
+  skippedByContactType: Map<string, number>;
+}
+
+/** Whether a Karbon contact type is one this import passes over. */
+function isExcludedContactType(contactType: string | null | undefined): boolean {
+  const value = contactType?.trim().toLowerCase();
+  if (!value) return false;
+  return EXCLUDED_CONTACT_TYPES.some((excluded) => excluded.toLowerCase() === value);
 }
 
 export interface ClientImportInput {
@@ -76,6 +85,14 @@ export interface ClientImportInput {
   limit?: number;
   /** Defaults to Karbon's own client list. */
   source?: ClientImportSource;
+  /**
+   * True to import every contact type, including the excluded ones.
+   *
+   * The exclusion is a convenience for the common case, not a definition of what
+   * a client is, so there has to be a way past it — a client wrongly marked
+   * Inactive in Karbon must not be unreachable from here.
+   */
+  includeAllContactTypes?: boolean;
   /** True to report only, changing nothing. */
   dryRun: boolean;
   correlationId?: string;
@@ -102,6 +119,15 @@ export interface ClientImportResult {
    * what changed, that is what deliberately did not.
    */
   backfilled: { entityKey: string; legalName: string; contactsAdded: number; fieldsFilled: string[] }[];
+  /**
+   * Candidates passed over because of their Karbon contact type, by type.
+   *
+   * Reported rather than merely omitted. A client silently missing from an
+   * import is the failure this whole area keeps producing, and "skipped because
+   * Karbon calls it Inactive" is only a defensible reason if the person can see
+   * it was applied and to how many.
+   */
+  skippedByContactType: { contactType: string; count: number }[];
   dryRun: boolean;
   notes: string[];
 }
@@ -122,6 +148,25 @@ const DEFAULT_LIMIT = 200;
  * promise a depth the search cannot reach.
  */
 const MAX_LIMIT = 5000;
+
+/**
+ * Karbon contact types whose entries are not imported as clients.
+ *
+ * **This list is the firm's answer, not an inference.** Contact types are
+ * tenant-defined — `/v3/TenantSettings` lists them per firm — so nothing here
+ * could work out which words mean "not a current client". A verification run
+ * against the live tenant on 2026-08-17 reported the two types actually in use,
+ * `Client` and `Inactive`, and the firm chose to exclude the latter.
+ *
+ * That provenance matters for the next reader: a tenant using different words
+ * needs this list changed, and a value here that a tenant does not use excludes
+ * nothing rather than failing. Matched case-insensitively after trimming, since
+ * a type is a label somebody typed.
+ *
+ * Overridable per run — see `includeAllContactTypes` — because the exclusion is
+ * a convenience, not a rule about what a client is.
+ */
+const EXCLUDED_CONTACT_TYPES = ['Inactive'];
 
 export class ClientImportService {
   constructor(private readonly deps: ClientImportDeps) {}
@@ -150,9 +195,9 @@ export class ClientImportService {
 
     const source = input.source ?? 'CLIENT_LIST';
 
-    const { entityKeys, truncated, byContactType } =
+    const { entityKeys, truncated, byContactType, skippedByContactType } =
       source === 'CLIENT_LIST'
-        ? await this.fromClientList(input.karbon, limit)
+        ? await this.fromClientList(input.karbon, limit, input.includeAllContactTypes === true)
         : await this.fromWorkItems(input.karbon, limit);
 
     const noun = source === 'CLIENT_LIST' ? 'client-list entries' : 'work items';
@@ -175,7 +220,20 @@ export class ClientImportService {
         .sort((a, b) => b[1] - a[1])
         .map(([type, count]) => `${count} ${type}`)
         .join(', ');
-      notes.push(`Karbon contact types among them: ${breakdown}. Nothing is filtered on type.`);
+      notes.push(`Karbon contact types among them: ${breakdown}.`);
+    }
+
+    if (skippedByContactType.size > 0) {
+      const skipped = [...skippedByContactType.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([type, count]) => `${count} ${type}`)
+        .join(', ');
+      // Named as a choice with a way out, not as a fact about the data. The
+      // exclusion is the firm's decision about its own Karbon labels, and a
+      // client wrongly marked Inactive there must not be unreachable from here.
+      notes.push(
+        `Skipped ${skipped} — these Karbon contact types are not imported. Tick "include every contact type" to import them anyway.`,
+      );
     }
 
     if (truncated) {
@@ -199,6 +257,9 @@ export class ClientImportService {
       differing: [],
       failed: [],
       backfilled: [],
+      skippedByContactType: [...skippedByContactType.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([contactType, count]) => ({ contactType, count })),
       dryRun: input.dryRun,
       notes,
     };
@@ -359,23 +420,40 @@ export class ClientImportService {
    * one of them silently dropped — the failure this whole change exists to
    * remove, reintroduced one layer down.
    */
-  private async fromClientList(karbon: KarbonProvider, limit: number): Promise<Discovered> {
+  private async fromClientList(
+    karbon: KarbonProvider,
+    limit: number,
+    includeAll: boolean,
+  ): Promise<Discovered> {
     const { clients, more } = await karbon.listClients({ limit });
 
     const byContactType = new Map<string, number>();
+    const skippedByContactType = new Map<string, number>();
+    const kept: string[] = [];
+
     for (const summary of clients) {
       const type = summary.contactType?.trim();
-      if (!type) continue;
-      byContactType.set(type, (byContactType.get(type) ?? 0) + 1);
+      if (type) byContactType.set(type, (byContactType.get(type) ?? 0) + 1);
+
+      if (!includeAll && isExcludedContactType(summary.contactType)) {
+        // Counted under the type as Karbon spells it, not as the constant does,
+        // so a tenant that writes "inactive" sees its own word back.
+        const label = type ?? 'unlabelled';
+        skippedByContactType.set(label, (skippedByContactType.get(label) ?? 0) + 1);
+        continue;
+      }
+
+      if (summary.entityKey) kept.push(summary.entityKey);
     }
 
     return {
-      entityKeys: [...new Set(clients.map((summary) => summary.entityKey).filter(Boolean))],
+      entityKeys: [...new Set(kept)],
       // Reported by the provider rather than guessed from the count. A list of
       // exactly the limit may or may not have more behind it, and two lists
       // drawn from two endpoints cannot be told apart by their total at all.
       truncated: more,
       byContactType,
+      skippedByContactType,
     };
   }
 
@@ -388,8 +466,11 @@ export class ClientImportService {
       ],
       truncated: workItems.length >= limit,
       // Work items carry no contact type; the clients behind them do, and this
-      // path never reads them.
+      // path never reads them. So the exclusion cannot be applied here, which is
+      // itself worth knowing rather than looking like it was applied and found
+      // nothing.
       byContactType: new Map(),
+      skippedByContactType: new Map(),
     };
   }
 

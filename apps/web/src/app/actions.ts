@@ -1696,6 +1696,7 @@ export async function importClientsFromKarbon(formData: FormData): Promise<Actio
 
     const rawSource = formData.get('source')?.toString();
     const source: ClientImportSource = rawSource === 'WORK_ITEMS' ? 'WORK_ITEMS' : 'CLIENT_LIST';
+    const includeAllContactTypes = formData.get('includeAllContactTypes')?.toString() === 'true';
 
     const providers = await container.providers();
 
@@ -1705,6 +1706,7 @@ export async function importClientsFromKarbon(formData: FormData): Promise<Actio
       dryRun,
       limit,
       source,
+      includeAllContactTypes,
       correlationId: newCorrelationId(),
     });
 
@@ -1729,6 +1731,12 @@ export async function importClientsFromKarbon(formData: FormData): Promise<Actio
     }
     if (result.differing.length > 0) parts.push(`${result.differing.length} differ and were left alone.`);
     if (result.failed.length > 0) parts.push(`${result.failed.length} could not be read.`);
+
+    // In the summary line, not only in the notes. A skipped client is a client
+    // absent from the list afterwards, and the count that explains why belongs
+    // where the other counts are.
+    const skipped = result.skippedByContactType.reduce((total, row) => total + row.count, 0);
+    if (skipped > 0) parts.push(`${skipped} skipped by contact type.`);
 
     // A client whose blanks were filled may also differ on a field that already
     // held a value, so it is counted in both. Without saying so the totals do

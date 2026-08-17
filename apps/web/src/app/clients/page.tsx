@@ -52,6 +52,17 @@ function WorkItemDepth({ id }: { id: string }) {
         Preview first: it says whether the supply ran out before the limit did, which is how you know the list is
         complete rather than merely long.
       </p>
+
+      <label className="mt-4 flex items-start gap-2 text-sm text-slate-700">
+        <input type="checkbox" name="includeAllContactTypes" value="true" className="mt-0.5" />
+        <span>
+          Include every contact type
+          <span className="field-note mt-0.5 block">
+            Entries Karbon marks <strong>Inactive</strong> are skipped by default, and the result says how many. Tick
+            this to import them too — useful when a current client has been left labelled Inactive in Karbon.
+          </span>
+        </span>
+      </label>
     </>
   );
 }
