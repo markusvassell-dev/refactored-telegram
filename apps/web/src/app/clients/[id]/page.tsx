@@ -64,13 +64,22 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
 
   return (
     <>
+      {/*
+        The legal name is the title because it is what prints on the letter, and
+        the trading name sits beneath it because it is the one anybody at the
+        firm would recognise. A page headed only "2140071 Alberta Ltd." is not
+        identifiable by the person checking whether the import got it right.
+      */}
       <PageHeader
         title={client.legalName}
-        description={
+        description={[
+          client.displayName && client.displayName !== client.legalName ? `Trading as ${client.displayName}` : null,
           client.karbonEntityKey
             ? `Karbon ${client.karbonEntityType ?? 'entity'} ${client.karbonEntityKey}`
-            : 'Not linked to Karbon.'
-        }
+            : 'Not linked to Karbon.',
+        ]
+          .filter((part): part is string => part !== null)
+          .join(' · ')}
       />
 
       <section className="card mb-6">

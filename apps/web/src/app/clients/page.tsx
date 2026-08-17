@@ -95,8 +95,27 @@ export default async function ClientsPage({
   const params = await searchParams;
   const request = parsePageRequest(params);
 
+  /*
+    Searching both names, not just the legal one.
+
+    After the import separates "2140071 Alberta Ltd. (JC Spa and Wellness)", the
+    only name anybody at the firm recognises lives in the display name — so a
+    search that read the legal name alone would fail on exactly the clients the
+    separation was for.
+  */
+  const search = (params.q ?? '').trim();
+  const where = search
+    ? {
+        OR: [
+          { legalName: { contains: search, mode: 'insensitive' as const } },
+          { displayName: { contains: search, mode: 'insensitive' as const } },
+        ],
+      }
+    : {};
+
   const [rows, total, providers] = await Promise.all([
     container.prisma.client.findMany({
+      where,
       // A bulk import creates hundreds in one pass, so `legalName` ties and
       // identical timestamps are the normal case. Without the tiebreaker the
       // order between tied rows is undefined and paging would drop clients
@@ -106,7 +125,7 @@ export default async function ClientsPage({
       skip: request.skip,
       take: request.take,
     }),
-    boundedCount((limit) => container.prisma.client.count({ take: limit })),
+    boundedCount((limit) => container.prisma.client.count({ where, take: limit })),
     container.providers(),
   ]);
 
@@ -169,9 +188,36 @@ export default async function ClientsPage({
         </section>
       ) : null}
 
+      <form method="get" className="card mb-4">
+        <div className="card-body flex flex-wrap items-end gap-3">
+          <div className="grow">
+            <label className="label" htmlFor="q">
+              Find a client
+            </label>
+            <input
+              id="q"
+              name="q"
+              className="input"
+              defaultValue={params.q ?? ''}
+              placeholder="Part of a legal name or trade name"
+            />
+          </div>
+          <button type="submit" className="btn-secondary">
+            Search
+          </button>
+          {search ? (
+            <Link className="text-sm underline" href="/clients">
+              Clear
+            </Link>
+          ) : null}
+        </div>
+      </form>
+
       {clients.length === 0 ? (
         page.page > 1 ? (
           <PageOutOfRange pathname="/clients" params={params} pluralNoun="clients" />
+        ) : search ? (
+          <EmptyState message={`No client here matches “${search}”, under either its legal name or its trade name.`} />
         ) : (
           <EmptyState message="No clients yet. Import them from Karbon above, or start an engagement, which creates one." />
         )
@@ -183,6 +229,7 @@ export default async function ClientsPage({
               <thead>
                 <tr>
                   <th scope="col">Legal name</th>
+                  <th scope="col">Trade name</th>
                   <th scope="col">Karbon</th>
                   <th scope="col">Business number</th>
                   <th scope="col">Contacts</th>
@@ -200,6 +247,23 @@ export default async function ClientsPage({
                       {client.isTestFixture ? (
                         <span className="badge ml-2 bg-amber-100 text-amber-800">test fixture</span>
                       ) : null}
+                    </td>
+                    {/*
+                      The half of Karbon's name that is not the legal entity.
+
+                      The import splits "2140071 Alberta Ltd. (JC Spa and
+                      Wellness)" because the numbered company is what belongs on
+                      a signed letter. Nothing showed the other half, so there
+                      was no way to see whether the trading name had been kept
+                      or thrown away — and the trading name is the one anybody
+                      at the firm would recognise.
+                    */}
+                    <td className="text-xs">
+                      {client.displayName && client.displayName !== client.legalName ? (
+                        client.displayName
+                      ) : (
+                        <span className="text-slate-500">—</span>
+                      )}
                     </td>
                     <td className="font-mono text-xs">
                       {client.karbonEntityKey ? (
