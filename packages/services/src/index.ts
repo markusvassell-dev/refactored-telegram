@@ -9,6 +9,7 @@ export * from './generation-service.js';
 export * from './approval-service.js';
 export * from './signing-service.js';
 export * from './external-signature-service.js';
+export * from './client-directory-service.js';
 export * from './client-import-service.js';
 export * from './karbon-library-service.js';
 export * from './participant-service.js';

@@ -25,6 +25,7 @@ export const PERMISSIONS = [
   'review:submit',
 
   // Review
+  'client:correct',
   'review:comment',
   'review:request_changes',
   'review:approve_ordinary',
@@ -75,6 +76,13 @@ const REVIEWER: Permission[] = [
   'review:approve_ordinary',
   'cover_letter:edit',
   'audit:view',
+  // Correcting a client's legal name is a review-grade act, not a preparation
+  // one. The import deliberately refuses to overwrite a name already held here
+  // because the question "is the stored one a deliberate correction or a stale
+  // mistake?" needs a person to answer it — and it is the string that prints on
+  // a document the client signs. Preparer is too low a bar for that; the same
+  // people trusted to accept or reject content are the right floor.
+  'client:correct',
 ];
 
 const PARTNER_OR_FINAL_APPROVER: Permission[] = [

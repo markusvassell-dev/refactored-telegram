@@ -5,6 +5,7 @@ import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
 import { EmptyState, PageHeader } from '@/components/shell';
 import { ActionForm } from '@/components/action-form';
+import { ClientIdentityCard } from '@/components/client-identity';
 import { syncClientDocuments } from '@/app/actions';
 
 export const dynamic = 'force-dynamic';
@@ -66,11 +67,24 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
     <>
       <PageHeader
         title={client.legalName}
-        description={
-          client.karbonEntityKey
-            ? `Karbon ${client.karbonEntityType ?? 'entity'} ${client.karbonEntityKey}`
-            : 'Not linked to Karbon.'
-        }
+        description="Who this client is, what Karbon calls them, and every document Karbon holds for them."
+      />
+
+      {/*
+        Identity first, and in the same component the search result uses. A page
+        headed only "2140071 Alberta Ltd." is not identifiable by the person who
+        opened it, and a client stored under the wrong legal name is only visible
+        as wrong next to what Karbon says.
+      */}
+      <ClientIdentityCard
+        client={client}
+        counts={{
+          contacts: client.contacts.length,
+          documents: client._count.karbonDocuments,
+          engagements: client._count.engagements,
+        }}
+        canCorrect={can(user, 'client:correct')}
+        csrfToken={csrfToken}
       />
 
       <section className="card mb-6">

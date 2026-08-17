@@ -20,6 +20,10 @@ export const AUDIT_EVENT_TYPES = [
   'ROLE_REVOKED',
   'USER_ACCESS_CHANGED',
   'TEMPLATE_VERSION_UPLOADED',
+  // The legal name that prints on a signed document, changed by hand. The
+  // import will not touch one, so every change to it is somebody's decision and
+  // belongs in the trail with the before and after.
+  'CLIENT_LEGAL_NAME_CORRECTED',
   'ENGAGEMENT_CREATED',
   'GENERATION_REQUESTED',
   'SOURCE_DOCUMENT_SELECTED',

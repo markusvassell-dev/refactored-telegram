@@ -16,9 +16,29 @@ never touches binary floating point.
 
 | Entity | Purpose |
 | --- | --- |
-| `Client` | Legal name, business number, trust account number, address, group, partner. `isTestFixture` marks sample data. |
+| `Client` | Legal name, business number, trust account number, address, group, partner. `isTestFixture` marks sample data. `karbonFullName`, `karbonContactType` and `karbonNameSyncedAt` mirror Karbon and are the one part of this row the import **overwrites** — see below. |
 | `ClientContact` | People at the client, with the Karbon contact key. |
 | `KarbonWorkItem` | Local mirror of a work item, with `rawSnapshot` for the activity view. |
+
+**A client has two real names, and the row holds three.** Karbon records a
+numbered corporation as `2409116 Alberta Ltd. (Lava Grill Seton)`. The import
+splits it: `legalName` takes the entity that signs, because that is what prints
+on an engagement letter, and `displayName` takes the trading name, because that
+is the only name anybody at the firm uses.
+
+`karbonFullName` keeps the original, unsplit. That is not redundancy. The import
+**never overwrites** a `legalName` already stored — a person may have corrected
+one deliberately — so a client created before names were separated keeps its
+storefront name, the difference is reported once, and Karbon's string used to be
+discarded. Nothing afterwards could say what the legal entity was. Keeping it
+makes the client findable by either name and gives the correction path something
+to adopt.
+
+These three columns are therefore the exception to "never overwrite": they are a
+record of what the vendor said, not a value anybody here chose, so a stale copy
+is simply wrong. `client:correct` (reviewer and above) may accept the split legal
+name onto `legalName`, which writes a `CLIENT_LEGAL_NAME_CORRECTED` audit event
+carrying both names.
 
 ### Engagements
 

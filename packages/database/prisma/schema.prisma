@@ -348,6 +348,22 @@ model Client {
   karbonEntityType   String?
   legalName          String
   displayName        String?
+  /// Karbon's `FullName`, verbatim and unsplit — "2409116 Alberta Ltd. (Lava Grill Seton)".
+  ///
+  /// The import splits that string, keeps the legal half and discards the
+  /// original. For a client already stored under the wrong name that is a real
+  /// loss: the difference was computed, reported once, and thrown away, so
+  /// nothing afterwards could say what Karbon actually calls the client.
+  ///
+  /// A mirror of the vendor, not a value anybody here chose — which is why it is
+  /// the one client column the import refreshes rather than only fills when
+  /// empty. "Never overwrite" protects a person's correction, and there is no
+  /// correction to protect in a record of what somebody else said.
+  karbonFullName     String?
+  karbonContactType  String?
+  /// When the three mirror columns above were last refreshed from Karbon, so a
+  /// screen can date "Karbon says …" instead of asserting it timelessly.
+  karbonNameSyncedAt DateTime?
   /// Corporations only.
   businessNumber     String?
   /// Trusts and estates only. "Pending" is represented as null plus a flag.
@@ -372,6 +388,7 @@ model Client {
   librarySyncs    KarbonLibrarySync[]
 
   @@index([legalName])
+  @@index([karbonFullName])
   @@index([clientGroup])
   @@index([isTestFixture])
   @@map("client")

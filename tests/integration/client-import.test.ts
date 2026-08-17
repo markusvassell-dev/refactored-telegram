@@ -136,6 +136,49 @@ describe('importing clients from Karbon', () => {
     expect(stored).toBe(0);
   });
 
+  it('keeps the unsplit name Karbon holds, for a client it will not otherwise touch', async () => {
+    // The one client field the import overwrites, and the reason it must.
+    //
+    // A legal name here is protected because somebody may have corrected it.
+    // That protection cost the answer: the import read Karbon's string,
+    // compared it, reported a difference and discarded it, so nothing
+    // afterwards could say what Karbon actually calls the client. Keeping it is
+    // what makes the client findable by the only name the firm uses.
+    const first = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+    const target = first.created[0]!;
+
+    await prisma.client.update({
+      where: { karbonEntityKey: target.entityKey },
+      data: { legalName: 'Corrected Legal Name Ltd.', karbonFullName: null, karbonNameSyncedAt: null },
+    });
+
+    await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+
+    const after = await prisma.client.findUniqueOrThrow({ where: { karbonEntityKey: target.entityKey } });
+    // The correction survives, and Karbon's own name is now recorded beside it.
+    expect(after.legalName).toBe('Corrected Legal Name Ltd.');
+    expect(after.karbonFullName).toBe('Ziegeman Pipeline Services Ltd.');
+    expect(after.karbonNameSyncedAt).not.toBeNull();
+  });
+
+  it('does not refresh the Karbon name on a preview, and says so', async () => {
+    // A preview writes nothing. Without the note, the first preview after this
+    // shipped would look like the new column had silently failed to populate.
+    const first = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+    const target = first.created[0]!;
+
+    await prisma.client.update({
+      where: { karbonEntityKey: target.entityKey },
+      data: { karbonFullName: null, karbonNameSyncedAt: null },
+    });
+
+    const preview = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: true });
+
+    const after = await prisma.client.findUniqueOrThrow({ where: { karbonEntityKey: target.entityKey } });
+    expect(after.karbonFullName).toBeNull();
+    expect(preview.notes.some((note) => note.includes('does not refresh what Karbon calls each client'))).toBe(true);
+  });
+
   it('running it twice does not duplicate anybody', async () => {
     await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
     const second = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
