@@ -271,11 +271,21 @@ export class KarbonRestClient implements KarbonProvider {
     // Half the budget each. A total taken from organisations first would let a
     // firm with more organisations than the limit never see one individual
     // client, and an individual filing a T1 is a Contact.
-    const share = options.limit === undefined ? undefined : Math.max(1, Math.ceil(options.limit / 2));
+    //
+    // The halves are not both rounded up. Giving each `ceil(n / 2)` returned
+    // n + 1 on an odd limit — asking for 25 produced 26 — which is small, and
+    // still a limit that does not mean what it says. The second share takes the
+    // remainder so the two always sum to exactly the total.
+    const organizationShare =
+      options.limit === undefined ? undefined : Math.max(1, Math.ceil(options.limit / 2));
+    const contactShare =
+      options.limit === undefined || organizationShare === undefined
+        ? undefined
+        : Math.max(1, options.limit - organizationShare);
 
     const [organizations, contacts] = await Promise.all([
-      this.pageClientList('/Organizations', 'Organization', 'OrganizationKey', share),
-      this.pageClientList('/Contacts', 'Contact', 'ContactKey', share),
+      this.pageClientList('/Organizations', 'Organization', 'OrganizationKey', organizationShare),
+      this.pageClientList('/Contacts', 'Contact', 'ContactKey', contactShare),
     ]);
 
     return {

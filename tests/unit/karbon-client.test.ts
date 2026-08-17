@@ -769,6 +769,44 @@ describe('searching past the first page', () => {
   });
 });
 
+describe('splitting the client-list budget between two endpoints', () => {
+  /** Pages of client-list rows, so a limit can be observed being honoured. */
+  function listingClient(organizations: number, contacts: number) {
+    const rows = (prefix: string, count: number, keyField: string) =>
+      Array.from({ length: count }, (_, index) => ({ [keyField]: `${prefix}-${index}`, FullName: `${prefix} ${index}` }));
+
+    return clientWith([
+      { status: 200, body: { value: rows('org', organizations, 'OrganizationKey') } },
+      { status: 200, body: { value: rows('con', contacts, 'ContactKey') } },
+    ]).client;
+  }
+
+  it('returns no more than the total asked for, on an odd limit', async () => {
+    // Observed against the live tenant: a limit of 25 returned 26, because each
+    // half was rounded up. Small, and still a limit that does not mean what it
+    // says — which is the whole reason the limit became a total.
+    const client = listingClient(40, 40);
+
+    const list = await client.listClients({ limit: 25 });
+
+    expect(list.clients.length).toBeLessThanOrEqual(25);
+    // Both endpoints are still represented; the fix must not become "take them
+    // all from organisations", which would hide every individual client.
+    expect(list.clients.some((entry) => entry.entityType === 'Organization')).toBe(true);
+    expect(list.clients.some((entry) => entry.entityType === 'Contact')).toBe(true);
+    expect(list.more).toBe(true);
+  });
+
+  it('splits an even limit exactly in half', async () => {
+    const client = listingClient(40, 40);
+
+    const list = await client.listClients({ limit: 20 });
+
+    expect(list.clients.filter((entry) => entry.entityType === 'Organization')).toHaveLength(10);
+    expect(list.clients.filter((entry) => entry.entityType === 'Contact')).toHaveLength(10);
+  });
+});
+
 describe('separating a trading name from a legal name', () => {
   /**
    * The defect this covers, found in a live import preview. Karbon's `FullName`
