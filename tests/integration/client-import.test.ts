@@ -665,6 +665,39 @@ describe('importing clients from Karbon', () => {
     expect(karbon.calls.filter((call) => call.operation === 'getClient').length).toBeGreaterThan(0);
   });
 
+  it('bounds how many stored clients a preview re-reads', async () => {
+    // The defect this covers: a preview reads every client it already holds, to
+    // compare and to find blanks — so its cost grows with every successful
+    // import. Cheap at sixty stored, a timeout once a whole book is in. The same
+    // shape as the unqueued import, arriving exactly when the import succeeds.
+    await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+
+    const karbon = connectedKarbon();
+    const result = await service.run({
+      karbon,
+      actor: admin,
+      dryRun: true,
+      maxComparedPerPreview: 1,
+    });
+
+    // One compared, the rest left alone — and said out loud rather than quietly
+    // omitted, because a partial comparison reported as a whole answer is the
+    // mistake the client-list count already made once.
+    expect(karbon.calls.filter((call) => call.operation === 'getClient')).toHaveLength(1);
+    expect(result.notes.join(' ')).toMatch(/Compared 1 of the 3 clients already here/i);
+  });
+
+  it('compares every stored client on a real import, which nothing is waiting on', async () => {
+    // The bound is about a request, and the import runs in the worker. Capping
+    // it there would leave blanks unfilled for no reason.
+    await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+
+    const karbon = connectedKarbon();
+    await service.run({ karbon, actor: admin, dryRun: false, maxComparedPerPreview: 1 });
+
+    expect(karbon.calls.filter((call) => call.operation === 'getClient').length).toBeGreaterThan(1);
+  });
+
   it('says what differs, not merely how many do', async () => {
     // The screen promises that differences are reported so you can decide.
     // They were computed, returned and dropped, so it reported a count and

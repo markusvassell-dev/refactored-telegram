@@ -103,6 +103,14 @@ export interface ClientImportInput {
   includeAllContactTypes?: boolean;
   /** True to report only, changing nothing. */
   dryRun: boolean;
+  /**
+   * How many already-stored clients a preview re-reads to compare.
+   *
+   * Settable so a test can drive the bound without seeding hundreds of clients,
+   * and so the value is visible rather than buried. Ignored for a real import,
+   * which compares everything.
+   */
+  maxComparedPerPreview?: number;
   correlationId?: string;
 }
 
@@ -146,10 +154,13 @@ const DEFAULT_LIMIT = 200;
 /**
  * The most work items one import may examine.
  *
- * Clients are derived from work items, so a firm whose whole book does not
- * appear in the first `DEFAULT_LIMIT` needs to look further — but not without
- * a ceiling. Each distinct client costs a `getClient` call against a
- * rate-limited API, and this runs inside a request.
+ * A firm whose whole book does not appear in the first `DEFAULT_LIMIT` needs to
+ * look further — but not without a ceiling.
+ *
+ * This used to say the cost mattered because the import "runs inside a request".
+ * It no longer does: the real import is a worker job, precisely because several
+ * hundred clients is minutes of rate-limited reads. A preview still runs in the
+ * request and is bounded separately — see `MAX_COMPARED_PER_PREVIEW`.
  *
  * Matched to what the Karbon client can actually page through
  * (`MAX_SEARCH_PAGES` × `PAGE_SIZE`), so asking for more than this would
@@ -186,6 +197,21 @@ const MAX_LIMIT = 5000;
  * a convenience, not a rule about what a client is.
  */
 const EXCLUDED_CONTACT_TYPES = ['Inactive', 'Dissolved'];
+
+/**
+ * How many already-stored clients a **preview** re-reads to compare.
+ *
+ * A preview needs the detail only for clients it already holds, which sounds
+ * bounded and is not: it grows with every successful import, so the screen gets
+ * slower precisely as the import starts working. At Karbon's documented 120
+ * requests a minute this is roughly a minute of reads, which a request survives.
+ *
+ * Bounded rather than removed, because the comparison is the point of a preview
+ * — it is what reports a legal name that differs. The remainder is counted and
+ * said out loud rather than silently omitted, and the real import compares
+ * everything, since nothing is waiting on it.
+ */
+const MAX_COMPARED_PER_PREVIEW = 120;
 
 export class ClientImportService {
   constructor(private readonly deps: ClientImportDeps) {}
@@ -306,6 +332,9 @@ export class ClientImportService {
       ).map((row) => row.karbonEntityKey as string),
     );
 
+    let compared = 0;
+    let notCompared = 0;
+
     for (const entityKey of entityKeys) {
       if (input.dryRun && !alreadyHere.has(entityKey)) {
         const summary = summaryByKey.get(entityKey);
@@ -317,6 +346,22 @@ export class ClientImportService {
           continue;
         }
       }
+
+      // A preview still reads every client it already holds, to compare and to
+      // find blanks — so its cost grows with every successful import. Cheap at
+      // sixty stored and a timeout once a whole book is in: the same defect as
+      // the unqueued import, one step behind it, arriving exactly when the
+      // import finally succeeds.
+      //
+      // Only the preview is bounded. The real import runs in the worker with no
+      // request waiting on it, and capping the comparison there would leave
+      // blanks unfilled for no reason.
+      const comparisonBudget = input.maxComparedPerPreview ?? MAX_COMPARED_PER_PREVIEW;
+      if (input.dryRun && alreadyHere.has(entityKey) && compared >= comparisonBudget) {
+        notCompared += 1;
+        continue;
+      }
+      if (input.dryRun && alreadyHere.has(entityKey)) compared += 1;
 
       let karbonClient;
       try {
@@ -438,6 +483,15 @@ export class ClientImportService {
     if (result.differing.length > 0) {
       notes.push(
         `${result.differing.length} client(s) already here differ from Karbon. Nothing was changed — the details that go into a legal document are this application’s to hold, and a person may have corrected them deliberately.`,
+      );
+    }
+
+    if (notCompared > 0) {
+      // Said, not swallowed. A preview that quietly examined a third of what it
+      // found would report "3 differ" from a sample and read as the whole answer
+      // — which is the mistake the client-list count already made once.
+      notes.push(
+        `Compared ${compared} of the ${compared + notCompared} clients already here; the rest were not re-read this time, so differences and blanks among them are not counted above. Importing compares every one.`,
       );
     }
 
@@ -647,6 +701,55 @@ const DIFFERENCES_SHOWN = 10;
  * It matters most for the legal name, which is one of the compared fields and
  * prints verbatim into a legal document.
  */
+/**
+ * One sentence-per-count summary of what an import did.
+ *
+ * Lives here rather than in the caller because there are now two: the screen
+ * renders it inline for a preview, and the worker writes it onto the job so the
+ * System Jobs page can say what a completed import actually did. Two copies of
+ * this arithmetic would drift, and the counts are subtle enough to matter — a
+ * client can legitimately appear in two of them.
+ */
+export function summariseClientImport(result: ClientImportResult): string {
+  const parts = [
+    `${result.found} client(s) found in Karbon.`,
+    result.dryRun ? `${result.created.length} would be added.` : `${result.created.length} added.`,
+    `${result.unchanged} already here and matching.`,
+  ];
+
+  if (result.backfilled.length > 0) {
+    // Said separately from "differ and were left alone", because they are
+    // opposites and a reader needs to tell them apart: this is what changed on a
+    // client already here, that is what deliberately did not.
+    const contacts = result.backfilled.reduce((total, row) => total + row.contactsAdded, 0);
+    const filled = result.dryRun ? 'would have blanks filled' : 'had blanks filled';
+    parts.push(`${result.backfilled.length} ${filled}${contacts > 0 ? `, adding ${contacts} contact(s)` : ''}.`);
+  }
+
+  if (result.differing.length > 0) parts.push(`${result.differing.length} differ and were left alone.`);
+  if (result.failed.length > 0) parts.push(`${result.failed.length} could not be read.`);
+
+  // In the summary line, not only in the notes. A skipped client is a client
+  // absent from the list afterwards, and the count that explains why belongs
+  // where the other counts are.
+  const skipped = result.skippedByContactType.reduce((total, row) => total + row.count, 0);
+  if (skipped > 0) parts.push(`${skipped} skipped by contact type.`);
+
+  // A client whose blanks were filled may also differ on a field that already
+  // held a value, so it is counted in both. Without saying so the totals do not
+  // add up to the number found, and a reader who tries to reconcile them
+  // concludes something was lost.
+  const backfilledKeys = new Set(result.backfilled.map((row) => row.entityKey));
+  const alsoDiffering = result.differing.filter((row) => backfilledKeys.has(row.entityKey)).length;
+  if (alsoDiffering > 0) {
+    parts.push(
+      `${alsoDiffering} appear(s) in two of those counts: blanks filled, and a difference left alone elsewhere.`,
+    );
+  }
+
+  return parts.join(' ');
+}
+
 export function describeDifferences(differing: ClientImportResult['differing']): string[] {
   const lines = differing.slice(0, DIFFERENCES_SHOWN).map((row) => {
     const fields = row.differences

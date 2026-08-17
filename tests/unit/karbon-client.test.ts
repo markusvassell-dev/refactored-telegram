@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { KarbonRestClient, RateLimiter, retryAfterMs, splitEntityName } from '@element/integrations';
+import { toUserMessage } from '@element/shared';
 
 /**
  * How the Karbon client behaves against a tenant that pushes back.
@@ -208,6 +209,64 @@ describe('the rate limiter', () => {
 
   it('refuses a nonsensical budget rather than dividing by zero', () => {
     expect(() => new RateLimiter({ requestsPerMinute: 0 })).toThrow(/positive/i);
+  });
+});
+
+describe('what a Karbon failure tells the person who caused it', () => {
+  /**
+   * The defect this covers, and why several rounds of diagnosis were guesswork.
+   * Every Karbon failure reached the screen as `IntegrationError`'s default —
+   * "The Karbon integration is currently unavailable" — one sentence that fits a
+   * 429, a malformed request and an expired token equally. The status and
+   * Karbon's own response body were captured in `context` and read by nothing.
+   *
+   * Asserted through `toUserMessage`, because the user-facing string is the
+   * thing that was wrong; the internal message was always fine.
+   */
+  it('says the status and repeats what Karbon said', async () => {
+    const { client } = clientWith([
+      { status: 400, body: { Message: "The field 'EntityKey' is required." } },
+    ]);
+
+    const error = await client.getWorkItem('WI-1').then(
+      () => null,
+      (thrown: unknown) => thrown,
+    );
+
+    const shown = toUserMessage(error);
+    expect(shown).toContain('400');
+    expect(shown).toContain('/WorkItems/WI-1');
+    expect(shown).toContain("The field 'EntityKey' is required.");
+    // The old generic sentence must not be what a reader gets.
+    expect(shown).not.toBe('The Karbon integration is currently unavailable.');
+  });
+
+  it('distinguishes being throttled from being wrong', async () => {
+    // A 429 means wait; a 400 means fix something. A message that reads the same
+    // for both is why "it worked once and then stopped" took so long to place.
+    const { client } = clientWith([
+      { status: 429, body: 'Rate limit exceeded' },
+      { status: 429, body: 'Rate limit exceeded' },
+      { status: 429, body: 'Rate limit exceeded' },
+    ]);
+
+    const error = await client.getWorkItem('WI-1').then(
+      () => null,
+      (thrown: unknown) => thrown,
+    );
+
+    expect(toUserMessage(error)).toContain('429');
+  });
+
+  it('says so plainly when Karbon explained nothing', async () => {
+    const { client } = clientWith([{ status: 403 }]);
+
+    const error = await client.getWorkItem('WI-1').then(
+      () => null,
+      (thrown: unknown) => thrown,
+    );
+
+    expect(toUserMessage(error)).toMatch(/sent no explanation/i);
   });
 });
 

@@ -1,12 +1,12 @@
 import { PrismaClient } from '@element/database';
 import { KarbonRestClient, type KarbonProvider, type KarbonWorkItem } from '@element/integrations';
 import {
-  AppError,
   createLogger,
   decryptSecret,
   describeBuild,
   describeDatabaseProblem,
   describeSandboxMislabel,
+  describeVendorFailure,
   formatDatabaseProblem,
   loadEnv,
 } from '@element/shared';
@@ -102,14 +102,15 @@ async function attempt<T>(
   }
 }
 
-/** The vendor's own words, where it gave any. */
+/**
+ * The vendor's own words, where it gave any.
+ *
+ * The shared implementation, so this harness and the application describe a
+ * Karbon failure identically. The separator keeps the second line aligned under
+ * this script's status column.
+ */
 function describeFailure(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  const detail = error instanceof AppError ? error.context.detail : undefined;
-
-  if (typeof detail !== 'string' || detail.trim().length === 0) return message;
-  // Karbon answers with JSON; unwrap the human-readable part when it is there.
-  return `${message}\n${' '.repeat(37)}${detail.trim().replace(/\s*\n\s*/g, ' ').slice(0, 400)}`;
+  return describeVendorFailure(error, `\n${' '.repeat(37)}`);
 }
 
 function argument(name: string): string | undefined {

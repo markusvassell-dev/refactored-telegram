@@ -34,6 +34,7 @@ export const JOB_TYPES = [
   'BULK_ROLLOUT_ITEM',
   'PURGE_TEMPORARY_FILES',
   'SEND_NOTIFICATION_EMAILS',
+  'IMPORT_CLIENTS_FROM_KARBON',
 ] as const;
 
 export type JobType = (typeof JOB_TYPES)[number];
@@ -182,13 +183,29 @@ export class JobQueue {
     };
   }
 
+  /**
+   * Records success, and lets the job say what it did.
+   *
+   * `result` is stored in full for an administrator, but **nothing reads that
+   * column** — no screen selects it and there is no per-job detail page. So a
+   * handler that finished real work had no way to report it: `userMessage` was
+   * written only by `fail`, which meant the System Jobs page could explain every
+   * failure and no success.
+   *
+   * A handler may therefore return a `userMessage` string alongside its result,
+   * and it is lifted onto the column the page already renders. It stays out of
+   * `result` so the stored payload remains the machine-readable one.
+   */
   async succeed(jobId: string, result?: Record<string, unknown>): Promise<void> {
+    const { userMessage, ...rest } = result ?? {};
+
     await this.prisma.backgroundJob.update({
       where: { id: jobId },
       data: {
         status: 'SUCCEEDED',
         completedAt: new Date(),
-        result: (result ?? {}) as Prisma.InputJsonValue,
+        result: rest as Prisma.InputJsonValue,
+        userMessage: typeof userMessage === 'string' ? userMessage.slice(0, 1000) : null,
         failureReason: null,
         lockedBy: null,
         lockedAt: null,

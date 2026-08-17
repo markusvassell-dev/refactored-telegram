@@ -6,6 +6,7 @@ import {
   CoverLetterService,
   CoverLetterNarrativeService,
   KarbonLibraryService,
+  ClientImportService,
   DateRuleService,
   DocumentStore,
   EngagementService,
@@ -59,6 +60,7 @@ export interface WorkerContext {
   coverLetters: CoverLetterService;
   coverLetterNarratives: CoverLetterNarrativeService;
   karbonLibrary: KarbonLibraryService;
+  clientImport: ClientImportService;
   notifications: KarbonNotificationService;
   providers(): Promise<ResolvedProviders>;
   testMode(): Promise<{ testMode: boolean; productionSendingEnabled: boolean }>;
@@ -134,6 +136,9 @@ export function buildWorkerContext(): WorkerContext {
     templateDirectory,
   });
   const karbonLibrary = new KarbonLibraryService({ prisma, audit, logger });
+  // Absent from the worker until the import became a job: several hundred
+  // clients is one rate-limited Karbon read each, which no request should hold.
+  const clientImport = new ClientImportService({ prisma, audit, logger });
   const notifications = new KarbonNotificationService({
     prisma,
     audit,
@@ -171,6 +176,7 @@ export function buildWorkerContext(): WorkerContext {
     coverLetters,
     coverLetterNarratives,
     karbonLibrary,
+    clientImport,
     notifications,
     testMode,
     providers: async () => {

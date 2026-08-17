@@ -118,3 +118,30 @@ export function toUserMessage(error: unknown): string {
   if (error instanceof AppError) return error.userMessage;
   return 'Something went wrong. An administrator has the technical details.';
 }
+
+/**
+ * A failure described in the vendor's own words, where it gave any.
+ *
+ * `HTTP 400 for /Notes` says a request was rejected and nothing about why.
+ * The vendor's body says which field it objected to, and that body sits in
+ * `context.detail` — captured by the client and, until this existed, read by
+ * nothing. The verification harness had its own copy of this and the
+ * application had none, so an operator saw only "the integration is currently
+ * unavailable" and had to go to the logs to learn anything at all.
+ *
+ * Kept here, next to `toUserMessage`, so the harness and the application cannot
+ * disagree about what a vendor failure says.
+ *
+ * `separator` exists because the two callers format differently: the harness
+ * aligns a second line under its column, a screen wants one sentence.
+ */
+export function describeVendorFailure(error: unknown, separator = ' — '): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const detail = error instanceof AppError ? error.context.detail : undefined;
+
+  if (typeof detail !== 'string' || detail.trim().length === 0) return message;
+
+  // Collapsed to one line: the body is often pretty-printed JSON, and a wall of
+  // it buries the sentence that matters.
+  return `${message}${separator}${detail.trim().replace(/\s*\n\s*/g, ' ').slice(0, 400)}`;
+}

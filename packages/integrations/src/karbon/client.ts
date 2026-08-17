@@ -1,4 +1,4 @@
-import { IntegrationError, type Logger, createLogger } from '@element/shared';
+import { IntegrationError, describeVendorFailure, type Logger, createLogger } from '@element/shared';
 import { KARBON_CAPABILITY_MATRIX } from './capabilities.js';
 import { KARBON_DOCUMENTED_REQUESTS_PER_MINUTE, RateLimiter, retryAfterMs } from '../http/throttle.js';
 import type {
@@ -195,9 +195,24 @@ export class KarbonRestClient implements KarbonProvider {
             await delay(Math.max(requested ?? 0, backoffMs(attempt)));
             continue;
           }
+          // The user-facing message says what Karbon refused and, where Karbon
+          // explained itself, what it said. `IntegrationError`'s default is
+          // "The Karbon integration is currently unavailable" — one sentence
+          // that fits a 429, a malformed request and an expired token equally,
+          // and sends every reader to the logs. The status is the part that
+          // says whether to wait or to fix something.
+          //
+          // The body is Karbon's response, not a credential; the 500-character
+          // cap it arrives with is what reaches the screen.
+          const trimmed = detail.slice(0, 500);
           throw new IntegrationError('Karbon', `HTTP ${response.status} for ${options.path}`, {
             retryable: RETRYABLE_STATUS.has(response.status),
-            context: { status: response.status, path: options.path, detail: detail.slice(0, 500) },
+            userMessage: trimmed.trim()
+              ? `Karbon refused the request (HTTP ${response.status} for ${options.path}): ${trimmed
+                  .trim()
+                  .replace(/\s*\n\s*/g, ' ')}`
+              : `Karbon refused the request with HTTP ${response.status} for ${options.path}, and sent no explanation.`,
+            context: { status: response.status, path: options.path, detail: trimmed },
           });
         }
 
@@ -216,10 +231,22 @@ export class KarbonRestClient implements KarbonProvider {
       }
     }
 
-    throw new IntegrationError('Karbon', `Request to ${options.path} failed after ${this.config.maxRetries} attempts`, {
-      retryable: true,
-      cause: lastError,
-    });
+    // The retries ran out, and this is the throw a throttled caller actually
+    // gets — the per-response message above is never reached when every attempt
+    // is retryable. It kept the generic default, so being rate-limited read as
+    // "the integration is currently unavailable": true, unhelpful, and the exact
+    // case that presented as "it worked once and then stopped working".
+    //
+    // The last failure's own words, where it gave any, are what say which it is.
+    throw new IntegrationError(
+      'Karbon',
+      `Request to ${options.path} failed after ${this.config.maxRetries} attempts`,
+      {
+        retryable: true,
+        cause: lastError,
+        userMessage: `Karbon did not accept the request to ${options.path} after ${this.config.maxRetries} attempts: ${describeVendorFailure(lastError)}`,
+      },
+    );
   }
 
   /**

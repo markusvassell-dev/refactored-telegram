@@ -16,6 +16,7 @@ import {
 } from '@element/shared';
 import {
   describeDifferences,
+  summariseClientImport,
   factToken,
   type ClientImportSource,
   type IntegrationProviderKey,
@@ -1700,6 +1701,55 @@ export async function importClientsFromKarbon(formData: FormData): Promise<Actio
 
     const providers = await container.providers();
 
+    if (!dryRun) {
+      // Queued rather than done here. Every client created costs one read
+      // against a rate-limited API, so a book of several hundred is minutes of
+      // work — and a request that dies partway reports nothing at all. That is
+      // what "Something went wrong" was: not an error anybody could read, but
+      // the absence of one.
+      //
+      // The preconditions stay in the request, following `syncClientDocuments`:
+      // a person who cannot import gets told why now, rather than by a job that
+      // dies quietly minutes later.
+      if (providers.karbon.isMock) {
+        throw new PreconditionError(
+          'Karbon is not connected, so there is nothing to import. The mock adapter would add fictional sample clients to the real client list, where nothing would distinguish them from the firm’s own.',
+        );
+      }
+
+      // One import at a time. Two running together would draw on the same
+      // Karbon budget and race to create the same clients — survivable, since
+      // the import never duplicates, but it wastes an allowance that is the
+      // scarce thing here.
+      const running = await container.prisma.backgroundJob.findFirst({
+        where: { jobType: 'IMPORT_CLIENTS_FROM_KARBON', status: { in: ['PENDING', 'RUNNING'] } },
+        select: { id: true },
+      });
+      if (running) {
+        return {
+          message:
+            'An import is already running. Watch it on System Jobs; starting a second would spend the same Karbon allowance twice.',
+        };
+      }
+
+      const queued = await container.queue.enqueue({
+        jobType: 'IMPORT_CLIENTS_FROM_KARBON',
+        // Time-based on purpose: re-running is how a large import finishes, so
+        // asking twice must mean importing twice.
+        idempotencyKey: `import_clients_${Date.now()}`,
+        payload: { actorId: actor.id, limit, source, includeAllContactTypes },
+        correlationId: newCorrelationId(),
+      });
+
+      revalidatePath('/clients');
+
+      return {
+        message: queued.deduplicated
+          ? 'An import is already queued.'
+          : 'Importing from Karbon in the background. Clients are read one at a time against a rate-limited API, so several hundred takes a few minutes — reload this page to watch them arrive, or open System Jobs for the summary when it finishes.',
+      };
+    }
+
     const result = await container.clientImport.run({
       karbon: providers.karbon,
       actor,
@@ -1712,62 +1762,15 @@ export async function importClientsFromKarbon(formData: FormData): Promise<Actio
 
     revalidatePath('/clients');
 
-    const parts = [
-      `${result.found} client(s) found in Karbon.`,
-      dryRun
-        ? `${result.created.length} would be added.`
-        : `${result.created.length} added.`,
-      `${result.unchanged} already here and matching.`,
-    ];
-    if (result.backfilled.length > 0) {
-      // Said separately from "differ and were left alone", because they are
-      // opposites and a reader needs to tell them apart: this is what changed
-      // on a client already here, that is what deliberately did not.
-      const contacts = result.backfilled.reduce((total, row) => total + row.contactsAdded, 0);
-      const filled = dryRun ? 'would have blanks filled' : 'had blanks filled';
-      parts.push(
-        `${result.backfilled.length} ${filled}${contacts > 0 ? `, adding ${contacts} contact(s)` : ''}.`,
-      );
-    }
-    if (result.differing.length > 0) parts.push(`${result.differing.length} differ and were left alone.`);
-    if (result.failed.length > 0) parts.push(`${result.failed.length} could not be read.`);
-
-    // In the summary line, not only in the notes. A skipped client is a client
-    // absent from the list afterwards, and the count that explains why belongs
-    // where the other counts are.
-    const skipped = result.skippedByContactType.reduce((total, row) => total + row.count, 0);
-    if (skipped > 0) parts.push(`${skipped} skipped by contact type.`);
-
-    // A client whose blanks were filled may also differ on a field that already
-    // held a value, so it is counted in both. Without saying so the totals do
-    // not add up to the number found, and a reader who tries to reconcile them
-    // concludes something was lost.
-    const backfilledKeys = new Set(result.backfilled.map((row) => row.entityKey));
-    const alsoDiffering = result.differing.filter((row) => backfilledKeys.has(row.entityKey)).length;
-    if (alsoDiffering > 0) {
-      parts.push(
-        `${alsoDiffering} appear(s) in two of those counts: blanks filled, and a difference left alone elsewhere.`,
-      );
-    }
-
-    // The reasons, not just the count. A number with no explanation is a
-    // mystery somebody has to come back and investigate; the client that could
-    // not be read is a client no engagement can be started for, and the cause
-    // is usually specific and actionable.
-    //
-    // The same argument applies to a difference, and applies harder: this
-    // screen says differences are reported so you can decide, and until now
-    // they were computed, returned, and dropped here. "5 differ" with no way to
-    // see what differs is not something anybody can decide about — and one of
-    // the compared fields is the legal name, which prints into a legal
-    // document.
+    // The same summary the worker writes onto a queued import, so a preview and
+    // a completed job cannot describe the same numbers differently.
     const blockers = [
       ...result.notes,
       ...result.failed.map((entry) => `${entry.entityKey}: ${entry.reason}`),
       ...describeDifferences(result.differing),
     ];
 
-    return { ok: true, message: parts.join(' '), blockers };
+    return { message: summariseClientImport(result), blockers };
   });
 }
 

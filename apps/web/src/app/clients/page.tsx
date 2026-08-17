@@ -19,8 +19,9 @@ export const dynamic = 'force-dynamic';
  * without offering any way to answer the report.
  *
  * Deeper is not simply better: each distinct client costs a request against a
- * rate-limited API, and the import runs inside a page request. So the choices
- * are coarse, and the default stays where it was.
+ * rate-limited API. Importing runs in the worker now, so depth no longer risks
+ * the page — but it still spends a shared Karbon allowance, so the choices stay
+ * coarse and the default stays where it was.
  */
 function WorkItemDepth({ id }: { id: string }) {
   return (
@@ -53,9 +54,10 @@ function WorkItemDepth({ id }: { id: string }) {
         complete rather than merely long. Previewing is cheap at any depth — it reads the list, not each client.
       </p>
       <p className="field-note">
-        Importing is not. Each client actually added costs one Karbon request, and Karbon allows about 120 a minute, so
-        a first import of several hundred can run longer than the page will wait. That is safe: nothing is duplicated,
-        and running it again continues where it stopped. Repeat until it reports nothing left to add.
+        Importing runs in the background, because each client added costs one Karbon request and Karbon allows about
+        120 a minute — several hundred takes a few minutes. Reload this page to watch them arrive, or open System Jobs
+        for the summary when it finishes. Running it again is safe: nothing is duplicated and it continues where it
+        stopped.
       </p>
 
       <label className="mt-4 flex items-start gap-2 text-sm text-slate-700">
@@ -157,7 +159,9 @@ export default async function ClientsPage({
                 >
                   <input type="hidden" name="dryRun" value="false" />
                   <WorkItemDepth id="import-limit" />
-                  <p className="text-sm text-slate-600">Adds the new ones. Existing clients are left alone.</p>
+                  <p className="text-sm text-slate-600">
+                    Adds the new ones in the background. Existing clients are left alone.
+                  </p>
                 </ActionForm>
               </div>
             )}

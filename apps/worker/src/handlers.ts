@@ -1,4 +1,9 @@
-import { NotificationEmailService, type JobHandler, type JobType } from '@element/services';
+import {
+  NotificationEmailService,
+  summariseClientImport,
+  type JobHandler,
+  type JobType,
+} from '@element/services';
 import { extractPdfText, DeterministicExtractor, selectPriorYearDocument } from '@element/integrations';
 import { detectCheckboxStates, extractParagraphs, isPdf, parseManifest } from '@element/documents';
 import { PreconditionError, ValidationError, sha256Hex, type DocumentType } from '@element/shared';
@@ -626,6 +631,56 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
     },
 
     // ---------------------------------------------------------- Adobe Sign
+    /**
+     * Bringing the firm's clients across from Karbon.
+     *
+     * A background job because the size does not fit a request. Every client
+     * created costs one read against a rate-limited API — Karbon documents 120
+     * a minute — so a book of several hundred is minutes of work, and a request
+     * that dies partway reports nothing at all: no counts, no names, no reason.
+     * That is what a firm saw as "Something went wrong".
+     *
+     * Safe to run more than once by construction: the import never duplicates
+     * and continues where the last run stopped, so a retry after a restart is
+     * ordinary rather than delicate.
+     */
+    IMPORT_CLIENTS_FROM_KARBON: async ({ job, logger }) => {
+      const actorId = requireString(job.payload, 'actorId');
+      const { karbon } = await context.providers();
+
+      const actor = await context.prisma.user.findUniqueOrThrow({
+        where: { id: actorId },
+        include: { userRoles: true },
+      });
+
+      const result = await context.clientImport.run({
+        karbon,
+        actor: {
+          id: actor.id,
+          email: actor.email,
+          displayName: actor.displayName,
+          roles: actor.userRoles.map((row) => row.role),
+        },
+        dryRun: false,
+        limit: typeof job.payload.limit === 'number' ? job.payload.limit : undefined,
+        source: job.payload.source === 'WORK_ITEMS' ? 'WORK_ITEMS' : 'CLIENT_LIST',
+        includeAllContactTypes: job.payload.includeAllContactTypes === true,
+        correlationId: job.correlationId,
+      });
+
+      if (result.failed.length > 0) {
+        // Warned, not failed. Clients that could not be read are reported with
+        // their reasons and the rest of the import stands; failing the job would
+        // discard a successful import of hundreds because two keys were stale.
+        logger.warn('Some clients could not be read during the import', {
+          failed: result.failed.length,
+          reasons: result.failed.slice(0, 5).map((entry) => entry.reason),
+        });
+      }
+
+      return { ...result, userMessage: summariseClientImport(result) };
+    },
+
     SEND_NOTIFICATION_EMAILS: async () => {
       // Delivery is separate from raising the notice: a signature must never
       // fail because a mail server was briefly unreachable, so the notice is
