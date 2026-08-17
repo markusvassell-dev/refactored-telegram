@@ -371,6 +371,48 @@ The worker has no public domain, so give it the web service's:
 `APP_BASE_URL = https://${{@element/web.RAILWAY_PUBLIC_DOMAIN}}`. It is used for
 the deep links written into Karbon, which must point at the web service.
 
+### Watch patterns must include the shared packages
+
+Each service has build **watch patterns** deciding which changed paths trigger a
+rebuild. They were `/apps/web/**` and `/apps/worker/**` — each service watching
+only its own folder.
+
+**That is wrong in this repository, and it was silently wrong for an evening.**
+Both services run the shared workspace packages: the worker's jobs are almost
+entirely `@element/services` and `@element/integrations`. A change confined to
+`packages/` triggered neither rebuild, so a service kept running the version of
+the shared code it happened to be built with.
+
+Observed rather than theorised. Three commits reached `main` between 21:33 and
+22:17 on 14 August 2026, all touching `packages/`, none touching
+`apps/worker/**`; the worker's latest deployment stayed the one from 21:05.
+Nothing failed. The web service looked current because those commits happened
+to touch `apps/web/` too.
+
+The failure this invites is the worst-shaped one available here: a fix to the
+signing return leg or to Karbon filing lives in `packages/services`, ships,
+reads as deployed, and the worker — the only thing that runs those jobs — never
+receives it.
+
+Both services now watch:
+
+```
+/apps/<own app>/**
+/packages/**
+/package.json
+/pnpm-lock.yaml
+/pnpm-workspace.yaml
+```
+
+A docs-only or CI-only commit still rebuilds nothing, which is the point of
+keeping patterns at all.
+
+**A watch pattern change applies to the next trigger, not retroactively.** A
+service already behind stays behind until something it now watches changes; to
+pull it forward immediately, use **Deploy** on the service in Railway, which
+builds from the branch head. Railway's *Redeploy* re-runs the existing build and
+will not pick up new code.
+
 ### `SERVICE_ROLE` on the worker
 
 The one variable that distinguishes the two services. Miss it and the worker
