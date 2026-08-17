@@ -350,6 +350,7 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
 
   if (!health?.ok) {
     record('SEARCH_WORK_ITEMS', 'SKIP', 'no usable connection; nothing further was attempted');
+    record('LIST_CLIENTS', 'SKIP', 'no usable connection; nothing further was attempted');
     return;
   }
 
@@ -362,6 +363,49 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
     () => client.searchWorkItems({ limit: CANDIDATE_LIMIT }),
     (items) => `${items.length} work item(s) returned (asked for at most ${CANDIDATE_LIMIT})`,
   );
+
+  // The firm's client list, which is a different question from the one above.
+  //
+  // Client discovery ran entirely through work items until 14 August 2026, so a
+  // client nobody had opened work for could not be imported at all. The count
+  // this prints is the one that matters: if it is not larger than the distinct
+  // clients on the work items above, either the tenant genuinely has no client
+  // without recent work, or these endpoints are not answering — and those two
+  // look identical unless the number is put in front of somebody.
+  //
+  // `proves` insists on a non-empty list. A firm running this has clients; an
+  // empty answer from a tenant that demonstrably holds them is the "succeeded
+  // emptily" failure this harness exists to catch, not a pass.
+  const clients = await attempt(
+    'LIST_CLIENTS',
+    () => client.listClients({ limit: CANDIDATE_LIMIT }),
+    (list) => {
+      if (list.length === 0) return 'no organisations or contacts returned';
+      const organizations = list.filter((entry) => entry.entityType === 'Organization').length;
+      const types = [...new Set(list.map((entry) => entry.contactType).filter(Boolean))];
+      return [
+        `${list.length} client(s): ${organizations} organisation(s), ${list.length - organizations} contact(s)`,
+        // The tenant's own vocabulary, printed because nothing filters on it and
+        // the firm is the only party who knows which of these mean "a client".
+        types.length > 0 ? `contact types seen: ${types.join(', ')}` : 'no contact type on any entry',
+      ].join('; ');
+    },
+    (list) => list.length > 0,
+  );
+
+  if (clients && found) {
+    // The comparison is the finding. Stated rather than left for the reader to
+    // do, because the whole defect was a count being read as the client list.
+    const onWorkItems = new Set(found.map((item) => item.clientKey).filter(Boolean)).size;
+    record(
+      'CLIENT_DISCOVERY_COMPARISON',
+      'PASS',
+      `${clients.length} from the client list against ${onWorkItems} distinct client(s) on the first ${found.length} work item(s)` +
+        (clients.length > onWorkItems
+          ? ` — ${clients.length - onWorkItems} would have been invisible to work-item discovery`
+          : ' — work-item discovery would have found no fewer, so every client here has recent work'),
+    );
+  }
 
   const named = workItemKey
     ? await attempt(
