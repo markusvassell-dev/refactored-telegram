@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@element/database';
 import type { AuditLogger } from '@element/audit';
-import type { KarbonClient, KarbonProvider } from '@element/integrations';
+import { splitEntityName, type KarbonClient, type KarbonClientSummary, type KarbonProvider } from '@element/integrations';
 import { PreconditionError, assertCan, type Logger, type Principal } from '@element/shared';
 
 /**
@@ -66,6 +66,14 @@ interface Discovered {
   byContactType: Map<string, number>;
   /** Passed over for their contact type, by type. */
   skippedByContactType: Map<string, number>;
+  /**
+   * The client-list entry per key, when discovery had one.
+   *
+   * Carries the name, which is what lets a preview report a client it would add
+   * without spending a request re-reading what the list already said. Empty for
+   * work-item discovery, which knows keys and nothing else.
+   */
+  summaryByKey: Map<string, KarbonClientSummary>;
 }
 
 /** Whether a Karbon contact type is one this import passes over. */
@@ -206,7 +214,7 @@ export class ClientImportService {
 
     const source = input.source ?? 'CLIENT_LIST';
 
-    const { entityKeys, truncated, byContactType, skippedByContactType } =
+    const { entityKeys, truncated, byContactType, skippedByContactType, summaryByKey } =
       source === 'CLIENT_LIST'
         ? await this.fromClientList(input.karbon, limit, input.includeAllContactTypes === true)
         : await this.fromWorkItems(input.karbon, limit);
@@ -277,7 +285,39 @@ export class ClientImportService {
       notes,
     };
 
+    // Which of these we already hold, in one query rather than one per client.
+    //
+    // This is what makes a preview affordable. Karbon documents 120 requests a
+    // minute and the loop below spends one per candidate, so a preview of 1,000
+    // was 1,000 throttled reads — eight minutes inside a page request, which
+    // does not finish. It timed out on the live tenant, and the depth control
+    // offering 5,000 made that worse rather than better.
+    //
+    // A dry run does not need the detail for a client it is only going to report
+    // as "would be added": the client list already carried its key and its name.
+    // The detail is needed to compare against a client already here, and to
+    // create one for real — so only those cost a request.
+    const alreadyHere = new Set(
+      (
+        await this.deps.prisma.client.findMany({
+          where: { karbonEntityKey: { in: entityKeys } },
+          select: { karbonEntityKey: true },
+        })
+      ).map((row) => row.karbonEntityKey as string),
+    );
+
     for (const entityKey of entityKeys) {
+      if (input.dryRun && !alreadyHere.has(entityKey)) {
+        const summary = summaryByKey.get(entityKey);
+        // No summary means work-item discovery, which carries no name — that
+        // path still has to read the client to have anything to report.
+        if (summary) {
+          result.created.push({ entityKey, legalName: splitEntityName(summary.fullName).legalName });
+          if (splitEntityName(summary.fullName).tradeName) tradeNamesSeparated += 1;
+          continue;
+        }
+      }
+
       let karbonClient;
       try {
         karbonClient = await input.karbon.getClient(entityKey);
@@ -456,6 +496,7 @@ export class ClientImportService {
 
     const byContactType = new Map<string, number>();
     const skippedByContactType = new Map<string, number>();
+    const summaryByKey = new Map<string, KarbonClientSummary>();
     const kept: string[] = [];
 
     for (const summary of clients) {
@@ -470,7 +511,10 @@ export class ClientImportService {
         continue;
       }
 
-      if (summary.entityKey) kept.push(summary.entityKey);
+      if (summary.entityKey) {
+        kept.push(summary.entityKey);
+        summaryByKey.set(summary.entityKey, summary);
+      }
     }
 
     return {
@@ -481,6 +525,7 @@ export class ClientImportService {
       truncated: more,
       byContactType,
       skippedByContactType,
+      summaryByKey,
     };
   }
 
@@ -498,6 +543,9 @@ export class ClientImportService {
       // nothing.
       byContactType: new Map(),
       skippedByContactType: new Map(),
+      // Work items carry a client key and no name, so a preview from this source
+      // still has to read each client to report anything about it.
+      summaryByKey: new Map(),
     };
   }
 

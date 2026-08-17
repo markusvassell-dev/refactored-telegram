@@ -632,6 +632,39 @@ describe('importing clients from Karbon', () => {
     expect(stored.displayName).toBe('JC Spa and Wellness');
   });
 
+  it('previews without reading every client it would add', async () => {
+    // The defect this covers, reported from the live tenant: a preview of 1,000
+    // spent one throttled Karbon read per candidate. At the documented 120
+    // requests a minute that is over eight minutes inside a page request, so it
+    // never returned — and the depth control offering 5,000 made it worse.
+    //
+    // A dry run does not need the detail for a client it will only report as
+    // "would be added": the client list already carried the key and the name.
+    const karbon = connectedKarbon();
+
+    const preview = await service.run({ karbon, actor: admin, dryRun: true });
+
+    expect(preview.created.length).toBe(3);
+    // The cost, which is the whole point. Nothing here is already stored, so a
+    // correct preview reads none of them individually.
+    expect(karbon.calls.filter((call) => call.operation === 'getClient')).toHaveLength(0);
+    // And it still reports real names rather than bare keys.
+    expect(preview.created.map((entry) => entry.legalName)).toContain('Ziegeman Pipeline Services Ltd.');
+  });
+
+  it('still reads the clients it already holds, because those are compared', async () => {
+    // The saving applies only to clients that would be created. An existing one
+    // has to be fetched to be compared against and to have blanks filled, and
+    // skipping that would trade a timeout for a wrong answer.
+    await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+
+    const karbon = connectedKarbon();
+    const second = await service.run({ karbon, actor: admin, dryRun: true });
+
+    expect(second.created).toEqual([]);
+    expect(karbon.calls.filter((call) => call.operation === 'getClient').length).toBeGreaterThan(0);
+  });
+
   it('says what differs, not merely how many do', async () => {
     // The screen promises that differences are reported so you can decide.
     // They were computed, returned and dropped, so it reported a count and

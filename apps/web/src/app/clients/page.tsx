@@ -50,7 +50,12 @@ function WorkItemDepth({ id }: { id: string }) {
       </select>
       <p className="field-note">
         Preview first: it says whether the supply ran out before the limit did, which is how you know the list is
-        complete rather than merely long.
+        complete rather than merely long. Previewing is cheap at any depth — it reads the list, not each client.
+      </p>
+      <p className="field-note">
+        Importing is not. Each client actually added costs one Karbon request, and Karbon allows about 120 a minute, so
+        a first import of several hundred can run longer than the page will wait. That is safe: nothing is duplicated,
+        and running it again continues where it stopped. Repeat until it reports nothing left to add.
       </p>
 
       <label className="mt-4 flex items-start gap-2 text-sm text-slate-700">
