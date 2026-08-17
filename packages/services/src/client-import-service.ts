@@ -151,6 +151,9 @@ export interface ClientImportResult {
 /** Work items to examine. Each distinct client among them is a candidate. */
 const DEFAULT_LIMIT = 200;
 
+/** Rows per transaction when refreshing the stored copy of Karbon's names. */
+const MIRROR_CHUNK = 200;
+
 /**
  * The most work items one import may examine.
  *
@@ -332,6 +335,32 @@ export class ClientImportService {
       ).map((row) => row.karbonEntityKey as string),
     );
 
+    // What Karbon calls each client we already hold, refreshed before anything
+    // else happens.
+    //
+    // This is the one client field the import overwrites, and the exception is
+    // deliberate. "Never overwrite" protects a value somebody here chose — a
+    // legal name corrected against the articles of incorporation, a business
+    // number typed from the CRA notice. There is nothing to protect in a record
+    // of what the vendor said; a stale copy of it is simply wrong.
+    //
+    // It costs no Karbon requests. The names came from the client list, which
+    // was already read to discover these keys at all, so every stored client is
+    // brought up to date for the price of some UPDATEs — including the ones the
+    // loop below will skip because nothing about them differs.
+    const mirrored = input.dryRun
+      ? 0
+      : await this.refreshKarbonNames([...alreadyHere], summaryByKey);
+
+    if (input.dryRun && summaryByKey.size > 0) {
+      // Otherwise the first preview after this shipped would look like the new
+      // columns had silently failed to populate. A preview changes nothing, and
+      // that guarantee is worth more than the convenience of an exception.
+      notes.push('Previewing does not refresh what Karbon calls each client, because a preview writes nothing. Import to update it.');
+    } else if (mirrored > 0) {
+      notes.push(`Refreshed the Karbon name held for ${mirrored} client(s) already here, so they can be looked up by it.`);
+    }
+
     let compared = 0;
     let notCompared = 0;
 
@@ -453,6 +482,14 @@ export class ClientImportService {
           province: karbonClient.province ?? null,
           postalCode: karbonClient.postalCode ?? null,
           country: karbonClient.country ?? 'Canada',
+          // Kept unsplit alongside the halves, so this client can later be found
+          // by the name the firm actually uses for it. `getClient` returns the
+          // name already separated, so the original only exists on the list
+          // summary — which is why the fallback is a null rather than a rejoin:
+          // reconstructing "legal (trade)" would be inventing a vendor string.
+          karbonFullName: summaryByKey.get(entityKey)?.fullName ?? null,
+          karbonContactType: summaryByKey.get(entityKey)?.contactType ?? karbonClient.contactType ?? null,
+          karbonNameSyncedAt: new Date(),
           contacts: {
             create: karbonClient.contacts.map((contact) => ({
               karbonContactKey: contact.contactKey,
@@ -530,6 +567,46 @@ export class ClientImportService {
    * holds nothing — a value already present is left for `compare` to report,
    * because a person may have put it there on purpose.
    */
+  /**
+   * Brings the stored copy of Karbon's name up to date, for clients already here.
+   *
+   * Only the vendor's own fields are touched, and only for keys the discovery
+   * pass actually saw — a client absent from this run keeps whatever it had
+   * rather than being blanked, because "not read this time" is not "Karbon no
+   * longer has a name for it".
+   *
+   * Chunked. Several hundred updates in one transaction holds row locks across
+   * the whole batch for no benefit; the pass is not atomic in any sense that
+   * matters, since each row is independent and re-running fixes any partial one.
+   */
+  private async refreshKarbonNames(
+    entityKeys: string[],
+    summaryByKey: Map<string, KarbonClientSummary>,
+  ): Promise<number> {
+    const syncedAt = new Date();
+    const updates = entityKeys.flatMap((entityKey) => {
+      const summary = summaryByKey.get(entityKey);
+      // Work-item discovery carries no name, so there is nothing to mirror.
+      if (!summary) return [];
+      return [
+        this.deps.prisma.client.update({
+          where: { karbonEntityKey: entityKey },
+          data: {
+            karbonFullName: summary.fullName,
+            karbonContactType: summary.contactType ?? null,
+            karbonNameSyncedAt: syncedAt,
+          },
+        }),
+      ];
+    });
+
+    for (let index = 0; index < updates.length; index += MIRROR_CHUNK) {
+      await this.deps.prisma.$transaction(updates.slice(index, index + MIRROR_CHUNK));
+    }
+
+    return updates.length;
+  }
+
   /**
    * Karbon's own client list.
    *

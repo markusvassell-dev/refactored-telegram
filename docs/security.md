@@ -37,6 +37,13 @@ An **administrator does not get approval or sending rights**. Managing the
 system is not the same as approving a client-facing legal document. Somebody
 who needs both holds both roles.
 
+`client:correct` — changing the legal name that prints on a client's letter —
+starts at **reviewer**, not preparer. The import deliberately refuses to
+overwrite a stored legal name because deciding whether it is a deliberate
+correction or a stale mistake needs a person; that judgement is the same class
+of act as accepting or rejecting content. Every use writes a
+`CLIENT_LEGAL_NAME_CORRECTED` audit event with the name before and after.
+
 ### Separation of duties
 
 Enforced independently of permissions. Nobody may approve:

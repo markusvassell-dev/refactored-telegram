@@ -5,7 +5,9 @@ import { requireUser, sessionCsrfToken } from '@/lib/session';
 import { EmptyState, PageHeader } from '@/components/shell';
 import { Pagination, PageOutOfRange } from '@/components/pagination';
 import { ActionForm } from '@/components/action-form';
+import { ClientIdentityCard, karbonNameDisagreement } from '@/components/client-identity';
 import { boundedCount, parsePageRequest, toPage, withStableOrder } from '@/lib/pagination';
+import { clientSearchWhere, normaliseClientSearch } from '@/lib/client-search';
 import { importClientsFromKarbon } from '@/app/actions';
 
 export const dynamic = 'force-dynamic';
@@ -95,23 +97,8 @@ export default async function ClientsPage({
   const params = await searchParams;
   const request = parsePageRequest(params);
 
-  /*
-    Searching both names, not just the legal one.
-
-    After the import separates "2140071 Alberta Ltd. (JC Spa and Wellness)", the
-    only name anybody at the firm recognises lives in the display name — so a
-    search that read the legal name alone would fail on exactly the clients the
-    separation was for.
-  */
-  const search = (params.q ?? '').trim();
-  const where = search
-    ? {
-        OR: [
-          { legalName: { contains: search, mode: 'insensitive' as const } },
-          { displayName: { contains: search, mode: 'insensitive' as const } },
-        ],
-      }
-    : {};
+  const search = normaliseClientSearch(params.q);
+  const where = clientSearchWhere(params.q);
 
   const [rows, total, providers] = await Promise.all([
     container.prisma.client.findMany({
@@ -132,7 +119,17 @@ export default async function ClientsPage({
   const page = toPage(rows, request);
   const clients = page.items;
   const canImport = can(user, 'engagement:create');
+  const canCorrect = can(user, 'client:correct');
   const karbonIsMock = providers.karbon.isMock;
+
+  /*
+    One match is a lookup, not a list.
+
+    Somebody who typed "Lava Grill" wants that client's identity, and making
+    them read a one-row table and click through to get it is a step for nothing.
+    Several matches stay a table, because then the question is which one.
+  */
+  const soleMatch = search.length > 0 && page.page === 1 && clients.length === 1 ? clients[0] : undefined;
 
   return (
     <>
@@ -188,18 +185,26 @@ export default async function ClientsPage({
         </section>
       ) : null}
 
-      <form method="get" className="card mb-4">
-        <div className="card-body flex flex-wrap items-end gap-3">
+      <section className="card mb-4">
+        <div className="card-header">
+          <h2 className="text-base font-semibold">Find a client</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Searches the legal name, the trade name, the business number, the Karbon key, and the name Karbon itself
+            holds. That last one matters: a numbered company here is <strong>2409116 Alberta Ltd.</strong> and everyone
+            at the firm calls it <strong>Lava Grill Seton</strong>, so either finds it.
+          </p>
+        </div>
+        <form method="get" className="card-body flex flex-wrap items-end gap-3">
           <div className="grow">
             <label className="label" htmlFor="q">
-              Find a client
+              Name or number
             </label>
             <input
               id="q"
               name="q"
               className="input"
               defaultValue={params.q ?? ''}
-              placeholder="Part of a legal name or trade name"
+              placeholder="Lava Grill, or 2409116, or a business number"
             />
           </div>
           <button type="submit" className="btn-secondary">
@@ -210,10 +215,24 @@ export default async function ClientsPage({
               Clear
             </Link>
           ) : null}
-        </div>
-      </form>
+        </form>
+      </section>
 
-      {clients.length === 0 ? (
+      {soleMatch ? (
+        <ClientIdentityCard
+          client={soleMatch}
+          counts={{
+            contacts: soleMatch._count.contacts,
+            documents: soleMatch._count.karbonDocuments,
+            engagements: soleMatch._count.engagements,
+          }}
+          canCorrect={canCorrect}
+          csrfToken={csrfToken}
+          headingHref={`/clients/${soleMatch.id}`}
+        />
+      ) : null}
+
+      {soleMatch ? null : clients.length === 0 ? (
         page.page > 1 ? (
           <PageOutOfRange pathname="/clients" params={params} pluralNoun="clients" />
         ) : search ? (
@@ -246,6 +265,14 @@ export default async function ClientsPage({
                       </Link>
                       {client.isTestFixture ? (
                         <span className="badge ml-2 bg-amber-100 text-amber-800">test fixture</span>
+                      ) : null}
+                      {/*
+                        Flagged in the list, not only on the client's own page,
+                        so a wrong legal name is findable by scanning rather than
+                        by opening several hundred clients one at a time.
+                      */}
+                      {karbonNameDisagreement(client) ? (
+                        <span className="badge ml-2 bg-amber-100 text-amber-800">Karbon disagrees</span>
                       ) : null}
                     </td>
                     {/*

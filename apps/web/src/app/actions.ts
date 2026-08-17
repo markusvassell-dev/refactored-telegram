@@ -1775,6 +1775,33 @@ export async function importClientsFromKarbon(formData: FormData): Promise<Actio
 }
 
 /**
+ * Replaces a client's stored legal name with the one Karbon holds.
+ *
+ * The counterpart to the import's refusal to overwrite. That refusal is right —
+ * a name here may have been corrected on purpose — but it left the other case
+ * with no remedy at all: a client stored under its storefront name would print
+ * that way on every letter, and nothing in the application could change it.
+ */
+export async function adoptKarbonLegalName(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('client:correct');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const clientId = formData.get('clientId')?.toString();
+    if (!clientId) throw new ValidationError('A client is required.');
+
+    const result = await container.clientDirectory.adoptKarbonLegalName({ clientId, actor });
+
+    revalidatePath('/clients');
+    revalidatePath(`/clients/${clientId}`);
+
+    return `Legal name changed from “${result.previousLegalName}” to “${result.legalName}”.${
+      result.displayNameFilled ? ` “${result.displayNameFilled}” was kept as the trade name.` : ''
+    }`;
+  });
+}
+
+/**
  * Catalogues every document Karbon holds for a client.
  *
  * Queued rather than done here: a client with years of history means tens of
