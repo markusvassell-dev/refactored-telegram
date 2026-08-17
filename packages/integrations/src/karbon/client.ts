@@ -924,15 +924,56 @@ function cardAddress(card: Record<string, unknown>): Record<string, unknown> {
   return addresses[0] ?? {};
 }
 
+/**
+ * Karbon's `FullName`, separated into a legal name and a trading name.
+ *
+ * A firm's Karbon routinely holds the numbered company and the name over the
+ * door in one string: `2140071 Alberta Ltd. (JC Spa and Wellness)`. That whole
+ * string was being written to `legalName` and **printed verbatim onto
+ * engagement letters**, where it is not a legal name — the legal entity is
+ * `2140071 Alberta Ltd.` and the rest is a trade name.
+ *
+ * Only a **trailing** parenthetical is separated, and only when both halves are
+ * non-empty and it holds no nested brackets. That is the pattern the live tenant
+ * actually uses, and the narrowness is the point: a legal name with brackets in
+ * the middle — `Smith (Holdings) Ltd.` — is left exactly as it is, because
+ * mangling a legal name is the harm this exists to prevent, not a smaller
+ * version of it.
+ *
+ * Nothing else in the name is touched. The same tenant holds
+ * `2100698 Albeta Ltd. - DISSOLVED`, and a dash is used inside real company
+ * names, so stripping status annotations too would be guessing where this is
+ * matching.
+ */
+export function splitEntityName(fullName: string): { legalName: string; tradeName: string | null } {
+  const whole = fullName.trim();
+  const match = /^(.*?)\s*\(([^()]+)\)$/.exec(whole);
+  if (!match) return { legalName: whole, tradeName: null };
+
+  const legalName = match[1]?.trim() ?? '';
+  const tradeName = match[2]?.trim() ?? '';
+  // A name that is *only* a parenthetical has no legal half to keep, so there is
+  // nothing to separate and the original stands.
+  if (legalName.length === 0 || tradeName.length === 0) return { legalName: whole, tradeName: null };
+
+  return { legalName, tradeName };
+}
+
 function mapOrganization(raw: Record<string, unknown>): KarbonClient {
   const card = primaryBusinessCard(raw);
   const address = cardAddress(card);
 
+  const { legalName, tradeName } = splitEntityName(String(raw.FullName ?? raw.Name ?? ''));
+
   return {
     entityKey: String(raw.OrganizationKey ?? raw.EntityKey ?? raw.Key ?? ''),
     entityType: 'Organization',
-    legalName: String(raw.FullName ?? raw.Name ?? ''),
-    displayName: text(raw.PreferredName),
+    legalName,
+    tradeName,
+    // Karbon's own preferred name wins; the trading name separated out of
+    // `FullName` is the fallback so it is carried rather than discarded — it is
+    // how the firm and the client refer to the business.
+    displayName: text(raw.PreferredName) ?? tradeName,
     // Karbon has no business-number field on an Organization. `AccountingDetail`
     // is the nearest thing and `UserDefinedIdentifier` is what a firm actually
     // uses to carry its own identifier, so both are read — but neither is
@@ -976,11 +1017,18 @@ function mapContactEntity(raw: Record<string, unknown>): KarbonClient {
   const emails = Array.isArray(card.EmailAddresses) ? (card.EmailAddresses as unknown[]) : [];
   const phones = Array.isArray(card.PhoneNumbers) ? (card.PhoneNumbers as unknown[]) : [];
 
+  // An individual's legal name should not carry a parenthetical either, and this
+  // is the name that reaches a T1 letter. A sole proprietor filed as
+  // `Robin Fournier (Fournier Welding)` has the same problem as a numbered
+  // company, and so does an annotation somebody typed into the name field.
+  const { legalName, tradeName } = splitEntityName(String(raw.FullName ?? raw.Name ?? ''));
+
   return {
     entityKey: String(raw.ContactKey ?? raw.EntityKey ?? raw.Key ?? ''),
     entityType: 'Contact',
-    legalName: String(raw.FullName ?? raw.Name ?? ''),
-    displayName: text(raw.PreferredName),
+    legalName,
+    tradeName,
+    displayName: text(raw.PreferredName) ?? tradeName,
     // An individual has no business number, which is a fact rather than a gap.
     businessNumber: null,
     contactType: text(raw.ContactType),
@@ -993,7 +1041,9 @@ function mapContactEntity(raw: Record<string, unknown>): KarbonClient {
     contacts: [
       {
         contactKey: String(raw.ContactKey ?? raw.Key ?? ''),
-        fullName: String(raw.FullName ?? raw.Name ?? ''),
+        // The legal half, not the raw string: this is the name proposed as a
+        // signer and written into the letter's signature block.
+        fullName: legalName,
         firstName: text(raw.PreferredName) ?? text(raw.FirstName),
         email: text(raw.EmailAddress) ?? text(emails[0]),
         telephone: readPhone(raw.PhoneNumber) ?? readPhone(phones[0]),

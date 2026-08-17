@@ -25,7 +25,16 @@ export interface KarbonContact {
 export interface KarbonClient {
   entityKey: string;
   entityType: 'Organization' | 'Contact';
+  /**
+   * The legal entity, with any trailing trading name separated off.
+   *
+   * Karbon's `FullName` routinely carries both — `2140071 Alberta Ltd. (JC Spa
+   * and Wellness)` — and this value is what prints onto an engagement letter, so
+   * it must be the entity that signs it and nothing else.
+   */
   legalName: string;
+  /** The name over the door, when `FullName` carried one. Never the legal name. */
+  tradeName?: string | null;
   displayName?: string | null;
   businessNumber?: string | null;
   addressLine1?: string | null;

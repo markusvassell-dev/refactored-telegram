@@ -250,6 +250,8 @@ export class ClientImportService {
       );
     }
 
+    let tradeNamesSeparated = 0;
+
     const result: ClientImportResult = {
       found: entityKeys.length,
       created: [],
@@ -331,6 +333,10 @@ export class ClientImportService {
       }
 
       result.created.push({ entityKey, legalName: karbonClient.legalName });
+      // Counted so the summary can say a trading name was separated off. A
+      // silent rewrite of a legal name is not better than a wrong one — the
+      // reader has to be able to see it happened and check a few.
+      if (karbonClient.tradeName) tradeNamesSeparated += 1;
 
       if (input.dryRun) continue;
 
@@ -339,7 +345,11 @@ export class ClientImportService {
           karbonEntityKey: karbonClient.entityKey,
           karbonEntityType: karbonClient.entityType,
           legalName: karbonClient.legalName,
-          displayName: karbonClient.displayName ?? null,
+          // Falling back to the trading name here, not only in the adapter that
+          // derives it: the guarantee is that separating a name off the legal
+          // name never loses it, and that has to hold at the point of storage
+          // whichever provider supplied the record.
+          displayName: karbonClient.displayName ?? karbonClient.tradeName ?? null,
           businessNumber: karbonClient.businessNumber ?? null,
           addressLine1: karbonClient.addressLine1 ?? null,
           addressLine2: karbonClient.addressLine2 ?? null,
@@ -377,6 +387,12 @@ export class ClientImportService {
     if (result.differing.length > 0) {
       notes.push(
         `${result.differing.length} client(s) already here differ from Karbon. Nothing was changed — the details that go into a legal document are this application’s to hold, and a person may have corrected them deliberately.`,
+      );
+    }
+
+    if (tradeNamesSeparated > 0) {
+      notes.push(
+        `${tradeNamesSeparated} name(s) carried a trading name in brackets — Karbon’s “2140071 Alberta Ltd. (JC Spa and Wellness)” shape. The legal entity was kept as the legal name and the trading name became the display name, because the legal name is what prints on the letter. Worth spot-checking a few.`,
       );
     }
 
@@ -538,6 +554,10 @@ export class ClientImportService {
  */
 /** The client fields safe to fill when they are empty here. */
 const BACKFILLABLE = [
+  // Included so re-running repairs the clients imported before names were
+  // separated: their legal name now matches Karbon's legal half, but their
+  // display name is blank while Karbon holds the trading name.
+  ['displayName', 'Display name'],
   ['businessNumber', 'Business number'],
   ['addressLine1', 'Address line 1'],
   ['addressLine2', 'Address line 2'],

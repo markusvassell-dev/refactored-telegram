@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { KarbonRestClient, RateLimiter, retryAfterMs } from '@element/integrations';
+import { KarbonRestClient, RateLimiter, retryAfterMs, splitEntityName } from '@element/integrations';
 
 /**
  * How the Karbon client behaves against a tenant that pushes back.
@@ -727,5 +727,132 @@ describe('searching past the first page', () => {
     await client.searchWorkItems({});
 
     expect(calls.every((call) => call.url.startsWith('https://api.karbonhq.test/'))).toBe(true);
+  });
+});
+
+describe('separating a trading name from a legal name', () => {
+  /**
+   * The defect this covers, found in a live import preview. Karbon's `FullName`
+   * routinely holds the numbered company and the name over the door in one
+   * string, and the whole string was written to `legalName` — the value that
+   * prints onto an engagement letter.
+   *
+   * `2140071 Alberta Ltd. (JC Spa and Wellness)` is not a legal name. The legal
+   * entity is `2140071 Alberta Ltd.`; the rest is a trade name. A letter naming
+   * the bracketed form names a party that does not exist.
+   *
+   * It would also have been silent: the difference report only fires for clients
+   * already present, so the 184 the preview was about to create carried the
+   * bracketed form with nothing to compare against.
+   */
+  it('splits the three shapes the live tenant actually holds', () => {
+    expect(splitEntityName('1987371 Alberta Ltd. (Massage Addict)')).toEqual({
+      legalName: '1987371 Alberta Ltd.',
+      tradeName: 'Massage Addict',
+    });
+    expect(splitEntityName('2140071 Alberta Ltd. (JC Spa and Wellness)')).toEqual({
+      legalName: '2140071 Alberta Ltd.',
+      tradeName: 'JC Spa and Wellness',
+    });
+    expect(splitEntityName('2409116 Alberta Ltd. (Lava Grill Seton)')).toEqual({
+      legalName: '2409116 Alberta Ltd.',
+      tradeName: 'Lava Grill Seton',
+    });
+  });
+
+  it('leaves a name without brackets exactly as it is', () => {
+    expect(splitEntityName('Ziegeman Pipeline Services Ltd.')).toEqual({
+      legalName: 'Ziegeman Pipeline Services Ltd.',
+      tradeName: null,
+    });
+  });
+
+  it('leaves brackets that are part of the legal name alone', () => {
+    // `Smith (Holdings) Ltd.` is one legal entity. Only a *trailing*
+    // parenthetical is separated, because mangling a legal name is the harm this
+    // exists to prevent rather than a smaller version of it.
+    expect(splitEntityName('Smith (Holdings) Ltd.')).toEqual({
+      legalName: 'Smith (Holdings) Ltd.',
+      tradeName: null,
+    });
+  });
+
+  it('leaves a status annotation alone, because a dash is not a bracket', () => {
+    // The same tenant holds this. A dash appears inside real company names, so
+    // stripping annotations too would be guessing where the rest is matching.
+    expect(splitEntityName('2100698 Albeta Ltd. - DISSOLVED')).toEqual({
+      legalName: '2100698 Albeta Ltd. - DISSOLVED',
+      tradeName: null,
+    });
+  });
+
+  it('refuses to leave a client with no legal name at all', () => {
+    // A name that is only a parenthetical has no legal half to keep. Splitting
+    // it would produce an empty legal name, which is worse than an odd one.
+    expect(splitEntityName('(Trading Name Only)')).toEqual({
+      legalName: '(Trading Name Only)',
+      tradeName: null,
+    });
+    expect(splitEntityName('Something Ltd. ()')).toEqual({
+      legalName: 'Something Ltd. ()',
+      tradeName: null,
+    });
+  });
+
+  it('keeps nested brackets whole rather than guessing', () => {
+    expect(splitEntityName('Acme Ltd. (a (very) odd name)')).toEqual({
+      legalName: 'Acme Ltd. (a (very) odd name)',
+      tradeName: null,
+    });
+  });
+});
+
+describe('mapping a client whose name carries a trading name', () => {
+  it('writes the legal entity to legalName and the trading name to displayName', async () => {
+    const { client } = clientWith([
+      {
+        status: 200,
+        body: { OrganizationKey: 'org-1', FullName: '2140071 Alberta Ltd. (JC Spa and Wellness)' },
+      },
+    ]);
+
+    const found = await client.getClient('org-1');
+
+    expect(found).toMatchObject({
+      legalName: '2140071 Alberta Ltd.',
+      tradeName: 'JC Spa and Wellness',
+      displayName: 'JC Spa and Wellness',
+    });
+  });
+
+  it("does not let the trading name displace Karbon's own preferred name", async () => {
+    const { client } = clientWith([
+      {
+        status: 200,
+        body: {
+          OrganizationKey: 'org-1',
+          FullName: '2140071 Alberta Ltd. (JC Spa and Wellness)',
+          PreferredName: 'JC Spa',
+        },
+      },
+    ]);
+
+    const found = await client.getClient('org-1');
+
+    expect(found).toMatchObject({ legalName: '2140071 Alberta Ltd.', displayName: 'JC Spa' });
+  });
+
+  it('cleans the signer name on an individual too', async () => {
+    // A Contact's own entry becomes the proposed signer and is written into the
+    // signature block, so the bracketed form must not reach it either.
+    const { client } = clientWith([
+      { status: 404, body: null },
+      { status: 200, body: { ContactKey: 'con-1', FullName: 'Robin Fournier (Fournier Welding)' } },
+    ]);
+
+    const found = await client.getClient('con-1');
+
+    expect(found?.legalName).toBe('Robin Fournier');
+    expect(found?.contacts[0]).toMatchObject({ fullName: 'Robin Fournier' });
   });
 });

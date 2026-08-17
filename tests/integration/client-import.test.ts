@@ -552,6 +552,42 @@ describe('importing clients from Karbon', () => {
     expect(notes).toMatch(/1 Inactive/);
   });
 
+  it('says when a trading name was separated off a legal name', async () => {
+    // Rewriting a legal name silently is not better than importing a wrong one.
+    // The reader has to be able to see it happened and spot-check a few, because
+    // the value ends up printed on an engagement letter.
+    const seeded = seed();
+    const key = `ci-org-${suffix}-trade`;
+    if (!entityKeys.includes(key)) entityKeys.push(key);
+
+    const karbon = Object.create(
+      new MockKarbonProvider({
+        clients: [
+          ...seeded.clients,
+          {
+            entityKey: key,
+            entityType: 'Organization' as const,
+            legalName: '2140071 Alberta Ltd.',
+            tradeName: 'JC Spa and Wellness',
+            contacts: [],
+          },
+        ],
+        workItems: seeded.workItems,
+      }),
+      { isMock: { value: false, enumerable: true } },
+    ) as MockKarbonProvider;
+
+    const result = await service.run({ karbon, actor: admin, dryRun: false });
+
+    expect(result.notes.join(' ')).toMatch(/1 name\(s\) carried a trading name in brackets/i);
+
+    // The legal entity is what was stored, and the trading name was kept rather
+    // than thrown away.
+    const stored = await prisma.client.findUniqueOrThrow({ where: { karbonEntityKey: key } });
+    expect(stored.legalName).toBe('2140071 Alberta Ltd.');
+    expect(stored.displayName).toBe('JC Spa and Wellness');
+  });
+
   it('says what differs, not merely how many do', async () => {
     // The screen promises that differences are reported so you can decide.
     // They were computed, returned and dropped, so it reported a count and
