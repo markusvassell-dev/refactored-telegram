@@ -57,6 +57,15 @@ export interface ClientImportDeps {
  */
 export type ClientImportSource = 'CLIENT_LIST' | 'WORK_ITEMS';
 
+/** What a discovery pass found, and whether it found all of it. */
+interface Discovered {
+  entityKeys: string[];
+  /** True when the limit cut the search short, so more clients exist. */
+  truncated: boolean;
+  /** Karbon contact type to count, for the client-list source only. */
+  byContactType: Map<string, number>;
+}
+
 export interface ClientImportInput {
   karbon: KarbonProvider;
   actor: Principal;
@@ -141,7 +150,7 @@ export class ClientImportService {
 
     const source = input.source ?? 'CLIENT_LIST';
 
-    const { entityKeys, examined } =
+    const { entityKeys, truncated, byContactType } =
       source === 'CLIENT_LIST'
         ? await this.fromClientList(input.karbon, limit)
         : await this.fromWorkItems(input.karbon, limit);
@@ -157,7 +166,19 @@ export class ClientImportService {
       );
     }
 
-    if (examined >= limit) {
+    if (byContactType.size > 0) {
+      // The tenant's own vocabulary, counted. Nothing filters on it, so the only
+      // way somebody discovers their Karbon holds 20 clients marked "Inactive"
+      // is if the import says so — and an inactive client is one an engagement
+      // letter probably should not be addressed to.
+      const breakdown = [...byContactType.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([type, count]) => `${count} ${type}`)
+        .join(', ');
+      notes.push(`Karbon contact types among them: ${breakdown}. Nothing is filtered on type.`);
+    }
+
+    if (truncated) {
       // The count is a floor, not a total. Saying "22 clients" when it is
       // "22 among the first 200 records" is the kind of number somebody
       // reconciles against their client list and finds short.
@@ -338,28 +359,37 @@ export class ClientImportService {
    * one of them silently dropped — the failure this whole change exists to
    * remove, reintroduced one layer down.
    */
-  private async fromClientList(
-    karbon: KarbonProvider,
-    limit: number,
-  ): Promise<{ entityKeys: string[]; examined: number }> {
-    const summaries = await karbon.listClients({ limit });
+  private async fromClientList(karbon: KarbonProvider, limit: number): Promise<Discovered> {
+    const { clients, more } = await karbon.listClients({ limit });
+
+    const byContactType = new Map<string, number>();
+    for (const summary of clients) {
+      const type = summary.contactType?.trim();
+      if (!type) continue;
+      byContactType.set(type, (byContactType.get(type) ?? 0) + 1);
+    }
+
     return {
-      entityKeys: [...new Set(summaries.map((summary) => summary.entityKey).filter(Boolean))],
-      examined: summaries.length,
+      entityKeys: [...new Set(clients.map((summary) => summary.entityKey).filter(Boolean))],
+      // Reported by the provider rather than guessed from the count. A list of
+      // exactly the limit may or may not have more behind it, and two lists
+      // drawn from two endpoints cannot be told apart by their total at all.
+      truncated: more,
+      byContactType,
     };
   }
 
   /** The distinct clients named on recent work items. */
-  private async fromWorkItems(
-    karbon: KarbonProvider,
-    limit: number,
-  ): Promise<{ entityKeys: string[]; examined: number }> {
+  private async fromWorkItems(karbon: KarbonProvider, limit: number): Promise<Discovered> {
     const workItems = await karbon.searchWorkItems({ limit });
     return {
       entityKeys: [
         ...new Set(workItems.map((item) => item.clientKey).filter((key): key is string => Boolean(key))),
       ],
-      examined: workItems.length,
+      truncated: workItems.length >= limit,
+      // Work items carry no contact type; the clients behind them do, and this
+      // path never reads them.
+      byContactType: new Map(),
     };
   }
 

@@ -3,6 +3,7 @@ import { KARBON_CAPABILITY_MATRIX } from './capabilities.js';
 import type {
   CapabilityReport,
   KarbonClient,
+  KarbonClientList,
   KarbonClientSummary,
   KarbonCommentRequest,
   KarbonDocument,
@@ -89,15 +90,20 @@ export class MockKarbonProvider implements KarbonProvider {
    * That distinction is the entire point of the method, so a mock that ignored
    * it would hide the defect it exists to fix.
    */
-  async listClients(options: { limit?: number } = {}): Promise<KarbonClientSummary[]> {
+  async listClients(options: { limit?: number } = {}): Promise<KarbonClientList> {
     this.record('listClients', options);
-    const all = [...this.clients.values()].map((client) => ({
+    const all: KarbonClientSummary[] = [...this.clients.values()].map((client) => ({
       entityKey: client.entityKey,
       entityType: client.entityType,
       fullName: client.legalName,
-      contactType: 'Client',
+      // Not every tenant labels a client "Client" — the live one also uses
+      // "Inactive" — so the seed carries whatever it was given rather than
+      // asserting a vocabulary the mock has no way to know.
+      contactType: client.contactType ?? 'Client',
     }));
-    return options.limit === undefined ? all : all.slice(0, options.limit);
+
+    if (options.limit === undefined) return { clients: all, more: false };
+    return { clients: all.slice(0, options.limit), more: all.length > options.limit };
   }
 
   async searchWorkItems(query: KarbonWorkItemQuery): Promise<KarbonWorkItem[]> {
@@ -345,8 +351,8 @@ export class BlockedKarbonProvider implements KarbonProvider {
    * The import refuses to run against a blocked or mock provider at all, so
    * nothing here can be mistaken for "this firm has no clients".
    */
-  async listClients(): Promise<KarbonClientSummary[]> {
-    return [];
+  async listClients(): Promise<KarbonClientList> {
+    return { clients: [], more: false };
   }
   async listDocuments(): Promise<KarbonDocument[]> {
     return [];
@@ -441,7 +447,7 @@ export class ReadOnlyKarbonProvider implements KarbonProvider {
   }
 
   /** Reading who the firm's clients are changes nothing on the firm's side. */
-  listClients(options?: { limit?: number }): Promise<KarbonClientSummary[]> {
+  listClients(options?: { limit?: number }): Promise<KarbonClientList> {
     return this.inner.listClients(options);
   }
   getWorkItem(workItemKey: string): Promise<KarbonWorkItem | null> {

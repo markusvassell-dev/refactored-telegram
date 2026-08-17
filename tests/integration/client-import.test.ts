@@ -352,12 +352,15 @@ describe('importing clients from Karbon', () => {
   });
 
   it('says nothing about depth when the supply ran out first', async () => {
-    // Three work items against a limit of two hundred: the ceiling never bound,
-    // so warning about it would train people to ignore the warning.
+    // Three clients against a limit of two hundred: the ceiling never bound, so
+    // warning about it would train people to ignore the warning.
     const result = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: true });
 
     expect(result.found).toBe(3);
-    expect(result.notes).toEqual([]);
+    // Specifically no depth warning. Other notes are legitimate — the contact
+    // type breakdown is reported on every client-list run — so asserting the
+    // whole array is empty would pin unrelated behaviour to this test.
+    expect(result.notes.join(' ')).not.toMatch(/more clients beyond them|records to examine/i);
   });
 
   it('refuses a depth that is not a positive whole number', async () => {
@@ -425,6 +428,64 @@ describe('importing clients from Karbon', () => {
 
     expect(karbon.calls.some((call) => call.operation === 'listClients')).toBe(true);
     expect(karbon.calls.some((call) => call.operation === 'searchWorkItems')).toBe(false);
+  });
+
+  it('treats the limit as a total across both entity types', async () => {
+    // Found by the live run, not by a test: asking for 25 returned 50, because
+    // the limit went to /Organizations and /Contacts whole instead of being
+    // shared. A cap that quietly means twice what the caller said is worse than
+    // no cap, because the number is trusted.
+    const karbon = connectedKarbon();
+    const list = await karbon.listClients({ limit: 2 });
+
+    expect(list.clients).toHaveLength(2);
+    // Three seeded clients against a limit of two: something was left behind,
+    // and the result has to say so rather than leaving the reader to infer it.
+    expect(list.more).toBe(true);
+  });
+
+  it('says the client list is complete when it is', async () => {
+    // The opposite case matters as much. A "there may be more" on a list that is
+    // already whole teaches people to ignore the warning.
+    const karbon = connectedKarbon();
+    const list = await karbon.listClients({ limit: 500 });
+
+    expect(list.clients.length).toBeGreaterThan(0);
+    expect(list.more).toBe(false);
+  });
+
+  it('counts the tenant contact types it saw, without filtering on them', async () => {
+    // The live tenant labels clients `Client` and `Inactive`. Nothing filters on
+    // that — the vocabulary is tenant-defined — so the only way somebody learns
+    // their Karbon holds inactive clients is if the import counts them out loud.
+    const seeded = seed();
+    const inactiveKey = `ci-org-${suffix}-inactive`;
+    entityKeys.push(inactiveKey);
+
+    const karbon = Object.create(
+      new MockKarbonProvider({
+        clients: [
+          ...seeded.clients,
+          {
+            entityKey: inactiveKey,
+            entityType: 'Organization' as const,
+            legalName: 'Retired Holdings Ltd.',
+            contactType: 'Inactive',
+            contacts: [],
+          },
+        ],
+        workItems: seeded.workItems,
+      }),
+      { isMock: { value: false, enumerable: true } },
+    ) as MockKarbonProvider;
+
+    const result = await service.run({ karbon, actor: admin, dryRun: true });
+
+    expect(result.notes.join(' ')).toMatch(/contact types among them/i);
+    expect(result.notes.join(' ')).toMatch(/1 Inactive/);
+    // Counted, and still imported — the decision is the firm's, not a string
+    // comparison's.
+    expect(result.created.map((entry) => entry.entityKey)).toContain(inactiveKey);
   });
 
   it('says what differs, not merely how many do', async () => {

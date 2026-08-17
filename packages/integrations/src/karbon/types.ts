@@ -34,6 +34,15 @@ export interface KarbonClient {
   province?: string | null;
   postalCode?: string | null;
   country?: string | null;
+  /**
+   * Karbon's contact type, verbatim and uninterpreted.
+   *
+   * Tenant-defined. The live tenant uses `Client` and `Inactive`, which is
+   * exactly why nothing here decides what they mean: "Inactive" plainly matters
+   * when choosing who to send an engagement letter to, and equally plainly that
+   * is the firm's call rather than a string comparison's.
+   */
+  contactType?: string | null;
   contacts: KarbonContact[];
 }
 
@@ -239,6 +248,25 @@ export interface KarbonClientSummary {
   contactType: string | null;
 }
 
+/**
+ * A page of the firm's client list, and whether it is all of it.
+ *
+ * The flag is not a nicety. A caller has to distinguish "this is the whole
+ * client list" from "this is as much as you asked for", and a count cannot do
+ * it: a list of exactly the limit may or may not have more behind it, and two
+ * lists drawn from two endpoints cannot be told apart by their total at all.
+ *
+ * Verifying against the live tenant is what exposed this. `listClients` handed
+ * back 50 — 25 organisations and 25 contacts, each stopping precisely on the
+ * limit — and nothing in the result said so, so 50 read as the firm's client
+ * list when it was a truncation of something larger.
+ */
+export interface KarbonClientList {
+  clients: KarbonClientSummary[];
+  /** True when a list was cut short by the limit, so more clients exist. */
+  more: boolean;
+}
+
 export interface KarbonProvider {
   readonly name: string;
   /** True when this adapter is a mock and performs no real network calls. */
@@ -263,8 +291,15 @@ export interface KarbonProvider {
    *
    * Karbon publishes `/Organizations` and `/Contacts` for exactly this, and
    * neither was ever called.
+   *
+   * `limit` is a **total** across both entity types, split evenly between them.
+   * It was originally passed to each endpoint whole, so asking for 25 returned
+   * 50 — a cap that quietly meant twice what the caller said. Splitting biases
+   * nothing: taking the total from organisations first would mean a firm with
+   * more organisations than the limit never sees a single individual client, and
+   * an individual filing a T1 is exactly a `Contact`.
    */
-  listClients(options?: { limit?: number }): Promise<KarbonClientSummary[]>;
+  listClients(options?: { limit?: number }): Promise<KarbonClientList>;
 
   listDocuments(scope: { workItemKey?: string; entityKey?: string }): Promise<KarbonDocument[]>;
 

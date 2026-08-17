@@ -4,6 +4,7 @@ import { KARBON_DOCUMENTED_REQUESTS_PER_MINUTE, RateLimiter, retryAfterMs } from
 import type {
   CapabilityReport,
   KarbonClient,
+  KarbonClientList,
   KarbonClientSummary,
   KarbonCommentRequest,
   KarbonDocument,
@@ -266,13 +267,23 @@ export class KarbonRestClient implements KarbonProvider {
    * The summary DTO holds no business cards, so no address and no contacts.
    * `getClient` is still needed per client, exactly as before.
    */
-  async listClients(options: { limit?: number } = {}): Promise<KarbonClientSummary[]> {
+  async listClients(options: { limit?: number } = {}): Promise<KarbonClientList> {
+    // Half the budget each. A total taken from organisations first would let a
+    // firm with more organisations than the limit never see one individual
+    // client, and an individual filing a T1 is a Contact.
+    const share = options.limit === undefined ? undefined : Math.max(1, Math.ceil(options.limit / 2));
+
     const [organizations, contacts] = await Promise.all([
-      this.pageClientList('/Organizations', 'Organization', 'OrganizationKey', options.limit),
-      this.pageClientList('/Contacts', 'Contact', 'ContactKey', options.limit),
+      this.pageClientList('/Organizations', 'Organization', 'OrganizationKey', share),
+      this.pageClientList('/Contacts', 'Contact', 'ContactKey', share),
     ]);
 
-    return [...organizations, ...contacts];
+    return {
+      clients: [...organizations.clients, ...contacts.clients],
+      // Either list running short of its own supply means clients exist that
+      // this call did not return, whatever the combined total looks like.
+      more: organizations.more || contacts.more,
+    };
   }
 
   private async pageClientList(
@@ -280,9 +291,9 @@ export class KarbonRestClient implements KarbonProvider {
     entityType: KarbonClientSummary['entityType'],
     keyField: string,
     limit?: number,
-  ): Promise<KarbonClientSummary[]> {
+  ): Promise<KarbonClientList> {
     const wanted = limit ?? Number.POSITIVE_INFINITY;
-    const found: KarbonClientSummary[] = [];
+    const clients: KarbonClientSummary[] = [];
     let skip = 0;
 
     for (let page = 1; page <= MAX_SEARCH_PAGES; page += 1) {
@@ -297,20 +308,24 @@ export class KarbonRestClient implements KarbonProvider {
         // A row with no key cannot be read back or stored against anything.
         if (!entityKey) continue;
 
-        found.push({
+        clients.push({
           entityKey,
           entityType,
           fullName: text(row.FullName) ?? entityKey,
           contactType: text(row.ContactType),
         });
-        if (found.length >= wanted) return found;
+        // Stopped because the caller said so, not because Karbon ran out.
+        if (clients.length >= wanted) return { clients, more: true };
       }
 
-      if (rows.length < PAGE_SIZE) return found;
+      // A short page is the end of the supply, which is the one case where the
+      // list really is complete.
+      if (rows.length < PAGE_SIZE) return { clients, more: false };
       skip += PAGE_SIZE;
     }
 
-    return found;
+    // Ran out of pages rather than out of clients.
+    return { clients, more: true };
   }
 
   /**
@@ -925,6 +940,7 @@ function mapOrganization(raw: Record<string, unknown>): KarbonClient {
     // a T2 letter unreviewed. `describeClientDifferences` raises it as a
     // conflict for a person to confirm, which is the only safe treatment.
     businessNumber: readBusinessNumber(raw),
+    contactType: text(raw.ContactType),
     addressLine1: text(address.AddressLine1) ?? text(address.Line1),
     addressLine2: text(address.AddressLine2) ?? text(address.Line2),
     city: text(address.City),
@@ -967,6 +983,7 @@ function mapContactEntity(raw: Record<string, unknown>): KarbonClient {
     displayName: text(raw.PreferredName),
     // An individual has no business number, which is a fact rather than a gap.
     businessNumber: null,
+    contactType: text(raw.ContactType),
     addressLine1: text(address.AddressLine1) ?? text(address.Line1),
     addressLine2: text(address.AddressLine2) ?? text(address.Line2),
     city: text(address.City),

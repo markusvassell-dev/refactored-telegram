@@ -37,14 +37,14 @@ export const KARBON_CAPABILITY_MATRIX: readonly CapabilityReport[] = [
   },
   {
     capability: 'LIST_CLIENTS',
-    // Written against the published operations and not yet observed returning
-    // the firm's list. Corrected code is not observed code: this stays
-    // UNVERIFIED until a real run reports a count, and the first run that does
-    // is the one that promotes it.
-    support: 'UNVERIFIED',
+    // Observed 2026-08-17 against the live tenant: 25 organisations and 25
+    // contacts came back with real keys and names, each list stopping on the
+    // limit. That run is what promotes this from UNVERIFIED, and it also found
+    // the limit being applied per endpoint rather than as a total.
+    support: 'SUPPORTED',
     operation: 'GET /v3/Organizations and GET /v3/Contacts, paged with $top/$skip',
     limitation:
-      'ContactType is tenant-defined, so nothing is filtered on it — every organisation and contact is offered and a person decides which are clients. Client discovery previously ran only through work items, which finds no client without recent work.',
+      'The limit is a total split evenly between the two endpoints, and the result says whether a list was cut short — a count cannot distinguish "the whole client list" from "as much as you asked for". ContactType is tenant-defined and nothing is filtered on it: the live tenant uses Client and Inactive, and which of a firm\'s types mean "a client" is the firm\'s answer. Client discovery previously ran only through work items, which finds no client without recent work.',
   },
   {
     capability: 'READ_CONTACTS',

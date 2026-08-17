@@ -380,30 +380,37 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
     'LIST_CLIENTS',
     () => client.listClients({ limit: CANDIDATE_LIMIT }),
     (list) => {
-      if (list.length === 0) return 'no organisations or contacts returned';
-      const organizations = list.filter((entry) => entry.entityType === 'Organization').length;
-      const types = [...new Set(list.map((entry) => entry.contactType).filter(Boolean))];
+      if (list.clients.length === 0) return 'no organisations or contacts returned';
+      const organizations = list.clients.filter((entry) => entry.entityType === 'Organization').length;
+      const types = [...new Set(list.clients.map((entry) => entry.contactType).filter(Boolean))];
       return [
-        `${list.length} client(s): ${organizations} organisation(s), ${list.length - organizations} contact(s)`,
+        `${list.clients.length} client(s): ${organizations} organisation(s), ${list.clients.length - organizations} contact(s)`,
+        // Whether this is the client list or a slice of it. Printing the count
+        // alone is what made a truncated 50 read as a firm's whole book.
+        list.more
+          ? `MORE EXIST — capped at ${CANDIDATE_LIMIT}; this is a sample, not the client list`
+          : 'this is the whole client list',
         // The tenant's own vocabulary, printed because nothing filters on it and
         // the firm is the only party who knows which of these mean "a client".
         types.length > 0 ? `contact types seen: ${types.join(', ')}` : 'no contact type on any entry',
       ].join('; ');
     },
-    (list) => list.length > 0,
+    (list) => list.clients.length > 0,
   );
 
   if (clients && found) {
     // The comparison is the finding. Stated rather than left for the reader to
     // do, because the whole defect was a count being read as the client list.
     const onWorkItems = new Set(found.map((item) => item.clientKey).filter(Boolean)).size;
+    const seen = clients.clients.length;
     record(
       'CLIENT_DISCOVERY_COMPARISON',
       'PASS',
-      `${clients.length} from the client list against ${onWorkItems} distinct client(s) on the first ${found.length} work item(s)` +
-        (clients.length > onWorkItems
-          ? ` — ${clients.length - onWorkItems} would have been invisible to work-item discovery`
-          : ' — work-item discovery would have found no fewer, so every client here has recent work'),
+      `${seen} from the client list against ${onWorkItems} distinct client(s) on the first ${found.length} work item(s)` +
+        (seen > onWorkItems
+          ? ` — at least ${seen - onWorkItems} would have been invisible to work-item discovery`
+          : ' — work-item discovery would have found no fewer, so every client here has recent work') +
+        (clients.more ? '. Both counts are capped, so the real gap is larger.' : ''),
     );
   }
 
