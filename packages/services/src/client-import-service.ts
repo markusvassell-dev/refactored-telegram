@@ -155,8 +155,19 @@ const MAX_LIMIT = 5000;
  * **This list is the firm's answer, not an inference.** Contact types are
  * tenant-defined — `/v3/TenantSettings` lists them per firm — so nothing here
  * could work out which words mean "not a current client". A verification run
- * against the live tenant on 2026-08-17 reported the two types actually in use,
- * `Client` and `Inactive`, and the firm chose to exclude the latter.
+ * against the live tenant on 2026-08-17 reported the four types actually in use
+ * — `Client`, `Inactive`, `Dissolved` and `Other` — and the firm chose which to
+ * exclude.
+ *
+ * `Dissolved` is the stronger of the two. An inactive client is a judgement
+ * about the relationship; a dissolved corporation has no legal existence and
+ * cannot be a party to an engagement letter at all. The same tenant also holds
+ * one whose name *ends* in `- DISSOLVED`, which this does not catch and
+ * deliberately does not try to — see `splitEntityName` for why a status
+ * annotation inside a name is left alone.
+ *
+ * `Other` is not excluded. It says nothing about whether the entry is a client,
+ * so dropping it would be the guess this comment exists to rule out.
  *
  * That provenance matters for the next reader: a tenant using different words
  * needs this list changed, and a value here that a tenant does not use excludes
@@ -166,7 +177,7 @@ const MAX_LIMIT = 5000;
  * Overridable per run — see `includeAllContactTypes` — because the exclusion is
  * a convenience, not a rule about what a client is.
  */
-const EXCLUDED_CONTACT_TYPES = ['Inactive'];
+const EXCLUDED_CONTACT_TYPES = ['Inactive', 'Dissolved'];
 
 export class ClientImportService {
   constructor(private readonly deps: ClientImportDeps) {}

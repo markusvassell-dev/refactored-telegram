@@ -478,6 +478,50 @@ describe('importing clients from Karbon', () => {
     ) as MockKarbonProvider;
   }
 
+  it('does not import a dissolved corporation, which cannot sign anything', async () => {
+    // Stronger than Inactive: an inactive client is a judgement about the
+    // relationship, a dissolved corporation has no legal existence and cannot be
+    // a party to an engagement letter at all.
+    const seeded = seed();
+    const dissolvedKey = `ci-org-${suffix}-dissolved`;
+    if (!entityKeys.includes(dissolvedKey)) entityKeys.push(dissolvedKey);
+    const otherKey = `ci-org-${suffix}-other`;
+    if (!entityKeys.includes(otherKey)) entityKeys.push(otherKey);
+
+    const karbon = Object.create(
+      new MockKarbonProvider({
+        clients: [
+          ...seeded.clients,
+          {
+            entityKey: dissolvedKey,
+            entityType: 'Organization' as const,
+            legalName: 'Wound Up Holdings Ltd.',
+            contactType: 'Dissolved',
+            contacts: [],
+          },
+          {
+            entityKey: otherKey,
+            entityType: 'Organization' as const,
+            legalName: 'Unclassified Ltd.',
+            contactType: 'Other',
+            contacts: [],
+          },
+        ],
+        workItems: seeded.workItems,
+      }),
+      { isMock: { value: false, enumerable: true } },
+    ) as MockKarbonProvider;
+
+    const result = await service.run({ karbon, actor: admin, dryRun: true });
+
+    expect(result.created.map((entry) => entry.entityKey)).not.toContain(dissolvedKey);
+    expect(result.skippedByContactType).toEqual([{ contactType: 'Dissolved', count: 1 }]);
+
+    // `Other` says nothing about whether the entry is a client, so excluding it
+    // would be the guess the exclusion list exists to rule out.
+    expect(result.created.map((entry) => entry.entityKey)).toContain(otherKey);
+  });
+
   it('does not import a client Karbon marks Inactive', async () => {
     const result = await service.run({ karbon: karbonWithInactive(), actor: admin, dryRun: true });
 

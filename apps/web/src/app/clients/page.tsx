@@ -58,8 +58,9 @@ function WorkItemDepth({ id }: { id: string }) {
         <span>
           Include every contact type
           <span className="field-note mt-0.5 block">
-            Entries Karbon marks <strong>Inactive</strong> are skipped by default, and the result says how many. Tick
-            this to import them too — useful when a current client has been left labelled Inactive in Karbon.
+            Entries Karbon marks <strong>Inactive</strong> or <strong>Dissolved</strong> are skipped by default, and
+            the result says how many. Tick this to import them too — useful when a current client has been left
+            mislabelled in Karbon.
           </span>
         </span>
       </label>
