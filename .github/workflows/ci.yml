@@ -70,13 +70,42 @@ jobs:
       # Bounded, because it is the one step that reaches outside GitHub. Two
       # consecutive runs sat on the full-suite install for over ten minutes on
       # separate runners and would have burned the job's whole 25-minute budget
-      # before reaching a single test. Failing in four is a result; hanging for
-      # twenty-five is not.
+      # before reaching a single test.
+      #
+      # The timeouts are the load-bearing part, and they were added after a third
+      # failure that the bound alone could not have prevented: the Azure mirror
+      # stopped answering, apt fell back to archive.ubuntu.com, and then produced
+      # no output for three and a half minutes until the step was killed. apt's
+      # default network timeout is long enough that a stalled mirror consumes the
+      # whole budget in silence. Thirty seconds turns that into a failure it can
+      # retry against a mirror that is actually up.
+      #
+      # A run that never reaches a test is not a signal about the code, and this
+      # step had produced three of them in a day.
       - name: Install LibreOffice
-        timeout-minutes: 4
+        timeout-minutes: 8
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          set -euo pipefail
+
+          apt_options=(
+            -o Acquire::Retries=3
+            -o Acquire::http::Timeout=30
+            -o Acquire::https::Timeout=30
+          )
+
+          for attempt in 1 2 3; do
+            if sudo apt-get "${apt_options[@]}" update; then break; fi
+            if [ "$attempt" = 3 ]; then
+              echo "apt-get update failed three times; the package mirrors are unreachable." >&2
+              exit 1
+            fi
+            echo "apt-get update failed (attempt ${attempt}); retrying" >&2
+            sleep $((attempt * 10))
+          done
+
+          # The same packages the runtime image installs, rather than the whole
+          # `libreoffice` suite — see the note above.
+          sudo apt-get "${apt_options[@]}" install -y --no-install-recommends \
             libreoffice-writer \
             libreoffice-core \
             fonts-liberation \
@@ -134,3 +163,52 @@ jobs:
         run: pnpm build
         env:
           NODE_ENV: production
+
+      # The browser tests run against the build produced immediately above,
+      # rather than a development server. They are the only tests that exercise
+      # what a person actually receives — the Content Security Policy, the
+      # redirect to Microsoft, whether a read-only user is refused server-side
+      # rather than merely shown fewer links — and none of that was protected on
+      # a push, because 1,800 lines of them sat outside this pipeline.
+      #
+      # Same job rather than a second one: they need the migrated and seeded
+      # database, LibreOffice and node_modules that the steps above already
+      # produced, and none of those can be shared across jobs.
+      - name: Resolve the Playwright version
+        id: playwright
+        run: |
+          echo "version=$(node -p "require('./package.json').devDependencies['@playwright/test']")" >> "$GITHUB_OUTPUT"
+
+      # Keyed on the version, so the download happens when Playwright is
+      # upgraded rather than on every push.
+      - name: Cache the browser
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      # Deliberately without `--with-deps`. That flag runs its own apt-get, which
+      # is the step that has broken this pipeline three times, and the runner
+      # image already ships Chrome and therefore Chromium's shared libraries. If
+      # that ever stops being true the failure is legible — Playwright names the
+      # missing library — and the fix is to add `--with-deps` back here.
+      - name: Install the browser
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: pnpm exec playwright install chromium
+
+      - name: Browser tests
+        run: pnpm test:e2e
+
+      # Without this a failure that only happens here has no trace to read, and
+      # a browser test nobody can diagnose is one somebody eventually deletes.
+      # The config already retains traces and screenshots on failure.
+      - name: Keep the browser test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

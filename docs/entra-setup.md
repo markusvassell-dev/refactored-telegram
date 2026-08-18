@@ -45,6 +45,25 @@ callback URL exactly, under a **Web** platform. Not *Single-page application* �
 this is a confidential client that exchanges the code server-side using the
 secret, and Entra refuses the exchange for an SPA registration.
 
+**Front-channel logout URL.** Same Authentication screen, its own field. Set it
+to:
+
+```
+https://elementweb-production.up.railway.app/sign-in
+```
+
+Signing out redirects to Microsoft's end-session endpoint so the Microsoft
+session ends too, not only ours — without that, the next person on a shared
+machine presses "Sign in with Microsoft" and lands in the previous user's
+account with no prompt.
+
+**An unregistered value here is ignored, not rejected.** Entra will sign the
+person out and then show its own "You have signed out of your account" page
+instead of returning to the application. Nothing errors, and nothing says why —
+so if sign-out works but strands people on a Microsoft page, this field is the
+reason. The URL must match what the application sends, which is `/sign-in` on
+`APP_BASE_URL`.
+
 **API permissions.** `openid`, `profile`, `email` and `User.Read`, all
 **delegated**. None needs administrator consent; a signing-in user consents for
 themselves.

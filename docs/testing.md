@@ -3,12 +3,22 @@
 ```bash
 pnpm typecheck          # tsc --noEmit across every package and app
 pnpm lint               # eslint
-pnpm test               # unit + integration  (743 tests)
-pnpm test:unit          # 387 — no external dependencies
-pnpm test:integration   # 354 — needs Postgres and LibreOffice Writer
-pnpm test:e2e           # 59  — needs a browser
+pnpm test               # unit + integration  (873 tests)
+pnpm test:unit          # 447 — no external dependencies
+pnpm test:integration   # 426 — needs Postgres and LibreOffice Writer
+pnpm test:e2e           # 60  — needs a browser
 pnpm build              # production build
 ```
+
+**All of these run in CI**, including the browser tests. They did not until
+2026-08-18: 1,800 lines of end-to-end coverage sat outside the pipeline, so the
+only tests protecting a push were the ones that never opened a browser.
+
+An integration test with no database **skips rather than fails**, which is
+convenient locally and misleading in a summary — `873 passed` and
+`490 passed | 383 skipped` are both green-looking output from the same command.
+If the count looks short, check Postgres is actually up before reading anything
+into the result.
 
 ## Prerequisites
 
