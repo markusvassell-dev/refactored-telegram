@@ -38,8 +38,17 @@ export type StorageDurability = 'DURABLE' | 'EPHEMERAL' | 'UNKNOWN';
 export interface StorageDurabilityReport {
   durability: StorageDurability;
   directory: string;
-  /** Files still only on disk: leftovers from before storage moved into the database. */
-  filesOnDisk: number;
+  /**
+   * Files still only on disk: leftovers from before storage moved into the
+   * database. **`null` when the directory could not be read**, which is not the
+   * same as empty and must never be rendered as a zero.
+   *
+   * The live deployment produced exactly that confusion: a root-owned volume the
+   * process cannot open reported `unknown, 0 file(s) on disk`, which reads as
+   * "nothing here, safe to delete" when the truth is "nobody looked". Deleting a
+   * Railway volume is irreversible, so the difference is the whole point.
+   */
+  filesOnDisk: number | null;
   /** True when counting stopped at the cap, so `filesOnDisk` is a floor. */
   moreFiles: boolean;
   /**
@@ -146,12 +155,16 @@ export async function inspectStorageDurability(directory: string): Promise<Stora
     return {
       durability: 'UNKNOWN',
       directory,
-      filesOnDisk: 0,
+      // Not zero. Nothing was counted, and a zero here would read as "empty".
+      filesOnDisk: null,
       moreFiles: false,
       atRisk: false,
-      detail: `Could not determine whether ${directory} is durable: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+      detail:
+        `${directory} could not be read, so neither its contents nor whether it survives a redeploy is known. ` +
+        'It may hold documents; treat it as unexamined rather than empty. ' +
+        `A volume owned by root is the usual cause, since this process does not run as root. (${
+          error instanceof Error ? error.message : String(error)
+        })`,
     };
   }
 }
