@@ -67,7 +67,19 @@ export default defineConfig({
   webServer: process.env.E2E_BASE_URL
     ? undefined
     : {
-        command: 'pnpm --filter @element/web dev',
+        /*
+          The production build under CI, a development server locally.
+
+          CI has just built the application, so starting that build costs
+          seconds where `dev` costs a compile per route — and, more to the point,
+          it is the artefact that actually ships. A browser suite that only ever
+          drove a development server would not have exercised the built output at
+          all. Locally the trade runs the other way: rebuilding before every run
+          is a good way to stop running them.
+        */
+        command: process.env.CI
+          ? 'pnpm --filter @element/web start'
+          : 'pnpm --filter @element/web dev',
         url: 'http://localhost:3000/api/health',
         reuseExistingServer: !process.env.CI,
         timeout: 180_000,

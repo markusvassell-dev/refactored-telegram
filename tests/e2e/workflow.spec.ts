@@ -349,6 +349,33 @@ test.describe('access control', () => {
     await expect(page.getByRole('heading', { name: 'Microsoft Entra ID' })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Development login' })).toBeVisible();
   });
+
+  test('signing out ends the session and does not leave for Microsoft here', async ({ page }) => {
+    /*
+      Two assertions in one, and the second is the reason this test exists.
+
+      Sign-out now redirects to Microsoft's end-session endpoint, because
+      deleting our own cookie left Microsoft's session live — the next person on
+      a shared machine pressed "Sign in with Microsoft" and arrived in the
+      previous user's account without a prompt.
+
+      This environment must not federate. It configures a fake tenant so the
+      sign-in button renders, so a sign-out that went to Microsoft would make a
+      real outbound request from a suite whose whole design is that it contacts
+      no vendor — and it would do so against a tenant that does not exist. If
+      that rule ever breaks, this fails here rather than quietly reaching out.
+    */
+    await signIn(page, /Administrator/);
+
+    await page.getByRole('button', { name: 'Sign out' }).click();
+
+    await expect(page).toHaveURL(/\/sign-in$/);
+    expect(page.url()).not.toContain('login.microsoftonline.com');
+
+    // Gone server-side, not merely navigated away from.
+    const response = await page.request.get('/engagements');
+    expect(response.status()).toBeGreaterThanOrEqual(400);
+  });
 });
 
 test.describe('Test Mode', () => {

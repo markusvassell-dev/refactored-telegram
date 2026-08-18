@@ -43,6 +43,19 @@ export interface IdentityProvider {
     redirectUri: string;
     expectedNonce: string;
   }): Promise<AuthenticatedIdentity>;
+  /**
+   * Where to send the browser so the *provider's* session ends too.
+   *
+   * Destroying our own cookie is only half of signing out. The identity provider
+   * keeps its own session in that browser, so the next person to press "Sign in
+   * with Microsoft" is returned straight to the previous user's account without
+   * being asked for anything — which on a shared office machine is the entire
+   * thing signing out was supposed to prevent.
+   *
+   * `null` when the provider has no session to end, which is the honest answer
+   * for the development login rather than a URL that does nothing.
+   */
+  endSessionUrl(postLogoutRedirectUri: string): string | null;
 }
 
 function base64Url(data: Buffer): string {
@@ -75,6 +88,26 @@ export class EntraIdProvider implements IdentityProvider {
 
   private get authority(): string {
     return `https://login.microsoftonline.com/${this.config.tenantId}/oauth2/v2.0`;
+  }
+
+  /**
+   * The documented end-session endpoint, not a guessed one.
+   *
+   * Taken from Microsoft's own discovery document —
+   * `https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration`
+   * publishes `end_session_endpoint`, and it is `{authority}/logout`, the same
+   * authority this class already builds `/authorize` and `/token` from. Checked
+   * on 2026-08-18 rather than recalled.
+   *
+   * **`post_logout_redirect_uri` must be registered on the app registration.**
+   * An unregistered value is not rejected — Entra ignores it and shows its own
+   * "you have signed out" page instead, so the parameter reads as honoured while
+   * doing nothing. See docs/entra-setup.md.
+   */
+  endSessionUrl(postLogoutRedirectUri: string): string {
+    const url = new URL(`${this.authority}/logout`);
+    url.searchParams.set('post_logout_redirect_uri', postLogoutRedirectUri);
+    return url.toString();
   }
 
   async beginLogin(redirectUri: string): Promise<AuthorizationRequest> {
@@ -207,5 +240,14 @@ export class DevelopmentIdentityProvider implements IdentityProvider {
     throw new AppError('The development login is completed by selecting a seeded user, not by an OIDC callback.', {
       category: 'VALIDATION',
     });
+  }
+
+  /**
+   * Nothing to end. Selecting a seeded user creates no session anywhere but
+   * here, so there is no upstream to redirect to — and saying so is better than
+   * returning a URL that would look like a sign-out and perform none.
+   */
+  endSessionUrl(): null {
+    return null;
   }
 }

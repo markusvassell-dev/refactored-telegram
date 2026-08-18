@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { randomToken, env } from '@element/shared';
 import { container } from '@/lib/container';
+import { developmentLoginAvailable } from '@/lib/dev-login';
 import { createSession } from '@/lib/session';
 
 /**
@@ -12,7 +13,10 @@ import { createSession } from '@/lib/session';
 export async function POST(request: Request): Promise<Response> {
   const configuration = env();
 
-  if (!configuration.DEV_LOGIN_ENABLED || !['development', 'test'].includes(configuration.APP_ENV)) {
+  // The same predicate sign-out uses to decide whether there is a Microsoft
+  // session to end. Shared so the two cannot drift into disagreeing about which
+  // kind of environment this is.
+  if (!developmentLoginAvailable(configuration)) {
     return NextResponse.json({ error: 'The development login is not available in this environment.' }, { status: 403 });
   }
 

@@ -44,6 +44,25 @@ correction or a stale mistake needs a person; that judgement is the same class
 of act as accepting or rejecting content. Every use writes a
 `CLIENT_LEGAL_NAME_CORRECTED` audit event with the name before and after.
 
+### Signing out
+
+Sign-out destroys this application's session **and** redirects to Microsoft's
+end-session endpoint, so the identity provider's session in that browser ends
+too. Previously only the local cookie was deleted, which meant the next person to
+press "Sign in with Microsoft" was returned to the previous user's account with
+no prompt — on a shared office machine, the exact situation signing out exists to
+prevent.
+
+The consequence is worth stating plainly: it signs the person out of Microsoft in
+that browser, so Outlook, Teams and SharePoint ask for credentials again. That is
+the intended trade.
+
+The local session is destroyed and `USER_LOGOUT` recorded **before** the redirect
+is built, so a sign-out still signs someone out here even if the trip to
+Microsoft fails. Environments that offer the development login do not federate;
+there is no Microsoft session to end, and the end-to-end suite runs with a
+deliberately fake tenant.
+
 ### Separation of duties
 
 Enforced independently of permissions. Nobody may approve:
