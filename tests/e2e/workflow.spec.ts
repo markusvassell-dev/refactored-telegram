@@ -378,6 +378,23 @@ test.describe('access control', () => {
   });
 });
 
+test.describe('document storage', () => {
+  test('states how many files are on disk even when nothing is wrong', async ({ page }) => {
+    /*
+      The number has to be readable when everything is fine, because that is
+      exactly when it is needed: deciding whether a Railway volume can be
+      detached, an action with no undo. It was briefly only rendered alongside
+      the at-risk warning, which meant a healthy deployment showed nothing and
+      the only copy of the count was a boot log that had scrolled away.
+    */
+    await signIn(page, /Administrator/);
+    await page.goto('/settings');
+
+    await expect(page.getByText(/Document storage:/)).toBeVisible();
+    await expect(page.getByText(/file(s)? on disk/)).toBeVisible();
+  });
+});
+
 test.describe('Test Mode', () => {
   test('shows a permanent banner on every page', async ({ page }) => {
     await signIn(page, /Administrator/);
