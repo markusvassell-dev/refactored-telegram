@@ -43,15 +43,32 @@ export default async function SettingsPage() {
       />
 
       {/*
-        Shown only when files exist *and* the disk will not survive them.
+        The count, stated quietly and always.
 
-        This used to appear whenever no volume was mounted, which is the ordinary
-        configuration — documents are database rows, and the deployment guide
-        calls a volume "not required". So the screen showed a red banner about
-        losing documents to every administrator who read it, permanently, for a
-        deployment that was correct. A warning in that state is not cautious; it
-        is one more thing to learn to ignore.
+        The banner below appears only when something is wrong, which is right for
+        a warning and wrong as the only place the number lives. Deciding whether a
+        Railway volume can be detached needs to know how many files are on it —
+        and that decision is taken precisely when nothing is wrong, so the warning
+        is silent and the operator has nowhere to look but a boot log that has
+        already scrolled away. Railway deletes a volume's contents with no undo,
+        so "I think it was empty" is not good enough to act on.
       */}
+      <p className="mb-6 text-sm text-slate-600">
+        <span className="font-medium text-slate-900">Document storage:</span>{' '}
+        {storage.moreFiles ? 'at least ' : ''}
+        {storage.filesOnDisk} file{storage.filesOnDisk === 1 ? '' : 's'} on disk at{' '}
+        <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">{storage.directory}</code>
+        {storage.durability === 'UNKNOWN'
+          ? ', durability unknown'
+          : storage.durability === 'DURABLE'
+            ? ', on a mounted volume'
+            : ", on the container's own filesystem"}
+        .{' '}
+        {storage.filesOnDisk === 0
+          ? 'Every document is a database row, so this path holds nothing and a volume here is optional.'
+          : 'These predate the move to database storage; everything written since is a row.'}
+      </p>
+
       {storage.atRisk ? (
         <div
           role="note"
