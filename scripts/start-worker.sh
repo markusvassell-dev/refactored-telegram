@@ -24,7 +24,6 @@ echo "    APP_ENV=${APP_ENV:-unset}  TEST_MODE=${TEST_MODE:-unset}"
 echo "    health endpoint on port ${PORT}"
 
 require_database_url || exit 1
-check_document_storage
 
 echo "==> Checking configuration"
 check_environment || exit 1

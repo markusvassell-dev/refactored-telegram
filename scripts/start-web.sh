@@ -21,7 +21,6 @@ echo "    APP_ENV=${APP_ENV:-unset}  NODE_ENV=${NODE_ENV:-unset}  TEST_MODE=${TE
 echo "    listening on port ${PORT}"
 
 require_database_url || exit 1
-check_document_storage
 
 echo "==> Checking configuration"
 check_environment || exit 1

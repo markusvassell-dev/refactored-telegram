@@ -96,14 +96,18 @@ try {
     }
   }
 
-  // "Attach a volume" is a line in the deployment guide, and a line in a guide
-  // is exactly what gets skipped. Without one, every generated draft and every
-  // signed document not yet filed into Karbon is destroyed on the next deploy
-  // — on a schedule nobody thinks of as a schedule, and with nothing reporting
-  // it. Checked on every boot instead.
+  // Documents are database rows, so a missing volume is no longer a fault —
+  // it is the documented configuration. What still costs something is a file
+  // written before that change and still only on disk, which a redeploy
+  // discards. The count is printed either way so an operator can see the volume
+  // is empty before detaching it; the warning is kept for the reading that
+  // actually needs acting on.
   const storage = await inspectStorageDurability(env.DOCUMENT_STORAGE_DIRECTORY);
-  process.stdout.write(`      document storage         ${storage.durability.toLowerCase()}\n`);
-  if (storage.durability === 'EPHEMERAL') {
+  const filesOnDisk = `${storage.moreFiles ? '≥' : ''}${storage.filesOnDisk} file(s) on disk`;
+  process.stdout.write(
+    `      document storage         ${storage.durability.toLowerCase()}, ${filesOnDisk}\n`,
+  );
+  if (storage.atRisk) {
     process.stderr.write(`\nWARNING: ${storage.detail}\n`);
   }
 

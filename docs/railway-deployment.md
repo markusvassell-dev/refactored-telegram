@@ -205,6 +205,29 @@ A volume is still worth attaching if a deployment predates this change and has
 documents on disk that should stay readable — reads fall back to the filesystem
 when a reference has no row.
 
+### Detaching a volume you no longer need
+
+**The boot log tells you whether it is safe.** Every start prints the directory's
+state and the number of files actually in it:
+
+```
+      document storage         durable, 0 file(s) on disk
+```
+
+`0 file(s)` means nothing is on the volume: detaching destroys nothing, because
+every document is a database row. A non-zero count is files written before
+storage moved into the database — decide about those first, since **Railway
+destroys a volume's contents when you delete it** and there is no undo.
+
+Read the count while the volume is still attached, then detach in the service's
+**Settings → Volumes**. After detaching, the same line reads `ephemeral, 0
+file(s) on disk` with no warning: no volume is the expected configuration, and
+nothing reports it as a fault.
+
+A warning appears only when both are true — files present **and** a disk that
+will not survive them. Neither alone is worth saying, and saying it anyway is
+what made an earlier version of this check something to ignore.
+
 ## Health checks
 
 | Endpoint | Meaning |

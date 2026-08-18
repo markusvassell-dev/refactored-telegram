@@ -1,4 +1,7 @@
 import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@element/database';
 import { checkReadiness } from '@element/services';
@@ -24,6 +27,7 @@ const CONFIGURED = {
 };
 
 const clientIds: string[] = [];
+const temporaryDirectories: string[] = [];
 let firmSignerUserId: string;
 
 beforeAll(async () => {
@@ -39,6 +43,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await prisma.client.deleteMany({ where: { id: { in: clientIds } } });
   await prisma.systemSetting.deleteMany({ where: { key: 'firm_signer_user_id' } });
+  for (const directory of temporaryDirectories) await rm(directory, { recursive: true, force: true });
   await prisma.$disconnect();
 });
 
@@ -142,5 +147,34 @@ describe('what a deployment still needs', () => {
     // The cover-letter types that have no approved template are still reported,
     // softly — that is work outstanding, not a broken deployment.
     expect(items.find((item) => item.key === 'awaiting-templates')?.severity).toBe('ATTENTION');
+  });
+
+  it('says nothing about storage when the directory holds no files', async () => {
+    // It used to say something on every deployment without a mounted volume,
+    // which is the documented configuration — documents are database rows. A
+    // permanent item on a checklist is how the whole checklist stops being read.
+    await configure();
+    const directory = await mkdtemp(join(tmpdir(), 'readiness-storage-'));
+    temporaryDirectories.push(directory);
+
+    const items = await checkReadiness({ ...CONFIGURED, documentStorageDirectory: directory, prisma });
+
+    expect(items.find((item) => item.key === 'storage')).toBeUndefined();
+  });
+
+  it('reports storage once files are on a disk that will not survive', async () => {
+    await configure();
+    const directory = await mkdtemp(join(tmpdir(), 'readiness-storage-'));
+    temporaryDirectories.push(directory);
+    await writeFile(join(directory, 'draft.docx'), 'a document written before storage moved');
+
+    const items = await checkReadiness({ ...CONFIGURED, documentStorageDirectory: directory, prisma });
+    const storage = items.find((item) => item.key === 'storage');
+
+    expect(storage).toBeDefined();
+    // Attention rather than blocking: these are regenerable drafts, not a
+    // reason to stop the firm using the application.
+    expect(storage!.severity).toBe('ATTENTION');
+    expect(storage!.detail).toMatch(/lost on the next deploy/i);
   });
 });

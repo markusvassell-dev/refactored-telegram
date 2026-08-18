@@ -35,22 +35,20 @@ require_database_url() {
   return 1
 }
 
-# Working copies live here. An unwritable directory is not fatal — Karbon holds
-# the authoritative document and a reviewer can regenerate — but it is worth
-# saying out loud, because the symptom otherwise appears much later as a failed
-# generation job.
-check_document_storage() {
-  [ -n "${DOCUMENT_STORAGE_DIRECTORY:-}" ] || return 0
-
-  if ( mkdir -p "$DOCUMENT_STORAGE_DIRECTORY" && touch "$DOCUMENT_STORAGE_DIRECTORY/.writable" ) 2>/dev/null; then
-    rm -f "$DOCUMENT_STORAGE_DIRECTORY/.writable"
-    return 0
-  fi
-
-  echo "WARNING: ${DOCUMENT_STORAGE_DIRECTORY} is not writable by this container." >&2
-  echo "         Generated documents will fail to store. If a volume is mounted" >&2
-  echo "         there, it is owned by root and this process runs as uid 10001." >&2
-}
+# There was a `check_document_storage` here, probing whether the document
+# directory was writable and warning that "generated documents will fail to
+# store" when it was not.
+#
+# That stopped being true when storage moved into Postgres. `DocumentStore.put`
+# writes a row; the only filesystem operations left are best-effort deletes that
+# already swallow failure, so nothing generated fails to store whatever the
+# permissions are. On the live deployment the warning fired every boot — a
+# root-owned Railway volume the application no longer writes to — and sent
+# somebody looking for a blocking fault that did not exist.
+#
+# `check_environment` below reports the same area and is the only one of the two
+# that can say something true, because it can see how many files are actually
+# there. One place decides.
 
 # The environment is otherwise validated lazily, on the first request that needs
 # it. That turns a missing variable into a 500 on every page of an apparently
