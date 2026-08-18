@@ -42,26 +42,38 @@ export default async function SettingsPage() {
         description="Test Mode defaults to on. Production sending must be armed separately, by an administrator, and only when Test Mode is off."
       />
 
-      {storage.durability === 'EPHEMERAL' ? (
+      {/*
+        Shown only when files exist *and* the disk will not survive them.
+
+        This used to appear whenever no volume was mounted, which is the ordinary
+        configuration — documents are database rows, and the deployment guide
+        calls a volume "not required". So the screen showed a red banner about
+        losing documents to every administrator who read it, permanently, for a
+        deployment that was correct. A warning in that state is not cautious; it
+        is one more thing to learn to ignore.
+      */}
+      {storage.atRisk ? (
         <div
           role="note"
           className="mb-6 rounded border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900"
         >
           <p>
-            <strong className="font-semibold">Stored documents will not survive the next deploy.</strong>{' '}
+            <strong className="font-semibold">
+              {storage.filesOnDisk} document file(s) will not survive the next deploy.
+            </strong>{' '}
             {storage.detail}
           </p>
           <p className="mt-2">
-            This affects only documents written before storage moved into the database. Everything since is a row, and
-            survives a deploy whatever the disk does — attaching a volume is now optional rather than urgent.
+            Attach a volume to keep them, or let them go if they are drafts that can be regenerated. Everything written
+            since storage moved into the database is a row and is unaffected either way.
           </p>
         </div>
       ) : null}
 
-      {/* Worth saying even on a durable volume: a signature that never reaches
-          Karbon is one the firm cannot produce from its own system of record,
-          whatever the disk does. */}
-      {storage.durability !== 'EPHEMERAL' && unfiledSignatures > 0 ? (
+      {/* Worth saying even when nothing on disk is at risk: a signature that
+          never reaches Karbon is one the firm cannot produce from its own system
+          of record, whatever the disk does. */}
+      {!storage.atRisk && unfiledSignatures > 0 ? (
         <div role="note" className="mb-6 rounded border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           <p>
             <strong className="font-semibold">

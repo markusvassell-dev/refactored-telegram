@@ -186,6 +186,24 @@ Automatic on the retention schedule. To force it, enqueue
 `PURGE_TEMPORARY_FILES`. Karbon holds every final document, so this is always
 safe.
 
+### Decide whether a storage volume can be detached
+
+Read the boot log's storage line, or Settings, which reports the same thing:
+
+```
+      document storage         durable, 0 file(s) on disk
+```
+
+Documents are database rows, so a volume decides nothing for anything written
+since that change. The count is what matters — `0 file(s)` means detaching
+destroys nothing. **Deleting a Railway volume destroys its contents**, so read
+the count before, not after.
+
+A non-zero count is files predating the move to database storage. They are
+readable (`DocumentStore.get` falls back to the filesystem when a reference has
+no row) and, on container disk, are discarded by the next deploy. A warning
+appears only in that pairing: files present **and** a disk that will not survive.
+
 ### Confirm what was actually sent
 
 Audit Log, filtered by engagement or correlation id. Every generation,

@@ -170,12 +170,15 @@ export async function checkReadiness(input: ReadinessInput): Promise<ReadinessIt
   }
 
   // ---- Storage ------------------------------------------------------------
-  // Only the genuinely bad reading is reported. Documents are database rows;
-  // this concerns files written before that change, which a redeploy discards.
-  if (storage.durability === 'EPHEMERAL') {
+  // Only the genuinely bad reading is reported — which this claimed before it
+  // was true. It fired on any deployment without a volume, and no volume is the
+  // documented configuration now that documents are database rows. `atRisk`
+  // means files exist *and* the disk will not survive, which is the only pairing
+  // that costs anything.
+  if (storage.atRisk) {
     items.push({
       key: 'storage',
-      title: 'Document storage is on container disk',
+      title: `${storage.filesOnDisk} document file(s) will not survive the next deploy`,
       detail: storage.detail,
       href: '/settings',
       severity: 'ATTENTION',
