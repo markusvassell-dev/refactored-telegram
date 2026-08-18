@@ -55,18 +55,22 @@ export default async function SettingsPage() {
       */}
       <p className="mb-6 text-sm text-slate-600">
         <span className="font-medium text-slate-900">Document storage:</span>{' '}
-        {storage.moreFiles ? 'at least ' : ''}
-        {storage.filesOnDisk} file{storage.filesOnDisk === 1 ? '' : 's'} on disk at{' '}
-        <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">{storage.directory}</code>
-        {storage.durability === 'UNKNOWN'
-          ? ', durability unknown'
-          : storage.durability === 'DURABLE'
-            ? ', on a mounted volume'
-            : ", on the container's own filesystem"}
-        .{' '}
-        {storage.filesOnDisk === 0
-          ? 'Every document is a database row, so this path holds nothing and a volume here is optional.'
-          : 'These predate the move to database storage; everything written since is a row.'}
+        {storage.filesOnDisk === null ? (
+          <>
+            <span className="font-medium text-amber-800">contents could not be read</span> at{' '}
+            <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">{storage.directory}</code>. {storage.detail}
+          </>
+        ) : (
+          <>
+            {storage.moreFiles ? 'at least ' : ''}
+            {storage.filesOnDisk} file{storage.filesOnDisk === 1 ? '' : 's'} on disk at{' '}
+            <code className="rounded bg-slate-100 px-1 py-0.5 text-xs">{storage.directory}</code>
+            {storage.durability === 'DURABLE' ? ', on a mounted volume' : ", on the container's own filesystem"}.{' '}
+            {storage.filesOnDisk === 0
+              ? 'Every document is a database row, so this path holds nothing and a volume here is optional.'
+              : 'These predate the move to database storage; everything written since is a row.'}
+          </>
+        )}
       </p>
 
       {storage.atRisk ? (

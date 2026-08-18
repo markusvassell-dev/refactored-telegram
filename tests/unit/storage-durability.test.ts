@@ -127,6 +127,22 @@ describe('inspecting the document store', () => {
 
     expect(report.durability).toBe('UNKNOWN');
     expect(report.atRisk).toBe(false);
-    expect(report.detail).toMatch(/could not determine/i);
+    expect(report.detail).toMatch(/could not be read/i);
+  });
+
+  it('does not report an unreadable directory as containing zero files', async () => {
+    /*
+      The defect this exists to prevent, found on the live deployment. A
+      root-owned Railway volume the process cannot open reported
+      "unknown, 0 file(s) on disk", which reads as "empty, safe to delete" when
+      it means "nobody could look". Deleting a Railway volume is irreversible,
+      so a count of nothing and a count that never happened must not render the
+      same way.
+    */
+    const report = await inspectStorageDurability('/proc/1/mem/impossible');
+
+    expect(report.filesOnDisk).toBeNull();
+    expect(report.filesOnDisk).not.toBe(0);
+    expect(report.detail).toMatch(/unexamined rather than empty/i);
   });
 });

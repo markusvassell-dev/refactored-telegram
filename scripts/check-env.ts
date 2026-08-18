@@ -103,12 +103,20 @@ try {
   // is empty before detaching it; the warning is kept for the reading that
   // actually needs acting on.
   const storage = await inspectStorageDurability(env.DOCUMENT_STORAGE_DIRECTORY);
-  const filesOnDisk = `${storage.moreFiles ? '≥' : ''}${storage.filesOnDisk} file(s) on disk`;
+  const filesOnDisk =
+    storage.filesOnDisk === null
+      ? 'contents unreadable'
+      : `${storage.moreFiles ? '≥' : ''}${storage.filesOnDisk} file(s) on disk`;
   process.stdout.write(
     `      document storage         ${storage.durability.toLowerCase()}, ${filesOnDisk}\n`,
   );
   if (storage.atRisk) {
     process.stderr.write(`\nWARNING: ${storage.detail}\n`);
+  } else if (storage.filesOnDisk === null) {
+    // Said out loud rather than left as one word on a status line. "unknown, 0
+    // file(s) on disk" was read on the live deployment as "empty, safe to
+    // delete the volume", which is the opposite of what it meant.
+    process.stderr.write(`\nNOTE: ${storage.detail}\n`);
   }
 
   // A placeholder is a valid string and a valid URL, so the schema has no
