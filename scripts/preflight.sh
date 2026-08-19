@@ -50,6 +50,37 @@ require_database_url() {
 # that can say something true, because it can see how many files are actually
 # there. One place decides.
 
+# Strips the password out of any connection string on its way to the log.
+#
+# `prisma migrate deploy` prints its datasource on every boot, password and all,
+# and that goes straight into the deploy log — which then gets screenshotted,
+# pasted into a chat, or handed to whoever is helping. The live database
+# password left this deployment three times that way before anybody noticed.
+#
+# Rotating the credential fixes the exposure once; this stops it recurring,
+# which is the part rotation cannot do on its own.
+redact_secrets() {
+  sed -E 's#((postgres|postgresql)://[^:/@[:space:]]+:)[^@[:space:]]+@#\1********@#g'
+}
+
+# Runs a command with its output redacted, without losing its exit status.
+#
+# `cmd | redact_secrets` would report the *filter's* status, so a failed
+# migration would look like a successful one — and this shell is POSIX `sh`,
+# where `pipefail` is not available. Buffering through a file keeps the status
+# and costs nothing at these sizes; migrations here take about a second.
+run_redacted() {
+  log_file="$(mktemp)"
+  if "$@" >"$log_file" 2>&1; then
+    redact_secrets <"$log_file"
+    rm -f "$log_file"
+    return 0
+  fi
+  redact_secrets <"$log_file" >&2
+  rm -f "$log_file"
+  return 1
+}
+
 # The environment is otherwise validated lazily, on the first request that needs
 # it. That turns a missing variable into a 500 on every page of an apparently
 # healthy deployment, because the health check does not touch configuration.
