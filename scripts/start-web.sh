@@ -26,7 +26,8 @@ echo "==> Checking configuration"
 check_environment || exit 1
 
 echo "==> Applying database migrations"
-if ! pnpm db:migrate; then
+# Redacted: Prisma prints the datasource, password included, on every boot.
+if ! run_redacted pnpm db:migrate; then
   echo "" >&2
   echo "FATAL: database migrations failed; the web server was not started." >&2
   echo "       This is the reason behind a 'healthcheck failed' deploy — the" >&2
@@ -47,7 +48,8 @@ echo "==> Migrations applied"
 # exists rather than rewriting it, which the database forbids anyway. Sample
 # clients and the sample engagement are skipped when APP_ENV=production.
 echo "==> Registering approved templates and reference data"
-if ! pnpm db:seed; then
+# Redacted for the same reason: a Prisma failure here prints the datasource too.
+if ! run_redacted pnpm db:seed; then
   echo "" >&2
   echo "FATAL: seeding failed; the web server was not started." >&2
   echo "       The schema is migrated but the approved templates, pricing" >&2
