@@ -99,10 +99,15 @@ export class EntraIdProvider implements IdentityProvider {
    * authority this class already builds `/authorize` and `/token` from. Checked
    * on 2026-08-18 rather than recalled.
    *
-   * **`post_logout_redirect_uri` must be registered on the app registration.**
+   * **`post_logout_redirect_uri` must be registered as a redirect URI** — the
+   * same Web-platform list sign-in uses, not the "Front-channel logout URL"
+   * field, which is a different feature entirely (it is where Entra calls the
+   * application to clear a session someone ended elsewhere).
+   *
    * An unregistered value is not rejected — Entra ignores it and shows its own
    * "you have signed out" page instead, so the parameter reads as honoured while
-   * doing nothing. See docs/entra-setup.md.
+   * doing nothing. See docs/entra-setup.md, which named the wrong field until
+   * 2026-08-19.
    */
   endSessionUrl(postLogoutRedirectUri: string): string {
     const url = new URL(`${this.authority}/logout`);

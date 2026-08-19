@@ -8,7 +8,7 @@ Three, from one repository:
 | --- | --- | --- |
 | **web** | `web` (the default) | Applies migrations, then starts. Owns the schema |
 | **worker** | `worker` | Waits for the schema; never migrates. Needs LibreOffice, which the image provides |
-| **PostgreSQL** | — | Railway plugin, version 16 |
+| **PostgreSQL** | — | Railway plugin. The deployed image is `ghcr.io/railwayapp-templates/postgres-ssl:18` |
 
 Both application services build from the same `Dockerfile`, run the same start
 command, and answer the same health path. Nothing is configured per service
@@ -38,6 +38,30 @@ does not recognise rather than starting the wrong thing. The worker answers
 `/api/health` and `/api/ready` as aliases of its own paths, so one health-check
 path serves both.
 
+#### The dashboard shows values that are not the ones running
+
+Config as code always overrides the dashboard, and Railway does not write the
+file's values back into the settings pane. So the two disagree, permanently and
+by design.
+
+Both services' settings currently read builder `RAILPACK`, with a
+`buildCommand` of `pnpm --filter @element/<app> build` and a `startCommand` of
+`pnpm --filter @element/<app> start`, and no health-check path. **None of that
+is what runs.** `railway.json` sets the `DOCKERFILE` builder, `./scripts/start.sh`
+and `/api/health`, and the build log proves it: the LibreOffice layer, the
+`/app` workdir, and the `==> Element Engagements web` banner that only
+`start.sh` prints.
+
+Those dashboard values are inert, but they are the first thing anyone reads when
+diagnosing a start-up problem — including the Railway API and any tooling built
+on it, which report the settings rather than the resolved deployment. Read
+`railway.json` first, and confirm against the deploy log rather than the
+settings pane. The deployment details page marks config-file values with a file
+icon, which is the only place the two are reconciled.
+
+They were left in place rather than cleared: they are overridden on every
+deploy, and editing them changes nothing that runs.
+
 ### Ports
 
 Neither service picks its own port. Railway assigns `PORT` and health-checks
@@ -56,6 +80,23 @@ polls `prisma migrate status` until the schema is there, then starts.
 ## Environment variables
 
 Set on **both** the web and worker services unless noted.
+
+`SERVICE_ROLE`, `WORKER_CONCURRENCY` and `WORKER_POLL_INTERVAL_MS` are the only
+ones that are *meant* to differ. Everything else being present on one service
+and absent on the other is a fault, and it is a quiet one: a variable that is
+merely missing takes its schema default rather than failing, so the service
+starts and behaves differently from its sibling for reasons nothing reports.
+
+Two live examples, both found on 19 August 2026 — `APP_BASE_URL` left as a
+placeholder on the worker (see below), and `NOTIFICATION_EMAIL_ENABLED` set on
+the web service but absent on the worker. The second is the more instructive:
+it defaults to `false`, and the worker is the service that actually sends. Its
+`SEND_NOTIFICATION_EMAILS` job therefore ran every minute, resolved a
+`MockEmailSender`, and logged **Job succeeded** each time without a message
+leaving the building.
+
+When comparing the two services, compare the full variable list, not the values
+you expect to differ.
 
 ### Required
 
@@ -394,6 +435,19 @@ The worker has no public domain, so give it the web service's:
 `APP_BASE_URL = https://${{@element/web.RAILWAY_PUBLIC_DOMAIN}}`. It is used for
 the deep links written into Karbon, which must point at the web service.
 
+Both services now use the reference form. Until 19 August 2026 the worker's
+value was the literal placeholder `https://PASTE_YOUR_WEB_DOMAIN.up.railway.app`
+— it had never been filled in. The worker is the service that writes deep links
+into Karbon, so every link it filed pointed at a domain that does not exist,
+and the web service looked fine throughout because its own value was correct.
+
+Nothing failed. `check_environment` warned on every worker boot and the service
+started anyway, which is the right behaviour for a value that is wrong rather
+than missing — but it means the only evidence was a line in a deploy log nobody
+had reason to re-read. **A variable that is correct on one service is not
+evidence about the other.** The two services share almost every variable, which
+is exactly what makes the handful that differ easy to miss.
+
 ### Watch patterns must include the shared packages
 
 Each service has build **watch patterns** deciding which changed paths trigger a
@@ -425,10 +479,50 @@ Both services now watch:
 /package.json
 /pnpm-lock.yaml
 /pnpm-workspace.yaml
+/scripts/**
+/Dockerfile
+/railway.json
 ```
 
 A docs-only or CI-only commit still rebuilds nothing, which is the point of
 keeping patterns at all.
+
+### It happened again, one directory over
+
+The last three entries were added on 19 August 2026, after the same failure
+recurred with `scripts/`. Commit `9ea154e` — which stops the database password
+being printed in the deploy log — changed `scripts/preflight.sh`,
+`scripts/start-web.sh` and one test, and nothing else. No watched path matched,
+so Railway marked **both services SKIPPED**. CI was green, the merge looked
+deployed, and the credential kept being printed on every boot for the rest of
+the day.
+
+`scripts/` holds the entrypoints; `Dockerfile` and `railway.json` decide how the
+image is built and started. A change to any of them that does not rebuild is a
+change that silently does not exist — and because these three are exactly the
+files that control start-up, the changes they carry are the ones whose absence
+is hardest to see from the application.
+
+The pattern to take from both occurrences: **watch every path that ends up
+inside the image or governs how it runs, not just the ones holding application
+code.**
+
+### These live in the dashboard, not in `railway.json`
+
+Watch patterns are set per service in Railway's own settings, deliberately.
+
+`railway.json` would override them — config as code always beats the dashboard —
+but Railway reads one file per repository and applies it to every service built
+from it, so a `build.watchPatterns` there is necessarily a single shared list.
+That would mean the union of both services' paths, and every web-only change
+would rebuild the worker's image as well, and the reverse. The image is around
+860 MB because of LibreOffice, so that is not free.
+
+The cost of keeping them in the dashboard is that **they do not travel with the
+repository.** A service recreated from scratch, or a project transferred to
+another workspace, comes back with default patterns and reintroduces exactly the
+bug described above. If either happens, re-set all eight paths on both services
+before trusting a deploy.
 
 **A watch pattern change applies to the next trigger, not retroactively.** A
 service already behind stays behind until something it now watches changes; to
