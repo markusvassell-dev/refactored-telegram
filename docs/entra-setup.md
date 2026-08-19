@@ -45,24 +45,49 @@ callback URL exactly, under a **Web** platform. Not *Single-page application* �
 this is a confidential client that exchanges the code server-side using the
 secret, and Entra refuses the exchange for an SPA registration.
 
-**Front-channel logout URL.** Same Authentication screen, its own field. Set it
-to:
+**A second redirect URI, for the return from sign-out.** Same **Web** platform
+as the callback, listed alongside it:
 
 ```
+https://elementweb-production.up.railway.app/api/auth/entra/callback
 https://elementweb-production.up.railway.app/sign-in
 ```
 
 Signing out redirects to Microsoft's end-session endpoint so the Microsoft
 session ends too, not only ours — without that, the next person on a shared
 machine presses "Sign in with Microsoft" and lands in the previous user's
-account with no prompt.
+account with no prompt. That request carries `post_logout_redirect_uri`, and
+Entra validates it **against the registered redirect URIs** — the same list
+sign-in uses. The value is `/sign-in` on `APP_BASE_URL`; see
+`endSessionUrl` in `packages/integrations/src/identity/provider.ts`.
 
-**An unregistered value here is ignored, not rejected.** Entra will sign the
-person out and then show its own "You have signed out of your account" page
-instead of returning to the application. Nothing errors, and nothing says why —
-so if sign-out works but strands people on a Microsoft page, this field is the
-reason. The URL must match what the application sends, which is `/sign-in` on
-`APP_BASE_URL`.
+**An unregistered value is ignored, not rejected.** Entra signs the person out
+and then shows its own "You have signed out of your account" page instead of
+returning to the application. Nothing errors and nothing says why, so if
+sign-out works but strands people on a Microsoft page, this list is the reason.
+
+### Not the "Front-channel logout URL" field
+
+**Leave that field empty.** It is a different feature, and until 19 August 2026
+this document told you to put the sign-in URL in it — which does nothing for the
+redirect above.
+
+Front-channel logout is how Entra *notifies* an application to clear its own
+session when the user signs out somewhere else in the tenant: it loads the URL
+in a hidden iframe and expects an endpoint that destroys the session. This
+application has no such endpoint, so pointing it at `/sign-in` just renders the
+sign-in page in an invisible frame on every sign-out.
+
+The two are easy to conflate because the names overlap and the field sits one
+tab away from the redirect URIs. The distinction is who is being told what:
+
+| Setting | What it is for |
+| --- | --- |
+| Redirect URIs | Where Entra may send the **user** — after sign-in, and after sign-out via `post_logout_redirect_uri` |
+| Front-channel logout URL | Where Entra calls the **application** to clear a session it did not initiate |
+
+Checked against Microsoft's documentation on 19 August 2026, after the original
+advice here was found to be wrong.
 
 **API permissions.** `openid`, `profile`, `email` and `User.Read`, all
 **delegated**. None needs administrator consent; a signing-in user consents for
