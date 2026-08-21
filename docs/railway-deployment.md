@@ -518,11 +518,19 @@ That would mean the union of both services' paths, and every web-only change
 would rebuild the worker's image as well, and the reverse. The image is around
 860 MB because of LibreOffice, so that is not free.
 
-The cost of keeping them in the dashboard is that **they do not travel with the
-repository.** A service recreated from scratch, or a project transferred to
-another workspace, comes back with default patterns and reintroduces exactly the
-bug described above. If either happens, re-set all eight paths on both services
-before trusting a deploy.
+The cost of keeping them in the dashboard is that **they are not in the
+repository**, so nothing in a `git clone` restores them. A service recreated
+from scratch comes back with default patterns and reintroduces exactly the bug
+described above; re-set all eight paths on both services before trusting a
+deploy.
+
+Whether a project **transferred** to another workspace keeps them is not
+something this file can claim. Railway moves a project with its services,
+variables and settings, so they most likely travel intact — but that has not
+been tested here, and an earlier version of this paragraph asserted the opposite
+without evidence. Treat it as unknown and check: after any move, confirm the
+eight paths are still on both services. Two minutes, and it costs nothing to be
+wrong about which way it goes.
 
 **A watch pattern change applies to the next trigger, not retroactively.** A
 service already behind stays behind until something it now watches changes; to
