@@ -1000,7 +1000,7 @@ function mapOrganization(raw: Record<string, unknown>): KarbonClient {
   const card = primaryBusinessCard(raw);
   const address = cardAddress(card);
 
-  const { legalName, tradeName } = splitEntityName(String(raw.FullName ?? raw.Name ?? ''));
+  const { legalName, tradeName } = splitEntityName(entityName(raw));
 
   return {
     entityKey: String(raw.OrganizationKey ?? raw.EntityKey ?? raw.Key ?? ''),
@@ -1047,6 +1047,37 @@ function readBusinessNumber(raw: Record<string, unknown>): string | null {
   return /\d{9}/.test(candidate.replace(/\s|-/g, '')) ? candidate : null;
 }
 
+/**
+ * An entity's name, from whichever fields the response actually carries.
+ *
+ * `GET /Contacts/{key}` does not return `FullName` on the live Gordon and
+ * Company tenant. The **list** endpoint does — which is why every fixture here
+ * had one and this went unnoticed — so `mapContactEntity` read `FullName`,
+ * found nothing, and wrote an empty string into `legalName` for every
+ * individual the firm acts for. Several hundred clients imported with no name
+ * at all: blank in the clients table, blank and unpickable in the menu that
+ * starts an engagement, and no legal name to print on a T1 letter.
+ *
+ * So the name is composed from the parts when the whole is absent. The order is
+ * least-assumed first: a name Karbon states outright, then one built from the
+ * given and family names, and only then the preferred name — which is a
+ * familiar form (`Deanna`, `DJ`) and the wrong thing to put on a letter, but
+ * far better than nothing while somebody corrects it.
+ */
+function entityName(raw: Record<string, unknown>): string {
+  const stated = text(raw.FullName) ?? text(raw.Name);
+  if (stated) return stated.trim();
+
+  const composed = [text(raw.FirstName), text(raw.MiddleName), text(raw.LastName)]
+    .filter((part): part is string => part !== null)
+    .map((part) => part.trim())
+    .join(' ')
+    .trim();
+  if (composed) return composed;
+
+  return text(raw.PreferredName)?.trim() ?? '';
+}
+
 function mapContactEntity(raw: Record<string, unknown>): KarbonClient {
   // Same as an Organization: a Contact carries no address of its own either.
   const card = primaryBusinessCard(raw);
@@ -1058,7 +1089,7 @@ function mapContactEntity(raw: Record<string, unknown>): KarbonClient {
   // is the name that reaches a T1 letter. A sole proprietor filed as
   // `Robin Fournier (Fournier Welding)` has the same problem as a numbered
   // company, and so does an annotation somebody typed into the name field.
-  const { legalName, tradeName } = splitEntityName(String(raw.FullName ?? raw.Name ?? ''));
+  const { legalName, tradeName } = splitEntityName(entityName(raw));
 
   return {
     entityKey: String(raw.ContactKey ?? raw.EntityKey ?? raw.Key ?? ''),

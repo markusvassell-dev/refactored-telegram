@@ -426,6 +426,30 @@ export class ClientImportService {
         continue;
       }
 
+      // The last resort for a name, and the one that is known to work.
+      //
+      // `getClient` reads the detail endpoint, and `GET /Contacts/{key}` on the
+      // live tenant returns no `FullName` at all — so every individual the firm
+      // acts for was created with an empty legal name. The **list** endpoint
+      // does return it, and this import already read that list to discover these
+      // keys, so the name is sitting in `summaryByKey` at no further cost.
+      //
+      // This is a fallback, not a preference: the detail read stays the source
+      // when it produced anything, because it is the record the rest of the
+      // client is mapped from. A client with no name in either place is still
+      // possible, and is handled where it is created.
+      if (karbonClient.legalName.trim().length === 0) {
+        const summaryName = summaryByKey.get(entityKey)?.fullName?.trim();
+        if (summaryName) {
+          const split = splitEntityName(summaryName);
+          karbonClient = {
+            ...karbonClient,
+            legalName: split.legalName,
+            tradeName: karbonClient.tradeName ?? split.tradeName,
+          };
+        }
+      }
+
       const existing = await this.deps.prisma.client.findUnique({
         where: { karbonEntityKey: entityKey },
         include: { contacts: true },
@@ -448,12 +472,32 @@ export class ClientImportService {
         const backfill = await this.backfillFromKarbon(existing, karbonClient, input.dryRun);
         if (backfill) result.backfilled.push(backfill);
 
-        const differences = compare(existing, karbonClient);
+        // A field that was just filled was not "left alone", and reporting it in
+        // both lists at once says two opposite things about the same value.
+        // `compare` reads the row as it was before the backfill, so the filled
+        // ones are removed here rather than by re-reading the client.
+        const filled = new Set(backfill?.fieldsFilled ?? []);
+        const differences = compare(existing, karbonClient).filter(
+          (difference) => !filled.has(difference.field),
+        );
         if (differences.length > 0) {
           result.differing.push({ entityKey, legalName: existing.legalName, differences });
         } else if (!backfill) {
           result.unchanged += 1;
         }
+        continue;
+      }
+
+      // Neither the detail read nor the client list gave this one a name. It is
+      // reported rather than created: a client row with an empty legal name is
+      // invisible in every list that sorts by it, cannot be picked from the menu
+      // that starts an engagement, and could not produce a correct letter if it
+      // were. A failure names the key, which is enough to find it in Karbon.
+      if (karbonClient.legalName.trim().length === 0) {
+        result.failed.push({
+          entityKey,
+          reason: 'Karbon returned no name for this client, on either the client list or the client itself, so it was not added.',
+        });
         continue;
       }
 
@@ -744,6 +788,16 @@ export class ClientImportService {
  */
 /** The client fields safe to fill when they are empty here. */
 const BACKFILLABLE = [
+  // Included so re-running repairs the several hundred clients imported while
+  // the contact detail endpoint was returning no name: they are stored with an
+  // empty legal name, which is the one value that renders as nothing at all and
+  // the one field an engagement letter cannot be produced without.
+  //
+  // Filling it is not overwriting. "Never overwrite" protects a legal name
+  // somebody corrected against the articles of incorporation; there is no
+  // correction to protect in an empty string, and leaving these blank until each
+  // is retyped by hand is not a policy, it is a backlog.
+  ['legalName', 'Legal name'],
   // Included so re-running repairs the clients imported before names were
   // separated: their legal name now matches Karbon's legal half, but their
   // display name is blank while Karbon holds the trading name.

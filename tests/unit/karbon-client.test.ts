@@ -978,6 +978,64 @@ describe('mapping a client whose name carries a trading name', () => {
     expect(found).toMatchObject({ legalName: '2140071 Alberta Ltd.', displayName: 'JC Spa' });
   });
 
+  /**
+   * The defect that imported several hundred clients with no name.
+   *
+   * `GET /Contacts/{key}` on the live Gordon and Company tenant returns no
+   * `FullName` — only the parts, plus `PreferredName`. Every fixture in this
+   * file had a `FullName` because the *list* endpoint returns one, so the
+   * mapper read a field that was never there and wrote an empty string into
+   * `legalName`. The clients table showed a column of blanks, and the menu that
+   * starts an engagement showed options with no text at all.
+   */
+  it('composes a name for a contact whose detail carries no FullName', async () => {
+    const { client } = clientWith([
+      { status: 404, body: null },
+      {
+        status: 200,
+        body: {
+          ContactKey: 'con-1',
+          FirstName: 'Nathalie',
+          LastName: 'Novak',
+          PreferredName: 'Nathalie',
+        },
+      },
+    ]);
+
+    const found = await client.getClient('con-1');
+
+    expect(found?.legalName).toBe('Nathalie Novak');
+    expect(found?.contacts[0]).toMatchObject({ fullName: 'Nathalie Novak' });
+  });
+
+  it('falls back to the preferred name rather than to nothing', async () => {
+    // A familiar form is the wrong thing to print on a letter, and it is still
+    // far better than a client nobody can find, pick or name.
+    const { client } = clientWith([
+      { status: 404, body: null },
+      { status: 200, body: { ContactKey: 'con-1', PreferredName: 'Deanna' } },
+    ]);
+
+    expect((await client.getClient('con-1'))?.legalName).toBe('Deanna');
+  });
+
+  it('still prefers a stated FullName to the parts', async () => {
+    const { client } = clientWith([
+      { status: 404, body: null },
+      {
+        status: 200,
+        body: {
+          ContactKey: 'con-1',
+          FullName: 'Robin A. Fournier',
+          FirstName: 'Robin',
+          LastName: 'Fournier',
+        },
+      },
+    ]);
+
+    expect((await client.getClient('con-1'))?.legalName).toBe('Robin A. Fournier');
+  });
+
   it('cleans the signer name on an individual too', async () => {
     // A Contact's own entry becomes the proposed signer and is written into the
     // signature block, so the bracketed form must not reach it either.

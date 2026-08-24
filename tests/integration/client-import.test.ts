@@ -244,6 +244,61 @@ describe('importing clients from Karbon', () => {
     expect(reported!.fieldsFilled).toEqual(expect.arrayContaining(['City', 'Province']));
   });
 
+  it('repairs a client whose legal name was never filled in', async () => {
+    // The defect this covers, found on the live deployment after the firm's
+    // whole book was imported: `GET /Contacts/{key}` returns no `FullName`, so
+    // every individual the firm acts for was created with an empty legal name.
+    // They sort first in every list — a column of blanks on the clients screen,
+    // and options with no text at all in the menu that starts an engagement.
+    //
+    // Filling that blank is not overwriting: there is no correction to protect
+    // in an empty string, and the legal name is the one field an engagement
+    // letter cannot be produced without. Re-running has to repair it, exactly as
+    // it repairs a missing contact.
+    const first = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+    const target = first.created.find((client) => client.legalName.startsWith('Robin'))!;
+
+    await prisma.client.update({ where: { karbonEntityKey: target.entityKey }, data: { legalName: '' } });
+
+    const second = await service.run({ karbon: connectedKarbon(), actor: admin, dryRun: false });
+
+    const after = await prisma.client.findUniqueOrThrow({ where: { karbonEntityKey: target.entityKey } });
+    expect(after.legalName).toBe('Robin Fournier');
+
+    const repaired = second.backfilled.find((entry) => entry.entityKey === target.entityKey);
+    expect(repaired!.fieldsFilled).toEqual(expect.arrayContaining(['Legal name']));
+
+    // And it is not also reported as a difference that was left alone. A field
+    // filled on this run was not left alone, and saying both at once about the
+    // same value tells the reader nothing they can act on.
+    const differing = second.differing.find((entry) => entry.entityKey === target.entityKey);
+    expect(differing?.differences.some((difference) => difference.field === 'Legal name') ?? false).toBe(false);
+  });
+
+  it('refuses to create a client Karbon gave no name for, and says so', async () => {
+    // A row with an empty legal name is invisible in every list that sorts by
+    // it, cannot be picked from the menu that starts an engagement, and could
+    // not produce a correct letter if it were. Reported against its key, which
+    // is enough to find it in Karbon, rather than stored as a blank.
+    const key = `ci-nameless-${suffix}`;
+    if (!entityKeys.includes(key)) entityKeys.push(key);
+
+    const inner = new MockKarbonProvider({
+      clients: [{ entityKey: key, entityType: 'Contact' as const, legalName: '', contacts: [] }],
+      workItems: [{ workItemKey: `ci-wi-nameless-${suffix}`, title: 'Year-end', clientKey: key }],
+    });
+    const karbon = Object.create(inner, {
+      isMock: { value: false, enumerable: true },
+    }) as MockKarbonProvider;
+
+    const result = await service.run({ karbon, actor: admin, dryRun: false });
+
+    expect(result.created.some((client) => client.entityKey === key)).toBe(false);
+    const failure = result.failed.find((entry) => entry.entityKey === key);
+    expect(failure?.reason).toContain('no name');
+    expect(await prisma.client.findUnique({ where: { karbonEntityKey: key } })).toBeNull();
+  });
+
   it('adds a contact once, however many times it runs', async () => {
     // Matched on Karbon's own contact key. Without that, repairing the missing
     // contacts would hand every client a duplicate on each subsequent run.
