@@ -25,6 +25,8 @@ export * from './template-publish-service.js';
 export * from './template-source.js';
 export * from './template-preview-service.js';
 export * from './engagement-service.js';
+export * from './prior-year-search.js';
+export * from './system-actor.js';
 export * from './source-document-service.js';
 export * from './date-rule-service.js';
 export * from './fee-rule-service.js';

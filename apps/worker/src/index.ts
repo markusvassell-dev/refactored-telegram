@@ -185,6 +185,38 @@ async function maintenance(): Promise<void> {
 }
 
 /**
+ * Asking Karbon what has reached a configured status.
+ *
+ * Hourly, and deliberately so. The bucket in the idempotency key is what sets
+ * the real cadence, not the sleep below — `maintenance` reads as quarter-hourly
+ * and is not, because `slice(0, 13)` truncates to the hour and a second pass in
+ * the same hour deduplicates against the first. That is also what stops several
+ * worker replicas each queueing the same pass.
+ *
+ * Hourly is right here for two reasons. Karbon allows about 120 requests a
+ * minute across everything the firm runs, and this spends one per configured
+ * trigger. And an engagement letter is not urgent: the difference between
+ * noticing a status change at once and noticing it within the hour is not a
+ * difference anybody at the firm can feel.
+ */
+async function karbonTriggerPoll(): Promise<void> {
+  while (running) {
+    try {
+      await context.queue.enqueue({
+        jobType: 'POLL_KARBON_TRIGGERS',
+        idempotencyKey: `karbon_triggers_${new Date().toISOString().slice(0, 13)}`,
+        payload: {},
+      });
+    } catch (error) {
+      logger.error('Could not queue the Karbon trigger poll', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    await sleep(15 * 60_000);
+  }
+}
+
+/**
  * Getting notices into inboxes.
  *
  * On its own loop rather than folded into maintenance, because the cadences
@@ -295,3 +327,4 @@ process.on('SIGINT', () => void shutdown('SIGINT'));
 void loop();
 void maintenance();
 void notificationMail();
+void karbonTriggerPoll();

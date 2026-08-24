@@ -1,5 +1,6 @@
 import { Prisma, type PrismaClient } from '@element/database';
 import type { AuditLogger } from '@element/audit';
+import { resolveUserActor } from './system-actor.js';
 import {
   calculateFee,
   resolveRule,
@@ -199,7 +200,13 @@ export class PricingService {
       warnings: result.warnings as unknown as Prisma.InputJsonValue,
       isBlocked: result.isBlocked,
       blockedReason: result.blockedReason,
-      calculatedByUserId: actorId,
+      // A foreign key to `user.id`, so it takes a person or nothing.
+      // Preparation runs in the worker with `actorId` of `system`, which is a
+      // real answer for the audit trail and not a user row — writing it here
+      // violated the constraint, and a fee that cannot be persisted takes the
+      // whole preparation with it. `resolveUserActor` is where that distinction
+      // is explained.
+      calculatedByUserId: await resolveUserActor(this.prisma, actorId),
     };
 
     await this.prisma.feeCalculation.upsert({

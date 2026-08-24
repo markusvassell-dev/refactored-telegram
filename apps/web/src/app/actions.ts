@@ -16,10 +16,13 @@ import {
 } from '@element/shared';
 import {
   describeDifferences,
+  enqueuePriorYearSearch,
+  karbonStatusTriggerSchema,
   summariseClientImport,
   factToken,
   type ClientImportSource,
   type IntegrationProviderKey,
+  type PriorYearSearchOutcome,
 } from '@element/services';
 import type { FeeRuleLevel, ParticipantRole } from '@element/database';
 import { container } from '@/lib/container';
@@ -730,93 +733,24 @@ export async function setProductionSending(formData: FormData): Promise<ActionRe
 }
 
 /**
- * States the prior-year search may begin from.
- *
- * `LOCATING_SOURCE_DOCUMENTS` is the job's first act, so an engagement that has
- * already moved past extraction cannot accept it. Refusing here gives the
- * reviewer the reason immediately instead of enqueuing a job that fails on the
- * transition minutes later, in a place only the log would show it.
- */
-const PRIOR_YEAR_SEARCH_STATES = new Set([
-  'NOT_STARTED',
-  'SOURCE_DOCUMENT_REVIEW_REQUIRED',
-  'GENERATION_FAILED',
-  'NEEDS_ATTENTION',
-]);
-
-interface PriorYearSearchOutcome {
-  enqueued: boolean;
-  deduplicated: boolean;
-  /** Why it was not started, in words a reviewer can act on. */
-  reason?: string;
-}
-
-/**
  * Queues the Karbon search for last year's engagement letter.
  *
- * The worker has been able to do this since the first release: it searches the
- * current work item, then the prior year's work items, then the client's own
- * document area, and scores each candidate on its text rather than its
- * filename. What was missing was anybody asking. Until now the only caller was
- * the Karbon status webhook, and `karbon_status_triggers` ships empty, so on a
- * tenant that had never configured a status trigger the search simply never
- * ran — leaving every engagement asking the reviewer to upload by hand a
- * document Karbon was already holding.
- *
- * A fully tested capability that nothing reaches is indistinguishable from one
- * that was never built, which is why `tests/integration/prior-year-search.test.ts`
- * now asserts the caller and not just the handler.
+ * The helper and its guards live in `@element/services` because the worker's
+ * rollover needs exactly the same ones, and a private second copy is how two
+ * callers quietly stop agreeing. This wrapper supplies the container and
+ * nothing else.
  */
-async function enqueuePriorYearSearch(
+function priorYearSearch(
   engagementId: string,
   correlationId: string,
   options: { force?: boolean } = {},
 ): Promise<PriorYearSearchOutcome> {
-  const engagement = await container.prisma.engagement.findUnique({
-    where: { id: engagementId },
-    select: {
-      status: true,
-      client: { select: { karbonEntityKey: true } },
-      karbonWorkItem: { select: { karbonKey: true } },
-    },
-  });
-
-  if (!engagement) return { enqueued: false, deduplicated: false, reason: 'The engagement no longer exists.' };
-
-  // Nothing to search. Saying which link is missing is the difference between
-  // a fixable message and "no documents found".
-  if (!engagement.client.karbonEntityKey && !engagement.karbonWorkItem?.karbonKey) {
-    return {
-      enqueued: false,
-      deduplicated: false,
-      reason:
-        'This engagement is not linked to Karbon — neither the client nor a work item carries a Karbon key — so there is nowhere to search. Attach last year’s letter below.',
-    };
-  }
-
-  if (!PRIOR_YEAR_SEARCH_STATES.has(engagement.status)) {
-    return {
-      enqueued: false,
-      deduplicated: false,
-      reason: `Searching would move this engagement back to locating source documents, which is not allowed from ${engagement.status
-        .replace(/_/g, ' ')
-        .toLowerCase()}.`,
-    };
-  }
-
-  const result = await container.queue.enqueue({
-    jobType: 'LOCATE_PRIOR_YEAR_DOCUMENTS',
-    // Stable per engagement so re-running preparation does not search twice;
-    // an explicit re-run asks for a fresh look and gets its own key.
-    idempotencyKey: options.force
-      ? `locate_prior_year_${engagementId}_${Date.now()}`
-      : `locate_prior_year_${engagementId}`,
-    payload: { engagementId },
+  return enqueuePriorYearSearch(
+    { prisma: container.prisma, queue: container.queue },
     engagementId,
     correlationId,
-  });
-
-  return { enqueued: true, deduplicated: result.deduplicated };
+    options,
+  );
 }
 
 /**
@@ -834,7 +768,7 @@ export async function locatePriorYearDocuments(formData: FormData): Promise<Acti
     const engagementId = formData.get('engagementId')?.toString();
     if (!engagementId) throw new ValidationError('An engagement is required.');
 
-    const outcome = await enqueuePriorYearSearch(engagementId, newCorrelationId(), { force: true });
+    const outcome = await priorYearSearch(engagementId, newCorrelationId(), { force: true });
     revalidatePath(`/engagements/${engagementId}`);
 
     if (!outcome.enqueued) throw new PreconditionError(outcome.reason ?? 'The search could not be started.');
@@ -876,7 +810,7 @@ export async function prepareEngagement(formData: FormData): Promise<ActionResul
     // the largest single source of what it reconciles against, so the search
     // starts here. It runs in the background: preparation's own result must
     // not depend on Karbon being reachable this second.
-    const search = await enqueuePriorYearSearch(engagementId, correlationId);
+    const search = await priorYearSearch(engagementId, correlationId);
 
     revalidatePath(`/engagements/${engagementId}`);
 
@@ -1255,6 +1189,83 @@ export async function clearIntegrationCredentials(formData: FormData): Promise<A
 
     revalidatePath('/integrations');
     return 'Credentials removed and the connection disabled. It now falls back to the mock adapter.';
+  });
+}
+
+/**
+ * Which Karbon work item statuses start an engagement.
+ *
+ * `karbon_status_triggers` has existed since the first release and could only
+ * ever be set by editing the database, so on every deployment it has been an
+ * empty list. That is the whole reason the Karbon trigger path had never run:
+ * not a bug in the code behind it, which is tested, but a setting nothing could
+ * write. A capability nothing can reach is indistinguishable from one that was
+ * never built.
+ *
+ * Each row is validated on read as well as on write, because the stored value
+ * is JSON that a database edit can still reach — and `engagementType` now
+ * decides which legal document type a rollover creates.
+ */
+export async function setKarbonStatusTriggers(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('integration:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const statuses = formData.getAll('status').map((value) => value.toString().trim());
+    const workTypes = formData.getAll('workType').map((value) => value.toString().trim());
+    const engagementTypes = formData.getAll('engagementType').map((value) => value.toString().trim());
+
+    const rows = statuses
+      // A row with no status is an empty line in the form, not a mistake.
+      .map((status, index) => ({
+        status,
+        workType: workTypes[index] ?? '',
+        engagementType: engagementTypes[index] ?? '',
+      }))
+      .filter((row) => row.status.length > 0);
+
+    const triggers = rows.map((row, index) => {
+      const parsed = karbonStatusTriggerSchema.safeParse(row);
+      if (!parsed.success) {
+        throw new ValidationError(
+          `Trigger ${index + 1} is not valid: a status and an engagement type are both required.`,
+        );
+      }
+      return parsed.data;
+    });
+
+    // Two triggers on the same work type and status would both match, and which
+    // one won would depend on array order — meaning the engagement type a
+    // client's letter is created as would depend on the order somebody happened
+    // to type them in.
+    const seen = new Set<string>();
+    for (const trigger of triggers) {
+      const key = `${trigger.workType.toLowerCase()}::${trigger.status.toLowerCase()}`;
+      if (seen.has(key)) {
+        throw new ValidationError(
+          `Two triggers match the same work type and status (“${trigger.status}”). Remove one: which engagement type it created would otherwise depend on the order they were entered.`,
+        );
+      }
+      seen.add(key);
+    }
+
+    await container.settings.set('karbon_status_triggers', triggers, actor);
+
+    const context = await requestContext();
+    await container.audit.record({
+      eventType: 'CONFIGURATION_CHANGED',
+      objectType: 'SystemSetting',
+      objectId: 'karbon_status_triggers',
+      userId: actor.id,
+      afterValue: { triggers },
+      ipAddress: context.ipAddress,
+    });
+
+    revalidatePath('/integrations');
+
+    return triggers.length === 0
+      ? 'All Karbon status triggers removed. Engagements will only start when somebody starts one.'
+      : `${triggers.length} Karbon status trigger(s) saved. A work item reaching one of these statuses will roll the client's engagement forward.`;
   });
 }
 

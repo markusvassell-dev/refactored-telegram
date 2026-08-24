@@ -1,12 +1,26 @@
 import {
   NotificationEmailService,
+  enqueuePriorYearSearch,
   summariseClientImport,
+  SYSTEM_ACTOR_ID,
   type JobHandler,
   type JobType,
 } from '@element/services';
-import { extractPdfText, DeterministicExtractor, selectPriorYearDocument } from '@element/integrations';
+import {
+  extractPdfText,
+  deriveTaxYear,
+  DeterministicExtractor,
+  selectPriorYearDocument,
+} from '@element/integrations';
 import { detectCheckboxStates, extractParagraphs, isPdf, parseManifest } from '@element/documents';
-import { PreconditionError, ValidationError, sha256Hex, type DocumentType } from '@element/shared';
+import {
+  newCorrelationId,
+  PreconditionError,
+  ValidationError,
+  sha256Hex,
+  type DocumentType,
+  type EngagementType,
+} from '@element/shared';
 import type { WorkerContext } from './context.js';
 
 /**
@@ -17,6 +31,18 @@ import type { WorkerContext } from './context.js';
  * delivery; these handlers provide the effectively-once behaviour.
  */
 
+/**
+ * How many work items one trigger may match in a single pass.
+ *
+ * A ceiling rather than a target. The first time a firm configures a status
+ * that a few hundred historical work items already sit in, every one of them is
+ * a candidate engagement — and each costs Karbon reads downstream. Capping the
+ * pass means the backlog drains over several, which is slower and survivable;
+ * uncapped, the first poll after configuration is the largest thing this
+ * application has ever done, unattended, on a shared rate limit.
+ */
+const POLL_WORK_ITEM_LIMIT = 50;
+
 function requireString(payload: Record<string, unknown>, key: string): string {
   const value = payload[key];
   if (typeof value !== 'string' || value === '') {
@@ -26,7 +52,9 @@ function requireString(payload: Record<string, unknown>, key: string): string {
 }
 
 export function buildHandlers(context: WorkerContext): Record<JobType, JobHandler> {
-  const systemActorId = 'system';
+  // Named in `@element/services` alongside `resolveUserActor`, which explains
+  // why an audit column may hold it and a foreign key may not.
+  const systemActorId = SYSTEM_ACTOR_ID;
 
   /**
    * Upserts an engagement-level extracted field.
@@ -95,6 +123,79 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
     return version ? parseManifest(version.manifest) : null;
   }
 
+  /**
+   * Brings this application's copy of one Karbon work item up to date.
+   *
+   * Shared by `KARBON_SYNC` and the rollover, which needs the work item to
+   * exist before it can read a client off it. A rollover triggered by the poll
+   * names a work item this application may never have seen, and depending on a
+   * separately queued sync having run first would make the outcome depend on
+   * job ordering the queue does not promise.
+   */
+  async function syncWorkItem(workItemKey: string, logger: { warn: (message: string, context?: Record<string, unknown>) => void }) {
+    const { karbon } = await context.providers();
+
+    const item = await karbon.getWorkItem(workItemKey);
+    if (!item) {
+      logger.warn('Karbon work item not found', { workItemKey });
+      return { found: false as const };
+    }
+
+    // Which client this work is for.
+    //
+    // The work item carried a client key from the first release and nothing
+    // ever stored it, so `karbonWorkItem.clientId` was null on every row. A
+    // work item that names no client is a work item nothing can be rolled
+    // forward from — the rollover has to start by asking "whose engagement is
+    // this?", and until now the answer was not written down anywhere.
+    //
+    // It costs no Karbon request: `getWorkItem` already returns `clientKey`.
+    // An unknown key links nothing rather than inventing a client, matching
+    // how the import treats a key it cannot resolve.
+    const client = item.clientKey
+      ? await context.prisma.client.findUnique({
+          where: { karbonEntityKey: item.clientKey },
+          select: { id: true },
+        })
+      : null;
+
+    const taxYear = deriveTaxYear(item);
+
+    await context.prisma.karbonWorkItem.upsert({
+      where: { karbonKey: item.workItemKey },
+      create: {
+        karbonKey: item.workItemKey,
+        clientId: client?.id ?? null,
+        title: item.title,
+        workType: item.workType,
+        status: item.workStatus,
+        assigneeEmail: item.assigneeEmail,
+        dueDate: item.dueDate ? new Date(item.dueDate) : null,
+        taxYear,
+        lastSyncedAt: new Date(),
+        rawSnapshot: (item.raw ?? {}) as never,
+      },
+      update: {
+        // Only fills, never clears: a client imported after this work item was
+        // first seen should link on the next sync, but a sync that could not
+        // resolve the key must not unlink one that already resolved.
+        ...(client ? { clientId: client.id } : {}),
+        ...(taxYear === null ? {} : { taxYear }),
+        title: item.title,
+        workType: item.workType,
+        status: item.workStatus,
+        assigneeEmail: item.assigneeEmail,
+        // Written on update as well as create. It was only ever set at create,
+        // so a deadline moved in Karbon never moved here.
+        dueDate: item.dueDate ? new Date(item.dueDate) : null,
+        lastSyncedAt: new Date(),
+        rawSnapshot: (item.raw ?? {}) as never,
+      },
+    });
+
+    return { found: true as const, workItemKey, clientLinked: Boolean(client), taxYear };
+  }
+
   function documentTypeFor(engagementType: string): DocumentType {
     switch (engagementType) {
       case 'T1_JOINT':
@@ -111,38 +212,146 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
   return {
     // ---------------------------------------------------------------- Karbon
     KARBON_SYNC: async ({ job, logger }) => {
-      const { karbon } = await context.providers();
       const workItemKey = requireString(job.payload, 'workItemKey');
+      return syncWorkItem(workItemKey, logger);
+    },
 
-      const item = await karbon.getWorkItem(workItemKey);
-      if (!item) {
-        logger.warn('Karbon work item not found', { workItemKey });
-        return { found: false };
+    /**
+     * Starting next year's engagement, from last year's, with nobody present.
+     *
+     * This is the job the annual rollover was missing. Everything downstream
+     * already existed and already chained itself — locate last year's letter,
+     * extract it, prepare this year's proposals — but all of it begins from an
+     * engagement, and the only thing that ever made one was a form. A Karbon
+     * status trigger naming a work item with no engagement reported that fact
+     * and stopped.
+     *
+     * It runs here rather than in the webhook route because it reads Karbon
+     * while a vendor waits on the response, which is the failure the client
+     * import already learned the expensive way.
+     *
+     * **It stops at prepared.** Nothing here enqueues generation: preparation
+     * proposes and a person confirms, and an engagement starting itself does
+     * not move that line.
+     */
+    /**
+     * Asking Karbon which work items have reached a configured status.
+     *
+     * The documentation has named a "scheduled reconciliation poll" as the
+     * fallback for Karbon's webhooks since the capability matrix was written,
+     * and there has never been one. That mattered more than it sounds: nothing
+     * subscribes to Karbon's webhooks, and the receiver's header name,
+     * signature scheme and payload fields were inferred from no specification —
+     * so the only route from a Karbon status change into this application was
+     * one that has never carried a single request.
+     *
+     * This is the route that works. `searchWorkItems` is one of the operations
+     * proven against the live tenant, and it filters on work type and status
+     * server-side and again client-side, so a tenant whose API ignores an
+     * unsupported `$filter` cannot make us act on the wrong work item.
+     */
+    POLL_KARBON_TRIGGERS: async ({ job, logger }) => {
+      const triggers = await context.settings.karbonStatusTriggers();
+
+      // Nothing configured is the normal state, and it must cost nothing:
+      // Karbon allows about 120 requests a minute across every process the firm
+      // runs, and polling for a list nobody has filled in would spend that
+      // budget to learn nothing.
+      if (triggers.length === 0) {
+        return { triggers: 0, examined: 0, queued: 0, note: 'No Karbon status triggers are configured.' };
       }
 
-      await context.prisma.karbonWorkItem.upsert({
-        where: { karbonKey: item.workItemKey },
-        create: {
-          karbonKey: item.workItemKey,
-          title: item.title,
-          workType: item.workType,
-          status: item.workStatus,
-          assigneeEmail: item.assigneeEmail,
-          dueDate: item.dueDate ? new Date(item.dueDate) : null,
-          lastSyncedAt: new Date(),
-          rawSnapshot: (item.raw ?? {}) as never,
-        },
-        update: {
-          title: item.title,
-          workType: item.workType,
-          status: item.workStatus,
-          assigneeEmail: item.assigneeEmail,
-          lastSyncedAt: new Date(),
-          rawSnapshot: (item.raw ?? {}) as never,
-        },
+      const { karbon } = await context.providers();
+
+      // A mock would answer with fictional work items, and this path creates
+      // engagements. Inventing a firm's annual rollout out of sample data is
+      // not a smaller mistake than failing to run at all.
+      if (karbon.isMock) {
+        return { triggers: triggers.length, examined: 0, queued: 0, note: 'Karbon is not connected.' };
+      }
+
+      let examined = 0;
+      let queued = 0;
+
+      for (const trigger of triggers) {
+        const found = await karbon.searchWorkItems({
+          workStatus: trigger.status,
+          workType: trigger.workType || undefined,
+          limit: POLL_WORK_ITEM_LIMIT,
+        });
+
+        examined += found.length;
+
+        for (const item of found) {
+          const result = await context.queue.enqueue({
+            jobType: 'ROLL_OVER_ENGAGEMENT',
+            // Keyed on the work item and the status that matched, exactly as
+            // the webhook's own trigger key is. A work item sitting in that
+            // status is not re-examined on every pass; one that moves through a
+            // second configured status is.
+            idempotencyKey: `rollover_${item.workItemKey}_${trigger.status}`,
+            payload: {
+              workItemKey: item.workItemKey,
+              engagementType: trigger.engagementType,
+              triggerStatus: trigger.status,
+            },
+            correlationId: job.correlationId,
+          });
+
+          if (!result.deduplicated) queued += 1;
+        }
+      }
+
+      if (queued > 0) logger.info('Karbon status triggers matched work items', { examined, queued });
+
+      return { triggers: triggers.length, examined, queued };
+    },
+
+    ROLL_OVER_ENGAGEMENT: async ({ job, logger }) => {
+      const workItemKey = requireString(job.payload, 'workItemKey');
+      const engagementType = requireString(job.payload, 'engagementType') as EngagementType;
+      const correlationId = job.correlationId ?? null;
+
+      // The work item has to be here before anything can be read off it. A
+      // trigger can name one this application has never seen — the poll finds
+      // work items directly from Karbon — so sync it rather than refusing.
+      const known = await context.prisma.karbonWorkItem.findUnique({
+        where: { karbonKey: workItemKey },
+        select: { clientId: true },
       });
 
-      return { found: true, workItemKey };
+      if (!known?.clientId) await syncWorkItem(workItemKey, logger);
+
+      const state = await context.testMode();
+
+      const result = await context.engagements.rollForward({
+        karbonWorkItemKey: workItemKey,
+        engagementType,
+        actorId: systemActorId,
+        isTestMode: state.testMode,
+        initiationSource: 'KARBON_ROLLOVER',
+        correlationId,
+      });
+
+      // Straight into the pipeline that already exists, under the same key the
+      // reviewer's own button uses, so a rollover and a person pressing it
+      // cannot both queue a search for the same engagement.
+      const search = await enqueuePriorYearSearch(
+        { prisma: context.prisma, queue: context.queue },
+        result.engagementId,
+        correlationId ?? newCorrelationId(),
+      );
+
+      if (!search.enqueued) {
+        // Not a failure: an engagement already past extraction is one somebody
+        // is working on, and the rollover's job was to make it exist.
+        logger.info('Rolled forward without starting a prior-year search', {
+          engagementId: result.engagementId,
+          reason: search.reason,
+        });
+      }
+
+      return { ...result, priorYearSearchEnqueued: search.enqueued };
     },
 
     /**
