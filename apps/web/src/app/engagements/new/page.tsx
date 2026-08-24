@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { container } from '@/lib/container';
+import { clientLabel } from '@/lib/client-name';
 import { pageAccess, sessionCsrfToken } from '@/lib/session';
 import { AccessDenied } from '@/components/access-denied';
 import { PageHeader } from '@/components/shell';
@@ -24,7 +25,18 @@ export default async function NewEngagementPage() {
   const [clients, reviewers, templates, testMode] = await Promise.all([
     container.prisma.client.findMany({
       orderBy: { legalName: 'asc' },
-      select: { id: true, legalName: true, isTestFixture: true },
+      // The three name columns, not only the legal one. A client imported from
+      // Karbon without a name has an empty `legalName`, which renders as an
+      // option with no text at all — unpickable, and indistinguishable from the
+      // next one. `clientLabel` needs the others to say which client it is.
+      select: {
+        id: true,
+        legalName: true,
+        displayName: true,
+        karbonFullName: true,
+        karbonEntityKey: true,
+        isTestFixture: true,
+      },
       take: 500,
     }),
     container.prisma.user.findMany({
@@ -82,8 +94,7 @@ export default async function NewEngagementPage() {
                 <option value="">— none, I am naming a new one below —</option>
                 {clients.map((client) => (
                   <option key={client.id} value={client.id}>
-                    {client.legalName}
-                    {client.isTestFixture ? ' (test fixture)' : ''}
+                    {`${clientLabel(client)}${client.isTestFixture ? ' (test fixture)' : ''}`}
                   </option>
                 ))}
               </select>
