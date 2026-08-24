@@ -6,6 +6,7 @@ import { EmptyState, PageHeader } from '@/components/shell';
 import { Pagination, PageOutOfRange } from '@/components/pagination';
 import { ActionForm } from '@/components/action-form';
 import { ClientIdentityCard, karbonNameDisagreement } from '@/components/client-identity';
+import { clientLabel, hasNoLegalName } from '@/lib/client-name';
 import { boundedCount, parsePageRequest, toPage, withStableOrder } from '@/lib/pagination';
 import { clientSearchWhere, normaliseClientSearch } from '@/lib/client-search';
 import { importClientsFromKarbon } from '@/app/actions';
@@ -261,10 +262,20 @@ export default async function ClientsPage({
                   <tr key={client.id}>
                     <td className="font-medium">
                       <Link className="underline" href={`/clients/${client.id}`}>
-                        {client.legalName}
+                        {clientLabel(client)}
                       </Link>
                       {client.isTestFixture ? (
                         <span className="badge ml-2 bg-amber-100 text-amber-800">test fixture</span>
+                      ) : null}
+                      {/*
+                        A client whose legal name never arrived from Karbon. It
+                        is flagged rather than left to read as a client called
+                        something odd, because the legal name is what gets
+                        printed on the letter — this one cannot produce a
+                        correct one until somebody fills it in.
+                      */}
+                      {hasNoLegalName(client) ? (
+                        <span className="badge ml-2 bg-red-100 text-red-800">no legal name</span>
                       ) : null}
                       {/*
                         Flagged in the list, not only on the client's own page,

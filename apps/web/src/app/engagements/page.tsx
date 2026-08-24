@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { can } from '@element/shared';
 import { container } from '@/lib/container';
+import { clientLabel } from '@/lib/client-name';
 import { requireUser } from '@/lib/session';
 import { EmptyState, PageHeader, StatusBadge } from '@/components/shell';
 import { Pagination, PageOutOfRange } from '@/components/pagination';
@@ -116,7 +117,7 @@ export default async function EngagementsPage({
                   <tr key={engagement.id}>
                     <td>
                       <Link className="text-brand-700 underline" href={`/engagements/${engagement.id}`}>
-                        {engagement.client.legalName}
+                        {clientLabel(engagement.client)}
                       </Link>
                       {engagement.isTestMode ? (
                         <span className="badge ml-2 bg-amber-100 text-amber-800">test</span>

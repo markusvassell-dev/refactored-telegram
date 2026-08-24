@@ -3,6 +3,7 @@ import { dateFactQuestion, dateRuleDefinitionSchema } from '@element/dates';
 import { FACT_TOKEN_PREFIX, type FieldForm } from '@element/services';
 import { formatMoney } from '@element/shared';
 import { container } from '@/lib/container';
+import { clientLabel } from '@/lib/client-name';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
 import { linksForAll } from '@/lib/document-links';
 import { boundedCount, withStableOrder } from '@/lib/pagination';
@@ -157,7 +158,7 @@ export default async function EngagementDetailPage({ params }: { params: Promise
   return (
     <>
       <PageHeader
-        title={engagement.client.legalName}
+        title={clientLabel(engagement.client)}
         description={`${engagement.engagementType} · ${engagement.taxYear}${
           engagement.yearEnd ? ` · year-end ${engagement.yearEnd.toISOString().slice(0, 10)}` : ''
         }`}
