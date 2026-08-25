@@ -1,7 +1,7 @@
 import { KARBON_CAPABILITY_MATRIX } from '@element/integrations';
 import type { ReactNode } from 'react';
 import { can, describeSandboxMislabel, env } from '@element/shared';
-import type { ConnectionView } from '@element/services';
+import type { ConnectionView, KarbonStatusTrigger } from '@element/services';
 import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
 import { PageHeader } from '@/components/shell';
@@ -10,6 +10,7 @@ import {
   checkIntegrationConnection,
   clearIntegrationCredentials,
   saveIntegrationConnection,
+  setKarbonStatusTriggers,
 } from '@/app/actions';
 
 export const dynamic = 'force-dynamic';
@@ -29,10 +30,11 @@ export default async function IntegrationsPage({
   const csrfToken = (await sessionCsrfToken()) ?? '';
   const canManage = can(user, 'integration:manage');
 
-  const [connections, providers, state] = await Promise.all([
+  const [connections, providers, state, triggers] = await Promise.all([
     container.integrations.list(),
     container.providers(),
     container.testModeState(),
+    container.settings.karbonStatusTriggers(),
   ]);
 
   return (
@@ -110,6 +112,8 @@ export default async function IntegrationsPage({
         />
       ))}
 
+      <StatusTriggers csrfToken={csrfToken} canManage={canManage} triggers={triggers} />
+
       <section className="card">
         <div className="card-header">
           <h2 className="text-base font-semibold">Karbon capability matrix</h2>
@@ -159,6 +163,139 @@ export default async function IntegrationsPage({
         </div>
       </section>
     </>
+  );
+}
+
+/** Engagement types offered, with the label a person recognises. */
+const ENGAGEMENT_TYPES = [
+  { value: 'T2', label: 'T2 corporate' },
+  { value: 'T1_JOINT', label: 'T1 joint taxpayers' },
+  { value: 'T1_SINGLE', label: 'T1 single taxpayer' },
+  { value: 'T3', label: 'T3 trust' },
+] as const;
+
+/** How many rows the form offers. Blank ones are ignored on save. */
+const TRIGGER_ROWS = 6;
+
+/**
+ * The statuses that start an engagement.
+ *
+ * This is the setting that decides whether any of the automatic rollover ever
+ * runs. It has existed since the first release and could only be changed by
+ * editing the database, so on every deployment it has been empty — which is why
+ * a Karbon status change has never started anything, however well tested the
+ * code behind it was.
+ */
+function StatusTriggers({
+  csrfToken,
+  canManage,
+  triggers,
+}: {
+  csrfToken: string;
+  canManage: boolean;
+  triggers: KarbonStatusTrigger[];
+}): ReactNode {
+  const rows = [
+    ...triggers,
+    ...Array.from({ length: Math.max(TRIGGER_ROWS - triggers.length, 1) }, () => ({
+      workType: '',
+      status: '',
+      engagementType: 'T2' as const,
+    })),
+  ];
+
+  return (
+    <section className="card mb-6">
+      <div className="card-header">
+        <h2 className="text-base font-semibold">Start an engagement from a Karbon status</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          When a work item reaches one of these statuses, this application creates the client&rsquo;s engagement for the
+          new year, finds last year&rsquo;s letter in Karbon, and carries its values forward. It stops there:{' '}
+          <strong>nothing is generated, approved or sent automatically</strong> — the engagement waits in the review
+          queue like any other.
+        </p>
+        <p className="mt-2 text-sm text-slate-600">
+          Statuses and work types are whatever your Karbon tenant calls them, matched ignoring capitalisation. Leave the
+          work type blank to match any. With nothing listed here, engagements only ever start when somebody starts one.
+        </p>
+      </div>
+      <div className="card-body">
+        {triggers.length === 0 ? (
+          <p className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            No triggers are configured, so nothing starts by itself yet.
+          </p>
+        ) : null}
+
+        {canManage ? (
+          <ActionForm action={setKarbonStatusTriggers} csrfToken={csrfToken} submitLabel="Save triggers">
+            <div className="space-y-3">
+              {rows.map((row, index) => (
+                <div key={index} className="grid gap-2 sm:grid-cols-3">
+                  <div>
+                    <label className="label" htmlFor={`trigger-status-${index}`}>
+                      Karbon status
+                    </label>
+                    <input
+                      id={`trigger-status-${index}`}
+                      name="status"
+                      className="input"
+                      defaultValue={row.status}
+                      autoComplete="off"
+                      placeholder="Ready for engagement letter"
+                    />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor={`trigger-worktype-${index}`}>
+                      Work type (optional)
+                    </label>
+                    <input
+                      id={`trigger-worktype-${index}`}
+                      name="workType"
+                      className="input"
+                      defaultValue={row.workType}
+                      autoComplete="off"
+                      placeholder="Any"
+                    />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor={`trigger-type-${index}`}>
+                      Creates
+                    </label>
+                    <select
+                      id={`trigger-type-${index}`}
+                      name="engagementType"
+                      className="input"
+                      defaultValue={row.engagementType}
+                    >
+                      {ENGAGEMENT_TYPES.map((type) => (
+                        <option key={type.value} value={type.value}>
+                          {type.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="field-note mt-3">
+              A row with no status is ignored. Clearing every status removes all triggers. Two rows matching the same
+              work type and status are refused — which engagement type won would otherwise depend on the order they
+              were typed.
+            </p>
+          </ActionForm>
+        ) : (
+          <ul className="space-y-1 text-sm text-slate-700">
+            {triggers.map((trigger) => (
+              <li key={`${trigger.workType}::${trigger.status}`}>
+                <span className="font-medium">{trigger.status}</span>
+                {trigger.workType ? ` on ${trigger.workType}` : ' on any work type'} &rarr;{' '}
+                {trigger.engagementType.replace(/_/g, ' ')}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
   );
 }
 

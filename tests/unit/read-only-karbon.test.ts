@@ -40,7 +40,13 @@ describe('reads, which change nothing on the firm’s side', () => {
     await expect(karbon.getClient('org-1')).resolves.toMatchObject({ legalName: 'Ziegeman Pipeline Services Ltd.' });
     await expect(karbon.searchWorkItems({ limit: 10 })).resolves.toHaveLength(1);
     await expect(karbon.listDocuments({ workItemKey: 'wi-1' })).resolves.toHaveLength(1);
-    await expect(karbon.downloadDocument('doc-1')).resolves.toMatchObject({ fileName: 'Prior Year Letter.pdf' });
+    // Scoped, because Karbon issues a download token only alongside a file
+    // listing and the real client re-lists the entity to get one. The mock used
+    // to ignore the argument, which is how a caller that passed no scope at all
+    // shipped and failed only against a live tenant.
+    await expect(
+      karbon.downloadDocument('doc-1', { workItemKey: 'wi-1' }),
+    ).resolves.toMatchObject({ fileName: 'Prior Year Letter.pdf' });
   });
 
   it('is the reason the honest label is usable at all', async () => {

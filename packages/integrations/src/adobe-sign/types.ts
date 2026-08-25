@@ -36,7 +36,13 @@ export interface CreateAgreementRequest {
   message?: string;
   /** Days until the agreement expires. */
   expiresInDays: number;
-  /** Reminder cadence, expressed in business days. */
+  /**
+   * Reminder cadence, expressed in business days.
+   *
+   * Adobe publishes two cadences and no others, so this is a request rather
+   * than an instruction — see `adobeReminderFrequency`, which is what actually
+   * goes on the wire and what the agreement record should be written from.
+   */
   reminderEveryBusinessDays: number;
   locale: string;
   /**
@@ -53,9 +59,37 @@ export interface CreateAgreementRequest {
    * Resolve it against the published spec before relying on it.
    */
   allowDelegation: boolean;
-  /** Identity verification: email verification by default. */
+  /**
+   * Identity verification: email verification by default.
+   *
+   * `PHONE` is refused rather than sent. Adobe's `ParticipantSecurityOption`
+   * requires a `phoneInfo` — a country code and a number — for phone
+   * verification, and nothing on this request carries a signer's telephone
+   * number. Sending `PHONE` without one is the shape of failure this project
+   * has hit twice already: the field is accepted, the check is not applied, and
+   * every signal says the letter went out verified.
+   */
   authenticationMethod: 'EMAIL' | 'PHONE' | 'KBA';
   engagementType: EngagementType;
+}
+
+/**
+ * The reminder cadence Adobe will actually apply.
+ *
+ * `AgreementInfo.reminderFrequency` publishes exactly two values. This client
+ * used to send `EVERY_THIRD_DAY_UNTIL_SIGNED`, which is not one of them, on
+ * every agreement — the default cadence is three business days, so that was
+ * every send. Anything above daily becomes weekly, and the label says weekly
+ * too, so the record on the agreement matches what the client will experience
+ * rather than what was asked for.
+ */
+export function adobeReminderFrequency(everyBusinessDays: number): {
+  value: 'DAILY_UNTIL_SIGNED' | 'WEEKLY_UNTIL_SIGNED';
+  label: string;
+} {
+  return everyBusinessDays <= 1
+    ? { value: 'DAILY_UNTIL_SIGNED', label: 'Every day until signed' }
+    : { value: 'WEEKLY_UNTIL_SIGNED', label: 'Every week until signed' };
 }
 
 export type AgreementStatus =

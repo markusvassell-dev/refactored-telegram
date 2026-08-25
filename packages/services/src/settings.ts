@@ -1,5 +1,31 @@
+import { z } from 'zod';
 import type { PrismaClient } from '@element/database';
 import { PermissionError, type Role } from '@element/shared';
+
+/**
+ * A Karbon work item status that starts an engagement.
+ *
+ * Validated rather than trusted, and the reason changed recently. This was a
+ * hint that started a document search on an engagement somebody had already
+ * created; `engagementType` was declared here and read by nothing. It now
+ * decides **which legal document type gets created** — a T2 corporate letter or
+ * a T1 personal one — so a typo must disable the trigger rather than falling
+ * through to a default. An entry that does not parse is dropped and the rest
+ * still work, because one malformed row should not silently stop a firm's
+ * whole annual rollover.
+ *
+ * `workType` is optional and free text because Karbon's vocabulary is
+ * tenant-defined — the same reason `ContactType` is not filtered on during the
+ * client import. Matching is case-insensitive; a firm that writes
+ * "Ready for Letter" should not be defeated by capitalisation.
+ */
+export const karbonStatusTriggerSchema = z.object({
+  workType: z.string().trim().nullish().transform((value) => value ?? ''),
+  status: z.string().trim().min(1),
+  engagementType: z.enum(['T1_JOINT', 'T1_SINGLE', 'T2', 'T3']),
+});
+
+export type KarbonStatusTrigger = z.infer<typeof karbonStatusTriggerSchema>;
 
 /**
  * System settings, including the Test Mode switch.
@@ -110,8 +136,16 @@ export class SettingsService {
   }
 
   /** Karbon Work Item statuses that may trigger generation. */
-  async karbonStatusTriggers(): Promise<{ workType: string; status: string; engagementType: string }[]> {
-    return this.getRaw(SETTING_KEYS.karbonStatusTriggers, []);
+  async karbonStatusTriggers(): Promise<KarbonStatusTrigger[]> {
+    const stored = await this.getRaw<unknown[]>(SETTING_KEYS.karbonStatusTriggers, []);
+    if (!Array.isArray(stored)) return [];
+
+    // Each row parsed on its own, so one bad entry costs one trigger rather
+    // than all of them.
+    return stored.flatMap((row) => {
+      const parsed = karbonStatusTriggerSchema.safeParse(row);
+      return parsed.success ? [parsed.data] : [];
+    });
   }
 
   /** Application status -> Karbon work status. Unmapped statuses are skipped. */

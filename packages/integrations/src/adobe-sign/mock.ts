@@ -1,5 +1,5 @@
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { NotFoundError, PreconditionError, sha256Hex } from '@element/shared';
+import { NotFoundError, PreconditionError, ValidationError, sha256Hex } from '@element/shared';
 import type {
   AdobeSignProvider,
   AdobeWebhookEvent,
@@ -67,6 +67,16 @@ export class MockAdobeSignProvider implements AdobeSignProvider {
     if (this.failNextCreate) {
       this.failNextCreate = false;
       throw new Error('Simulated transient Adobe Sign failure');
+    }
+
+    // Refused here because the real client refuses it: Adobe's phone
+    // verification needs a telephone number this application does not hold. A
+    // mock that accepted it would let a caller add phone verification, watch
+    // every test pass, and discover in production that the send is rejected.
+    if (request.authenticationMethod === 'PHONE') {
+      throw new ValidationError(
+        'Phone verification cannot be used: Adobe needs each signer\'s telephone number, and engagement participants do not record one. Use email verification or knowledge-based authentication.',
+      );
     }
 
     // A retry with the same deterministic key returns the existing agreement.
@@ -218,6 +228,12 @@ export class MockAdobeSignProvider implements AdobeSignProvider {
       }
     }
 
+    // `COMPLETED` and `SIGNED` are both this application's vocabulary, not
+    // Adobe's. Adobe's terminal value is `SIGNED`, which the REST client maps
+    // straight through; `COMPLETED` is what it maps `ARCHIVED` to. Both are
+    // reachable in production and every consumer treats them identically —
+    // which is the thing worth exercising, so the mock produces the one the
+    // REST client does not.
     const allSigned = stored.signers.every((candidate) => candidate.status === 'SIGNED');
     const anySigned = stored.signers.some((candidate) => candidate.status === 'SIGNED');
     stored.status = allSigned ? 'COMPLETED' : anySigned ? 'PARTIALLY_SIGNED' : 'OUT_FOR_SIGNATURE';

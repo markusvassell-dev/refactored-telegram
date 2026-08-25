@@ -49,11 +49,18 @@ export async function POST(request: Request): Promise<Response> {
     correlationId,
   });
 
-  if (syncResult.deduplicated) {
-    return NextResponse.json({ accepted: true, duplicate: true, correlationId });
-  }
+  // A redelivery of the same event no longer ends the request here.
+  //
+  // Returning early on a deduplicated sync was safe while the only thing below
+  // was a search that would be re-run anyway. It is not safe now: the work
+  // below decides whether an engagement gets created, and a vendor redelivering
+  // an event it thinks failed would silently skip that. Every enqueue below
+  // carries its own deterministic key, which is the right place for
+  // deduplication to happen — once per unit of work rather than once per
+  // delivery.
+  const duplicateDelivery = syncResult.deduplicated;
 
-  // Only a configured status triggers generation.
+  // Only a configured status triggers anything.
   const triggers = await container.settings.karbonStatusTriggers();
   const matched = triggers.find(
     (trigger) =>
@@ -62,25 +69,33 @@ export async function POST(request: Request): Promise<Response> {
   );
 
   if (!matched) {
-    return NextResponse.json({ accepted: true, triggered: false, correlationId });
+    return NextResponse.json({ accepted: true, triggered: false, duplicateDelivery, correlationId });
   }
 
-  const engagement = await container.prisma.engagement.findFirst({
-    where: { karbonWorkItem: { karbonKey: workItemKey } },
-    select: { id: true, status: true },
-  });
-
-  if (!engagement) {
-    return NextResponse.json({ accepted: true, triggered: false, reason: 'No engagement is linked to this work item.' });
-  }
-
+  // Whether or not an engagement exists yet.
+  //
+  // This used to look for one already linked to the work item and, finding
+  // none, report that and stop — which is every rollover, because next year's
+  // work item has no engagement until something makes one. The whole pipeline
+  // behind this point was reachable only for engagements somebody had already
+  // created by hand.
+  //
+  // The decision moves into `ROLL_OVER_ENGAGEMENT`, which reads the work item
+  // fresh rather than depending on the `KARBON_SYNC` queued above having run
+  // first, and converges on the existing engagement when there is one.
   await container.queue.enqueue({
-    jobType: 'LOCATE_PRIOR_YEAR_DOCUMENTS',
-    idempotencyKey: `karbon_trigger_${engagement.id}_${matched.status}`,
-    payload: { engagementId: engagement.id },
-    engagementId: engagement.id,
+    jobType: 'ROLL_OVER_ENGAGEMENT',
+    // Unchanged in shape from the key this route has always used: the work item
+    // plus the status that matched, so a work item moving through two
+    // configured statuses is evaluated twice and a redelivery is not.
+    idempotencyKey: `rollover_${workItemKey}_${matched.status}`,
+    payload: {
+      workItemKey,
+      engagementType: matched.engagementType,
+      triggerStatus: matched.status,
+    },
     correlationId,
   });
 
-  return NextResponse.json({ accepted: true, triggered: true, correlationId });
+  return NextResponse.json({ accepted: true, triggered: true, duplicateDelivery, correlationId });
 }

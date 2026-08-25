@@ -1,4 +1,4 @@
-import { NotFoundError } from '@element/shared';
+import { IntegrationError, NotFoundError } from '@element/shared';
 import { KARBON_CAPABILITY_MATRIX } from './capabilities.js';
 import type {
   CapabilityReport,
@@ -186,8 +186,35 @@ export class MockKarbonProvider implements KarbonProvider {
     };
   }
 
-  async downloadDocument(documentId: string): Promise<{ content: Buffer; fileName: string; mimeType: string }> {
-    this.record('downloadDocument', { documentId });
+  /**
+   * Refuses without a scope, because the real client does.
+   *
+   * This mock used to ignore the scope argument, and that permissiveness cost
+   * more than any missing feature would have. Karbon issues a download token
+   * only alongside a file listing, so `KarbonRestClient.downloadDocument`
+   * re-lists the entity to get a fresh one and throws when it has no entity to
+   * list. The worker's extraction called it with no scope at all — and every
+   * test passed, because the double did not care.
+   *
+   * The result was that the *confident* path, the one where the search had
+   * correctly identified last year's letter, was the only one that failed
+   * against a real tenant. A test double looser than the thing it stands in for
+   * does not merely fail to catch a defect; it actively certifies it.
+   */
+  async downloadDocument(
+    documentId: string,
+    scope?: { workItemKey?: string; entityKey?: string },
+  ): Promise<{ content: Buffer; fileName: string; mimeType: string }> {
+    this.record('downloadDocument', { documentId, scope });
+
+    if (!scope?.workItemKey && !scope?.entityKey) {
+      throw new IntegrationError(
+        'Karbon',
+        `No download URL is available for file ${documentId}. Karbon issues one only with a current file listing, so the file must be listed for the entity that holds it.`,
+        { retryable: false, context: { documentId, scope } },
+      );
+    }
+
     const document = this.documents.get(documentId);
     if (!document) throw new NotFoundError(`Karbon document ${documentId}`);
     return {

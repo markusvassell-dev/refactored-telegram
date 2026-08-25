@@ -63,6 +63,10 @@ const SOURCE_FILES = [
   'apps/worker/src/handlers.ts',
   'apps/worker/src/index.ts',
   'packages/services/src/bulk-rollout.ts',
+  // The prior-year search enqueue moved here when the worker's rollover needed
+  // the same status and Karbon-link guards the web action already had. Two
+  // copies of a guard is how two callers quietly stop agreeing.
+  'packages/services/src/prior-year-search.ts',
 ];
 
 async function enqueuedJobTypes(): Promise<Set<string>> {
@@ -187,16 +191,58 @@ describe('background job reachability', () => {
   });
 
   it('starts the prior-year search from preparation, not only from a webhook', async () => {
-    // The specific regression. The webhook alone is not enough: no tenant has
+    // The specific regression. The webhook alone is not enough: no tenant had
     // ever configured a Karbon status trigger, and `karbon_status_triggers` is
     // seeded empty, so a webhook-only caller means the search never runs.
+    //
+    // The literal `jobType` moved out of `actions.ts` when the helper moved to
+    // `@element/services` for the worker's rollover to share. Following the
+    // call rather than deleting the assertion: preparation must still reach the
+    // enqueue, and the enqueue must still exist — just one file further away.
     const actions = await readFile(join(process.cwd(), 'apps/web/src/app/actions.ts'), 'utf8');
+    const helper = await readFile(
+      join(process.cwd(), 'packages/services/src/prior-year-search.ts'),
+      'utf8',
+    );
 
-    expect(actions).toContain("jobType: 'LOCATE_PRIOR_YEAR_DOCUMENTS'");
+    expect(helper).toContain("jobType: 'LOCATE_PRIOR_YEAR_DOCUMENTS'");
     expect(actions).toContain('enqueuePriorYearSearch');
 
-    // Preparation must call it, not merely define it.
+    // Preparation must call it, not merely import it.
     const prepareBody = actions.slice(actions.indexOf('export async function prepareEngagement'));
-    expect(prepareBody.slice(0, 2_000)).toContain('enqueuePriorYearSearch(engagementId');
+    expect(prepareBody.slice(0, 2_000)).toContain('priorYearSearch(engagementId');
+  });
+
+  it('reaches the rollover from both the webhook and the poll', async () => {
+    // The same defect one layer up. `ROLL_OVER_ENGAGEMENT` is what creates the
+    // engagement a rollover needs, and until it is enqueued by something that
+    // actually runs it is another well-tested handler nothing calls. The
+    // webhook has never carried a request — nothing subscribes to Karbon's
+    // webhooks and its payload shape is unverified — so the poll is the caller
+    // that has to exist.
+    const route = await readFile(
+      join(process.cwd(), 'apps/web/src/app/api/webhooks/karbon/route.ts'),
+      'utf8',
+    );
+    const handlers = await readFile(join(process.cwd(), 'apps/worker/src/handlers.ts'), 'utf8');
+    const worker = await readFile(join(process.cwd(), 'apps/worker/src/index.ts'), 'utf8');
+
+    expect(route).toContain("jobType: 'ROLL_OVER_ENGAGEMENT'");
+    expect(handlers).toContain("jobType: 'ROLL_OVER_ENGAGEMENT'");
+    expect(worker).toContain("jobType: 'POLL_KARBON_TRIGGERS'");
+  });
+
+  it('never generates a document from the automatic rollover', async () => {
+    // The line the whole feature rests on: preparation proposes and a person
+    // confirms. An engagement that started itself does not move that boundary,
+    // and the way that would break is somebody adding a convenience enqueue to
+    // the rollover handler months from now.
+    const handlers = await readFile(join(process.cwd(), 'apps/worker/src/handlers.ts'), 'utf8');
+    const start = handlers.indexOf('ROLL_OVER_ENGAGEMENT: async');
+    const end = handlers.indexOf('SYNC_CLIENT_DOCUMENTS: async');
+
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(handlers.slice(start, end)).not.toContain('GENERATE_ENGAGEMENT_LETTER');
   });
 });

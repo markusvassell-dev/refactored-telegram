@@ -16,10 +16,13 @@ import {
 } from '@element/shared';
 import {
   describeDifferences,
+  enqueuePriorYearSearch,
+  karbonStatusTriggerSchema,
   summariseClientImport,
   factToken,
   type ClientImportSource,
   type IntegrationProviderKey,
+  type PriorYearSearchOutcome,
 } from '@element/services';
 import type { FeeRuleLevel, ParticipantRole } from '@element/database';
 import { container } from '@/lib/container';
@@ -730,93 +733,24 @@ export async function setProductionSending(formData: FormData): Promise<ActionRe
 }
 
 /**
- * States the prior-year search may begin from.
- *
- * `LOCATING_SOURCE_DOCUMENTS` is the job's first act, so an engagement that has
- * already moved past extraction cannot accept it. Refusing here gives the
- * reviewer the reason immediately instead of enqueuing a job that fails on the
- * transition minutes later, in a place only the log would show it.
- */
-const PRIOR_YEAR_SEARCH_STATES = new Set([
-  'NOT_STARTED',
-  'SOURCE_DOCUMENT_REVIEW_REQUIRED',
-  'GENERATION_FAILED',
-  'NEEDS_ATTENTION',
-]);
-
-interface PriorYearSearchOutcome {
-  enqueued: boolean;
-  deduplicated: boolean;
-  /** Why it was not started, in words a reviewer can act on. */
-  reason?: string;
-}
-
-/**
  * Queues the Karbon search for last year's engagement letter.
  *
- * The worker has been able to do this since the first release: it searches the
- * current work item, then the prior year's work items, then the client's own
- * document area, and scores each candidate on its text rather than its
- * filename. What was missing was anybody asking. Until now the only caller was
- * the Karbon status webhook, and `karbon_status_triggers` ships empty, so on a
- * tenant that had never configured a status trigger the search simply never
- * ran — leaving every engagement asking the reviewer to upload by hand a
- * document Karbon was already holding.
- *
- * A fully tested capability that nothing reaches is indistinguishable from one
- * that was never built, which is why `tests/integration/prior-year-search.test.ts`
- * now asserts the caller and not just the handler.
+ * The helper and its guards live in `@element/services` because the worker's
+ * rollover needs exactly the same ones, and a private second copy is how two
+ * callers quietly stop agreeing. This wrapper supplies the container and
+ * nothing else.
  */
-async function enqueuePriorYearSearch(
+function priorYearSearch(
   engagementId: string,
   correlationId: string,
   options: { force?: boolean } = {},
 ): Promise<PriorYearSearchOutcome> {
-  const engagement = await container.prisma.engagement.findUnique({
-    where: { id: engagementId },
-    select: {
-      status: true,
-      client: { select: { karbonEntityKey: true } },
-      karbonWorkItem: { select: { karbonKey: true } },
-    },
-  });
-
-  if (!engagement) return { enqueued: false, deduplicated: false, reason: 'The engagement no longer exists.' };
-
-  // Nothing to search. Saying which link is missing is the difference between
-  // a fixable message and "no documents found".
-  if (!engagement.client.karbonEntityKey && !engagement.karbonWorkItem?.karbonKey) {
-    return {
-      enqueued: false,
-      deduplicated: false,
-      reason:
-        'This engagement is not linked to Karbon — neither the client nor a work item carries a Karbon key — so there is nowhere to search. Attach last year’s letter below.',
-    };
-  }
-
-  if (!PRIOR_YEAR_SEARCH_STATES.has(engagement.status)) {
-    return {
-      enqueued: false,
-      deduplicated: false,
-      reason: `Searching would move this engagement back to locating source documents, which is not allowed from ${engagement.status
-        .replace(/_/g, ' ')
-        .toLowerCase()}.`,
-    };
-  }
-
-  const result = await container.queue.enqueue({
-    jobType: 'LOCATE_PRIOR_YEAR_DOCUMENTS',
-    // Stable per engagement so re-running preparation does not search twice;
-    // an explicit re-run asks for a fresh look and gets its own key.
-    idempotencyKey: options.force
-      ? `locate_prior_year_${engagementId}_${Date.now()}`
-      : `locate_prior_year_${engagementId}`,
-    payload: { engagementId },
+  return enqueuePriorYearSearch(
+    { prisma: container.prisma, queue: container.queue },
     engagementId,
     correlationId,
-  });
-
-  return { enqueued: true, deduplicated: result.deduplicated };
+    options,
+  );
 }
 
 /**
@@ -834,7 +768,7 @@ export async function locatePriorYearDocuments(formData: FormData): Promise<Acti
     const engagementId = formData.get('engagementId')?.toString();
     if (!engagementId) throw new ValidationError('An engagement is required.');
 
-    const outcome = await enqueuePriorYearSearch(engagementId, newCorrelationId(), { force: true });
+    const outcome = await priorYearSearch(engagementId, newCorrelationId(), { force: true });
     revalidatePath(`/engagements/${engagementId}`);
 
     if (!outcome.enqueued) throw new PreconditionError(outcome.reason ?? 'The search could not be started.');
@@ -876,7 +810,7 @@ export async function prepareEngagement(formData: FormData): Promise<ActionResul
     // the largest single source of what it reconciles against, so the search
     // starts here. It runs in the background: preparation's own result must
     // not depend on Karbon being reachable this second.
-    const search = await enqueuePriorYearSearch(engagementId, correlationId);
+    const search = await priorYearSearch(engagementId, correlationId);
 
     revalidatePath(`/engagements/${engagementId}`);
 
@@ -1115,6 +1049,25 @@ export async function createEngagement(formData: FormData): Promise<ActionResult
       isTestMode: state.testMode,
     });
 
+    // Go and find last year's letter now, rather than waiting for somebody to
+    // open the engagement and press Prepare.
+    //
+    // The search has always been the largest single thing this application can
+    // do for a preparer — it reads the client's Karbon documents and scores each
+    // one on its contents — and it started on a button, on a screen you had to
+    // know to open first. Creating the engagement is the moment the answer is
+    // wanted, and the work takes long enough that starting it a few minutes
+    // earlier is most of the benefit.
+    //
+    // The guards live in `enqueuePriorYearSearch`: a client with no Karbon link
+    // enqueues nothing and says so, and the key is stable per engagement, so
+    // pressing Prepare afterwards does not search a second time.
+    //
+    // It also makes the two ways of creating an engagement agree. A rollover
+    // started by Karbon already searches immediately, so until now one created
+    // by hand behaved *less* automatically than one nobody asked for.
+    const search = await priorYearSearch(result.engagementId, newCorrelationId());
+
     revalidatePath('/engagements');
 
     // Notes are informational, so they belong in the message rather than in
@@ -1122,6 +1075,15 @@ export async function createEngagement(formData: FormData): Promise<ActionResult
     const parts = [`Engagement created. Open it at /engagements/${result.engagementId}.`];
     if (result.clientCreated) parts.push('A new client record was created.');
     parts.push(...result.notes);
+
+    // A first-year client, or one not linked to Karbon, is an ordinary fact
+    // rather than a failure — so it is reported in the same sentence as the
+    // success, not raised as a blocker.
+    parts.push(
+      search.enqueued
+        ? 'Searching Karbon for last year’s letter.'
+        : `Karbon was not searched for last year’s letter: ${search.reason ?? 'no reason given.'}`,
+    );
 
     return parts.join(' ');
   });
@@ -1255,6 +1217,83 @@ export async function clearIntegrationCredentials(formData: FormData): Promise<A
 
     revalidatePath('/integrations');
     return 'Credentials removed and the connection disabled. It now falls back to the mock adapter.';
+  });
+}
+
+/**
+ * Which Karbon work item statuses start an engagement.
+ *
+ * `karbon_status_triggers` has existed since the first release and could only
+ * ever be set by editing the database, so on every deployment it has been an
+ * empty list. That is the whole reason the Karbon trigger path had never run:
+ * not a bug in the code behind it, which is tested, but a setting nothing could
+ * write. A capability nothing can reach is indistinguishable from one that was
+ * never built.
+ *
+ * Each row is validated on read as well as on write, because the stored value
+ * is JSON that a database edit can still reach — and `engagementType` now
+ * decides which legal document type a rollover creates.
+ */
+export async function setKarbonStatusTriggers(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('integration:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const statuses = formData.getAll('status').map((value) => value.toString().trim());
+    const workTypes = formData.getAll('workType').map((value) => value.toString().trim());
+    const engagementTypes = formData.getAll('engagementType').map((value) => value.toString().trim());
+
+    const rows = statuses
+      // A row with no status is an empty line in the form, not a mistake.
+      .map((status, index) => ({
+        status,
+        workType: workTypes[index] ?? '',
+        engagementType: engagementTypes[index] ?? '',
+      }))
+      .filter((row) => row.status.length > 0);
+
+    const triggers = rows.map((row, index) => {
+      const parsed = karbonStatusTriggerSchema.safeParse(row);
+      if (!parsed.success) {
+        throw new ValidationError(
+          `Trigger ${index + 1} is not valid: a status and an engagement type are both required.`,
+        );
+      }
+      return parsed.data;
+    });
+
+    // Two triggers on the same work type and status would both match, and which
+    // one won would depend on array order — meaning the engagement type a
+    // client's letter is created as would depend on the order somebody happened
+    // to type them in.
+    const seen = new Set<string>();
+    for (const trigger of triggers) {
+      const key = `${trigger.workType.toLowerCase()}::${trigger.status.toLowerCase()}`;
+      if (seen.has(key)) {
+        throw new ValidationError(
+          `Two triggers match the same work type and status (“${trigger.status}”). Remove one: which engagement type it created would otherwise depend on the order they were entered.`,
+        );
+      }
+      seen.add(key);
+    }
+
+    await container.settings.set('karbon_status_triggers', triggers, actor);
+
+    const context = await requestContext();
+    await container.audit.record({
+      eventType: 'CONFIGURATION_CHANGED',
+      objectType: 'SystemSetting',
+      objectId: 'karbon_status_triggers',
+      userId: actor.id,
+      afterValue: { triggers },
+      ipAddress: context.ipAddress,
+    });
+
+    revalidatePath('/integrations');
+
+    return triggers.length === 0
+      ? 'All Karbon status triggers removed. Engagements will only start when somebody starts one.'
+      : `${triggers.length} Karbon status trigger(s) saved. A work item reaching one of these statuses will roll the client's engagement forward.`;
   });
 }
 
@@ -1857,6 +1896,118 @@ export async function syncClientDocuments(formData: FormData): Promise<ActionRes
  * a folder can hold the wrong year, and a signed T2 letter sitting in a client's
  * area is still the wrong document for their T1.
  */
+/**
+ * Chooses one of the candidates the Karbon search ranked.
+ *
+ * The search does the right thing when it cannot decide: it writes every
+ * candidate with its score and the signals behind it, moves the engagement to
+ * `SOURCE_DOCUMENT_REVIEW_REQUIRED`, and asks. What it could not do was take an
+ * answer. Nothing anywhere wrote `source_document.confirmed_at` — there were
+ * confirm actions for service selections, extracted fields and calculated
+ * dates, and none for the document all of those are derived from. The reviewer
+ * was shown a ranked list, a **Confirmed** column reading "No" on every row,
+ * and no way to change it; the only way on was to re-attach the same file from
+ * the catalogue, which produced a second row for a document already listed.
+ *
+ * Confirming is a choice, not a verdict on the contents. The verification score
+ * stays exactly as it was scored — the service's own rule holds here too:
+ * *"Choosing a file is a deliberate act, but it is not evidence about what the
+ * file contains."* What changes is that a person has taken responsibility for
+ * it, and that is recorded against their name.
+ *
+ * Extraction is enqueued by `karbonDocumentId` rather than by the row id, which
+ * is the same branch the confident path takes. That branch re-downloads through
+ * the Karbon scope on the source row, so no bytes need storing here — the
+ * locate job keeps metadata and discards content by design.
+ */
+export async function useSourceDocumentCandidate(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('source_document:select');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const sourceDocumentId = formData.get('sourceDocumentId')?.toString();
+    if (!sourceDocumentId) throw new ValidationError('A document is required.');
+
+    const document = await container.prisma.sourceDocument.findUnique({
+      where: { id: sourceDocumentId },
+      select: {
+        id: true,
+        engagementId: true,
+        fileName: true,
+        karbonDocumentId: true,
+        karbonWorkItemKey: true,
+        confirmedAt: true,
+        engagement: { select: { status: true, client: { select: { karbonEntityKey: true } } } },
+      },
+    });
+
+    if (!document) throw new ValidationError('That document is no longer attached to this engagement.');
+
+    if (document.confirmedAt) {
+      return `${document.fileName} is already the confirmed prior-year document for this engagement.`;
+    }
+
+    // Nothing to re-download it from. An attached file has its bytes in storage
+    // and is read by row id instead, so this only bites a candidate whose
+    // Karbon link has gone — and saying which link is missing is the difference
+    // between a fixable message and a failed job.
+    if (!document.karbonDocumentId) {
+      throw new PreconditionError(
+        `${document.fileName} carries no Karbon document id, so it cannot be read back from Karbon. Attach it by hand instead.`,
+      );
+    }
+
+    if (!document.karbonWorkItemKey && !document.engagement.client.karbonEntityKey) {
+      throw new PreconditionError(
+        `Neither ${document.fileName} nor this client carries a Karbon key, so there is no entity to list the file under. Attach it by hand instead.`,
+      );
+    }
+
+    const correlationId = newCorrelationId();
+
+    await container.prisma.sourceDocument.update({
+      where: { id: document.id },
+      data: { confirmedAt: new Date(), confirmedByUserId: actor.id },
+    });
+
+    const context = await requestContext();
+    await container.audit.record({
+      eventType: 'SOURCE_DOCUMENT_SELECTED',
+      objectType: 'SourceDocument',
+      objectId: document.id,
+      engagementId: document.engagementId,
+      userId: actor.id,
+      afterValue: { fileName: document.fileName, confirmedBy: actor.email },
+      reason: 'A reviewer chose this document from the ranked candidates.',
+      correlationId,
+      ipAddress: context.ipAddress,
+    });
+
+    await container.workflow.transition({
+      engagementId: document.engagementId,
+      to: 'EXTRACTING_DATA',
+      reason: `${document.fileName} was chosen from the candidates by ${actor.displayName}`,
+      correlationId,
+    });
+
+    await container.queue.enqueue({
+      jobType: 'EXTRACT_DOCUMENT_TEXT',
+      idempotencyKey: `extract_${document.id}`,
+      payload: {
+        engagementId: document.engagementId,
+        karbonDocumentId: document.karbonDocumentId,
+        actorId: actor.id,
+      },
+      engagementId: document.engagementId,
+      correlationId,
+    });
+
+    revalidatePath(`/engagements/${document.engagementId}`);
+
+    return `${document.fileName} is now the prior-year document for this engagement. It is being read; its values arrive as suggestions a reviewer still confirms.`;
+  });
+}
+
 export async function importKarbonDocument(formData: FormData): Promise<ActionResult> {
   return run(async () => {
     const actor = await requirePermission('source_document:select');
