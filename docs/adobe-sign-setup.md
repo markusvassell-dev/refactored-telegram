@@ -294,8 +294,45 @@ standing between a retried job and a client receiving a second signature
 request for a letter already sent to them.
 
 It must therefore never answer "no existing agreement" unless it actually
-looked and found none. It used to: the client returned `null` on any 404, and
-`null?.userAgreementList` is `undefined`, so a missing endpoint, a revoked
-scope and a path typo all read as "nothing found" — and the caller then created
-a duplicate. A lookup that cannot complete now throws, so a retry fails loudly
-instead.
+looked and found none. It used to, in two different ways.
+
+The first: the client returned `null` on any 404, and `null?.userAgreementList`
+is `undefined`, so a missing endpoint, a revoked scope and a path typo all read
+as "nothing found" — and the caller then created a duplicate. A lookup that
+cannot complete now throws, so a retry fails loudly instead.
+
+The second was worse and is described below.
+
+## What the specification audit found
+
+**Audited 2026-08-25 against
+[Adobe's published Swagger for REST API v6](https://github.com/adobe-sign/adobesign-openapi),
+before any live run.** Every path this client calls exists, and `basePath` is
+`/api/rest/v6` as used. Seven defects were in the request and response shapes,
+and each of them is the kind that raises no error:
+
+| What the client did | What Adobe publishes |
+| --- | --- |
+| Filtered `userAgreementList` on `agreement.externalId.id` | `UserAgreement` has **no `externalId`** — seven properties, none of them that. **The filter never matched, so the duplicate check returned `null` for every input it was ever given.** `externalId` is published on the *detail* record, so a candidate is now confirmed by reading it |
+| Read `completedDate` off the agreement | `AgreementInfo` publishes `createdDate` and no completion date at all |
+| Read `completedDate` off each participant | `DetailedParticipantInfo` publishes no dates at all. So `completedAt` and every signer's `signedAt` were null on every poll and every webhook, and the letter's own completion note read *"signed by … on an unrecorded date"* |
+| `declineReason: null`, always | `GET /agreements/{id}/events` carries the refusal and its comment |
+| `agreementCancellationInfo.notifySigner` | The field is `notifyOthers`. The other was ignored, so recipients were notified by Adobe's default while this code read as though it had chosen |
+| `PUT /agreements/{id}/state` with no `If-Match` | `If-Match` is published as **required**; without it Adobe answers `RESOURCE_MODIFIED`. The ETag comes from a read of the same agreement, so a cancel is now two calls |
+| `authenticationMethod` at the top of each member | `ParticipantSetMemberInfo` has exactly two properties, `email` and `securityOption`. This is the **second** time this field has been dropped silently — once by never being sent, once by being sent where Adobe does not look. Both times a firm that configured knowledge-based authentication would have got plain email verification |
+| `reminderFrequency: 'EVERY_THIRD_DAY_UNTIL_SIGNED'` | The enum is `DAILY_UNTIL_SIGNED` and `WEEKLY_UNTIL_SIGNED`. Three business days is the default cadence, so **every agreement this application has ever built carried an unpublished value** |
+
+Two further findings are properties of Adobe's API rather than defects:
+
+- **Adobe has no `DECLINED` agreement status.** A client who refuses and a
+  partner who withdraws the letter both leave the agreement `CANCELLED`. The
+  `REJECTED` event is the only thing that separates them, and the difference
+  decides whether the engagement team is told that work has stopped.
+- **Phone verification cannot be used.** Adobe's `ParticipantSecurityOption`
+  needs a `phoneInfo` — country code and number — and engagement participants
+  record no telephone number. It is refused rather than sent, because sending
+  it would apply no check while every signal said the letter went out verified.
+
+**All of this is `Unverified`, not `Supported`.** Code that now matches the
+specification has still never had an answer back from Adobe. Only the live
+two-signer run in Test Mode can promote it.

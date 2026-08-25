@@ -1,7 +1,7 @@
 import { isUniqueConstraintError, type Prisma, type PrismaClient } from '@element/database';
 import type { AuditLogger } from '@element/audit';
 import type { AdobeSignProvider, AgreementState, AgreementStatus, KarbonProvider } from '@element/integrations';
-import { DEFAULT_AGREEMENT_SETTINGS } from '@element/integrations';
+import { DEFAULT_AGREEMENT_SETTINGS, adobeReminderFrequency } from '@element/integrations';
 import {
   NotFoundError,
   PreconditionError,
@@ -275,7 +275,11 @@ export class SigningService {
         title,
         signingAttempt,
         isTestMode: input.testMode,
-        reminderFrequency: `Every ${DEFAULT_AGREEMENT_SETTINGS.reminderEveryBusinessDays} business days`,
+        // What Adobe will actually do, not what was asked for. Adobe publishes
+        // two cadences, daily and weekly, so a request for three business days
+        // becomes weekly — and this record used to say "Every 3 business days"
+        // to a reader who would never see one.
+        reminderFrequency: adobeReminderFrequency(DEFAULT_AGREEMENT_SETTINGS.reminderEveryBusinessDays).label,
         expiresAt: new Date(Date.now() + DEFAULT_AGREEMENT_SETTINGS.expiresInDays * 86_400_000),
         ccEmails: (engagementLeadEmail ? [engagementLeadEmail] : []) as never,
       },
