@@ -1049,6 +1049,25 @@ export async function createEngagement(formData: FormData): Promise<ActionResult
       isTestMode: state.testMode,
     });
 
+    // Go and find last year's letter now, rather than waiting for somebody to
+    // open the engagement and press Prepare.
+    //
+    // The search has always been the largest single thing this application can
+    // do for a preparer — it reads the client's Karbon documents and scores each
+    // one on its contents — and it started on a button, on a screen you had to
+    // know to open first. Creating the engagement is the moment the answer is
+    // wanted, and the work takes long enough that starting it a few minutes
+    // earlier is most of the benefit.
+    //
+    // The guards live in `enqueuePriorYearSearch`: a client with no Karbon link
+    // enqueues nothing and says so, and the key is stable per engagement, so
+    // pressing Prepare afterwards does not search a second time.
+    //
+    // It also makes the two ways of creating an engagement agree. A rollover
+    // started by Karbon already searches immediately, so until now one created
+    // by hand behaved *less* automatically than one nobody asked for.
+    const search = await priorYearSearch(result.engagementId, newCorrelationId());
+
     revalidatePath('/engagements');
 
     // Notes are informational, so they belong in the message rather than in
@@ -1056,6 +1075,15 @@ export async function createEngagement(formData: FormData): Promise<ActionResult
     const parts = [`Engagement created. Open it at /engagements/${result.engagementId}.`];
     if (result.clientCreated) parts.push('A new client record was created.');
     parts.push(...result.notes);
+
+    // A first-year client, or one not linked to Karbon, is an ordinary fact
+    // rather than a failure — so it is reported in the same sentence as the
+    // success, not raised as a blocker.
+    parts.push(
+      search.enqueued
+        ? 'Searching Karbon for last year’s letter.'
+        : `Karbon was not searched for last year’s letter: ${search.reason ?? 'no reason given.'}`,
+    );
 
     return parts.join(' ');
   });
@@ -1868,6 +1896,118 @@ export async function syncClientDocuments(formData: FormData): Promise<ActionRes
  * a folder can hold the wrong year, and a signed T2 letter sitting in a client's
  * area is still the wrong document for their T1.
  */
+/**
+ * Chooses one of the candidates the Karbon search ranked.
+ *
+ * The search does the right thing when it cannot decide: it writes every
+ * candidate with its score and the signals behind it, moves the engagement to
+ * `SOURCE_DOCUMENT_REVIEW_REQUIRED`, and asks. What it could not do was take an
+ * answer. Nothing anywhere wrote `source_document.confirmed_at` — there were
+ * confirm actions for service selections, extracted fields and calculated
+ * dates, and none for the document all of those are derived from. The reviewer
+ * was shown a ranked list, a **Confirmed** column reading "No" on every row,
+ * and no way to change it; the only way on was to re-attach the same file from
+ * the catalogue, which produced a second row for a document already listed.
+ *
+ * Confirming is a choice, not a verdict on the contents. The verification score
+ * stays exactly as it was scored — the service's own rule holds here too:
+ * *"Choosing a file is a deliberate act, but it is not evidence about what the
+ * file contains."* What changes is that a person has taken responsibility for
+ * it, and that is recorded against their name.
+ *
+ * Extraction is enqueued by `karbonDocumentId` rather than by the row id, which
+ * is the same branch the confident path takes. That branch re-downloads through
+ * the Karbon scope on the source row, so no bytes need storing here — the
+ * locate job keeps metadata and discards content by design.
+ */
+export async function useSourceDocumentCandidate(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('source_document:select');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const sourceDocumentId = formData.get('sourceDocumentId')?.toString();
+    if (!sourceDocumentId) throw new ValidationError('A document is required.');
+
+    const document = await container.prisma.sourceDocument.findUnique({
+      where: { id: sourceDocumentId },
+      select: {
+        id: true,
+        engagementId: true,
+        fileName: true,
+        karbonDocumentId: true,
+        karbonWorkItemKey: true,
+        confirmedAt: true,
+        engagement: { select: { status: true, client: { select: { karbonEntityKey: true } } } },
+      },
+    });
+
+    if (!document) throw new ValidationError('That document is no longer attached to this engagement.');
+
+    if (document.confirmedAt) {
+      return `${document.fileName} is already the confirmed prior-year document for this engagement.`;
+    }
+
+    // Nothing to re-download it from. An attached file has its bytes in storage
+    // and is read by row id instead, so this only bites a candidate whose
+    // Karbon link has gone — and saying which link is missing is the difference
+    // between a fixable message and a failed job.
+    if (!document.karbonDocumentId) {
+      throw new PreconditionError(
+        `${document.fileName} carries no Karbon document id, so it cannot be read back from Karbon. Attach it by hand instead.`,
+      );
+    }
+
+    if (!document.karbonWorkItemKey && !document.engagement.client.karbonEntityKey) {
+      throw new PreconditionError(
+        `Neither ${document.fileName} nor this client carries a Karbon key, so there is no entity to list the file under. Attach it by hand instead.`,
+      );
+    }
+
+    const correlationId = newCorrelationId();
+
+    await container.prisma.sourceDocument.update({
+      where: { id: document.id },
+      data: { confirmedAt: new Date(), confirmedByUserId: actor.id },
+    });
+
+    const context = await requestContext();
+    await container.audit.record({
+      eventType: 'SOURCE_DOCUMENT_SELECTED',
+      objectType: 'SourceDocument',
+      objectId: document.id,
+      engagementId: document.engagementId,
+      userId: actor.id,
+      afterValue: { fileName: document.fileName, confirmedBy: actor.email },
+      reason: 'A reviewer chose this document from the ranked candidates.',
+      correlationId,
+      ipAddress: context.ipAddress,
+    });
+
+    await container.workflow.transition({
+      engagementId: document.engagementId,
+      to: 'EXTRACTING_DATA',
+      reason: `${document.fileName} was chosen from the candidates by ${actor.displayName}`,
+      correlationId,
+    });
+
+    await container.queue.enqueue({
+      jobType: 'EXTRACT_DOCUMENT_TEXT',
+      idempotencyKey: `extract_${document.id}`,
+      payload: {
+        engagementId: document.engagementId,
+        karbonDocumentId: document.karbonDocumentId,
+        actorId: actor.id,
+      },
+      engagementId: document.engagementId,
+      correlationId,
+    });
+
+    revalidatePath(`/engagements/${document.engagementId}`);
+
+    return `${document.fileName} is now the prior-year document for this engagement. It is being read; its values arrive as suggestions a reviewer still confirms.`;
+  });
+}
+
 export async function importKarbonDocument(formData: FormData): Promise<ActionResult> {
   return run(async () => {
     const actor = await requirePermission('source_document:select');

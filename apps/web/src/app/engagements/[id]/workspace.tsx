@@ -20,6 +20,7 @@ import {
   markReadyToSend,
   overrideFee,
   prepareEngagement,
+  useSourceDocumentCandidate,
   removeSigner,
   requestChanges,
   resolveConflict,
@@ -411,7 +412,7 @@ function SourceDocuments({ csrfToken, engagement }: { csrfToken: string; engagem
     <>
     <Card
       title="Search Karbon for last year’s letter"
-      description="Preparation starts this automatically. Run it again after fixing a missing Karbon link, or once last year’s letter has been filed where the first search could not see it. The current work item is searched first, then the prior year’s work items, then the client’s own documents."
+      description="This starts by itself the moment an engagement is created, and again on Prepare. Run it here after fixing a missing Karbon link, or once last year’s letter has been filed where the first search could not see it. The current work item is searched first, then the prior year’s work items, then the client’s own documents."
     >
       <ActionForm action={locatePriorYearDocuments} csrfToken={csrfToken} submitLabel="Search Karbon">
         <input type="hidden" name="engagementId" value={engagement.id} />
@@ -482,6 +483,7 @@ function SourceDocuments({ csrfToken, engagement }: { csrfToken: string; engagem
               <th scope="col">Verification</th>
               <th scope="col">Confirmed</th>
               <th scope="col">In package</th>
+              <th scope="col">Choose</th>
             </tr>
           </thead>
           <tbody>
@@ -503,6 +505,34 @@ function SourceDocuments({ csrfToken, engagement }: { csrfToken: string; engagem
                 </td>
                 <td>{document.confirmedAt ? 'Yes' : 'No'}</td>
                 <td>{document.includedInPackage ? 'Yes' : 'No'}</td>
+                {/*
+                  Taking the answer the search asked for.
+
+                  When the search cannot separate two candidates it ranks them,
+                  says so, and waits — and until now there was nothing here to
+                  wait with. The column read "No" on every row with no way to
+                  change it, so the only route on was re-attaching a document
+                  already listed, which produced a second row for the same file.
+
+                  Only offered on a Karbon-located candidate: an attached file
+                  is already the confirmed one, and there is nothing to choose
+                  between.
+                */}
+                <td>
+                  {!document.confirmedAt && document.karbonDocumentId ? (
+                    <ActionForm
+                      action={useSourceDocumentCandidate}
+                      csrfToken={csrfToken}
+                      submitLabel="Use this one"
+                      variant="secondary"
+                      confirm={`Use ${document.fileName} as last year's letter for this engagement? Its values are read and offered as suggestions; nothing is carried forward without a reviewer confirming it.`}
+                    >
+                      <input type="hidden" name="sourceDocumentId" value={document.id} />
+                    </ActionForm>
+                  ) : (
+                    <span className="text-slate-500">—</span>
+                  )}
+                </td>
               </tr>
             ))}
           </tbody>

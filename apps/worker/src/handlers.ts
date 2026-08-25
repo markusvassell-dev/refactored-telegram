@@ -423,6 +423,20 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
 
       const candidates: Parameters<typeof selectPriorYearDocument>[0][number][] = [];
 
+      // The hash of each candidate's *bytes*, kept beside the candidates.
+      //
+      // `source_document.file_hash` is documented as "SHA-256 of the retrieved
+      // file", and the upload path hashes the stored bytes. This handler hashed
+      // the extracted *text* instead, which had two consequences. A document
+      // located in Karbon and the same file attached by hand never compared
+      // equal, defeating the duplicate check they share. And every candidate
+      // whose text could not be read hashed to `sha256Hex('')` — so they
+      // collided on the unique key of engagement, hash and kind, and all but one
+      // vanished. An encrypted signed PDF, which pdf.js refuses to open at all,
+      // is the commonest document that reads as empty, and last year's *signed*
+      // letter is the commonest thing anybody is looking for.
+      const hashByDocumentId = new Map<string, string>();
+
       for (const scope of scopes) {
         const documents = await karbon.listDocuments(scope);
         for (const document of documents) {
@@ -435,6 +449,8 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
           const text = /\.pdf$/i.test(document.fileName)
             ? (await extractPdfText(downloaded.content).catch(() => null))?.fullText ?? ''
             : (await extractParagraphs(downloaded.content).catch(() => [])).join('\n');
+
+          hashByDocumentId.set(document.documentId, sha256Hex(downloaded.content));
 
           candidates.push({
             documentId: document.documentId,
@@ -466,11 +482,13 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         const candidate = candidates.find((entry) => entry.documentId === ranked.documentId);
         if (!candidate) continue;
 
+        const fileHash = hashByDocumentId.get(candidate.documentId) ?? sha256Hex(candidate.text);
+
         await context.prisma.sourceDocument.upsert({
           where: {
             engagementId_fileHash_kind: {
               engagementId,
-              fileHash: sha256Hex(candidate.text),
+              fileHash,
               kind: 'PRIOR_YEAR_ENGAGEMENT_LETTER',
             },
           },
@@ -480,7 +498,7 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
             fileName: candidate.fileName,
             karbonDocumentId: candidate.documentId,
             karbonWorkItemKey: candidate.karbonWorkItemKey,
-            fileHash: sha256Hex(candidate.text),
+            fileHash,
             verificationScore: ranked.score,
             verificationDetail: { signals: ranked.signals, disqualifiers: ranked.disqualifiers } as never,
             confirmedAt: outcome.selected?.documentId === ranked.documentId ? new Date() : null,
@@ -490,6 +508,28 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       }
 
       if (outcome.requiresUserChoice || !outcome.selected) {
+        // Fill the picker for the person who now has to choose.
+        //
+        // This is the moment the whole-library catalogue earns its cost. The
+        // targeted search usually settles it alone and the catalogue is never
+        // needed; when it cannot, somebody picks from what Karbon holds — and
+        // that picker reads `KarbonClientDocument`, which nothing populates
+        // until a sync runs. So the reviewer arrived at a chooser with nothing
+        // in it, and a link telling them to go and run the sync themselves.
+        //
+        // Both outcomes reach here — several plausible candidates, or none
+        // confident — and both end the same way, with a person deciding. Keyed
+        // per client, so several engagements for one client do not each re-read
+        // a library that takes tens of requests to assemble.
+        if (engagement.client.karbonEntityKey) {
+          await context.queue.enqueue({
+            jobType: 'SYNC_CLIENT_DOCUMENTS',
+            idempotencyKey: `library_for_choice_${engagement.client.id}`,
+            payload: { clientId: engagement.client.id },
+            correlationId: job.correlationId,
+          });
+        }
+
         await context.workflow.transition({
           engagementId,
           to: 'SOURCE_DOCUMENT_REVIEW_REQUIRED',
@@ -554,7 +594,40 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         downloaded = attached;
       } else {
         const { karbon } = await context.providers();
-        const fetched = await karbon.downloadDocument(karbonDocumentId as string);
+
+        // The scope is not optional, and leaving it off was a silent break of
+        // the one path that matters most.
+        //
+        // Karbon hands out a download token alongside a file listing and it
+        // expires about fifteen minutes later, so `downloadDocument` re-lists
+        // the entity to get a fresh one. Called with no scope it lists nothing,
+        // matches nothing, and throws a *non-retryable* error — so the job
+        // dead-lettered and the engagement dropped into NEEDS_ATTENTION.
+        //
+        // Which means the better the search did, the more certainly this
+        // failed: a confidently identified prior-year letter takes this branch,
+        // while the manual routes pass `sourceDocumentId` and read from local
+        // storage, so every path anybody had actually exercised worked.
+        //
+        // The scope was already in hand. `source` is loaded above and carries
+        // the work item the document was found under; the client's entity key
+        // is the fallback, matching the two scopes the search itself used.
+        const scope = source?.karbonWorkItemKey
+          ? { workItemKey: source.karbonWorkItemKey }
+          : engagement.client.karbonEntityKey
+            ? { entityKey: engagement.client.karbonEntityKey }
+            : null;
+
+        if (!scope) {
+          // Named rather than left to surface as a missing token, because the
+          // two causes need different answers: this one means the link to
+          // Karbon is gone, not that the file could not be reached.
+          throw new ValidationError(
+            `Neither the source document nor ${engagement.client.legalName} carries a Karbon key, so there is no entity to list this file under. Attach the document by hand.`,
+          );
+        }
+
+        const fetched = await karbon.downloadDocument(karbonDocumentId as string, scope);
         downloaded = { content: Buffer.from(fetched.content), fileName: fetched.fileName };
       }
 
