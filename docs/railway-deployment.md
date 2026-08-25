@@ -595,3 +595,15 @@ Both services scale horizontally. `SELECT … FOR UPDATE SKIP LOCKED` means
 concurrent workers take different jobs. `WORKER_CONCURRENCY` (default 4) bounds
 in-flight jobs per worker; LibreOffice conversion is the memory-hungry step, so
 raise replicas before raising concurrency.
+
+> **This changed on 25 August 2026, and the change is worth knowing about before
+> the deploy.** Until then the worker ran **one job at a time whatever
+> `WORKER_CONCURRENCY` said** — the loop awaited each job to completion, so the
+> guard that was supposed to admit four could never fire. This paragraph
+> described behaviour the code did not have.
+>
+> A worker deployed after that change will genuinely run up to four jobs at
+> once, so its peak memory can be up to four times what the same container used
+> before. If the worker starts being OOM-killed after a deploy and was healthy
+> before, that is the first thing to look at: lower `WORKER_CONCURRENCY` — which
+> now does something — or raise the memory limit.

@@ -177,11 +177,30 @@ export class MicrosoftGraphMailer implements EmailSender {
   }
 
   /**
-   * Proves the credentials and the permission without sending anything.
+   * Proves the credentials and that the mailbox exists — and **not** that this
+   * application may send from it.
    *
-   * Reads the sending mailbox. A 404 here almost always means the address does
-   * not exist; a 403 means the application permission is missing, or an
-   * application access policy excludes this mailbox.
+   * The distinction is the whole point of this comment, because the code used
+   * to claim otherwise. This reads `GET /users/{sender}`, which requires
+   * **`User.Read.All`** (or `Directory.Read.All`). That is a *different*
+   * application permission from `Mail.Send`, and Microsoft publishes no
+   * endpoint that proves `Mail.Send` without actually sending a message.
+   *
+   * Two things followed from pretending it did, and they point opposite ways:
+   *
+   *   - A tenant holding `User.Read.All` and no `Mail.Send` passed, the
+   *     Integrations screen reported mail as working, and the first real
+   *     notification failed.
+   *   - An administrator who did exactly what docs/notifications.md advises —
+   *     grant `Mail.Send` alone, scoped by an application access policy — got a
+   *     403 here and was told *"The Mail.Send application permission is
+   *     missing"*. That sends them to re-grant a permission that is already
+   *     correct, while the real cause is `User.Read.All`, which nothing ever
+   *     told them to add.
+   *
+   * So this now reports what it observed. `Mail.Send` stays unproven until a
+   * notification actually goes out, and the check says so rather than implying
+   * a guarantee it cannot give.
    */
   async healthCheck(): Promise<{ ok: boolean; detail?: string }> {
     try {
@@ -191,17 +210,26 @@ export class MicrosoftGraphMailer implements EmailSender {
         { headers: { Authorization: `Bearer ${token}` } },
       );
 
-      if (response.ok) return { ok: true, detail: `Can read the mailbox ${this.config.sender}.` };
+      if (response.ok) {
+        return {
+          ok: true,
+          detail: `The credentials work and the mailbox ${this.config.sender} exists. Sending is not proven until the first notification goes out — Microsoft publishes no way to test Mail.Send without sending.`,
+        };
+      }
 
       const detail = await response.text().catch(() => '');
       if (response.status === 404) {
         return { ok: false, detail: `No mailbox named ${this.config.sender} exists in this tenant.` };
       }
       if (response.status === 403) {
+        // Ordered by which is actually likelier. `User.Read.All` is the one
+        // this request needs and the one the setup instructions omitted for a
+        // long time, so it is named first; `Mail.Send` is not required to
+        // answer this call at all and cannot be the cause of a refusal of it.
         return {
           ok: false,
           detail:
-            'Microsoft refused. The Mail.Send application permission is missing or not consented, or an application access policy excludes this mailbox.',
+            'Microsoft refused this read. It needs the User.Read.All application permission, which is separate from Mail.Send and easy to miss — check that it is granted and admin-consented. Failing that, an application access policy may exclude this mailbox. Mail.Send is not what answers this call, so it is not the cause.',
         };
       }
       return { ok: false, detail: `HTTP ${response.status}: ${detail.slice(0, 300)}` };

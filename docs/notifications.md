@@ -59,17 +59,39 @@ consented. That is the wrong moment.
 The recipient is never defaulted: sending mail is an outbound side effect, and
 who receives it is a decision rather than a convenience.
 
-The health check alone catches the three things that actually go wrong — a
-wrong tenant or an expired secret, a mailbox that does not exist, and a
-`Mail.Send` **application** permission that was never granted or consented. It
-names which, rather than repeating a status code.
+The health check catches a wrong tenant or an expired secret, and a mailbox that
+does not exist. It names which, rather than repeating a status code.
 
-### The permission, and the trap in it
+**It cannot prove that mail will send**, and it no longer implies that it can.
+Microsoft publishes no endpoint that exercises `Mail.Send` without sending a
+message, so a green check here means the credentials work and the mailbox
+resolves — nothing more. Sending is proven by the first notification going out
+and by nothing before it.
+
+### Two permissions, not one
 
 Sign-in uses **delegated** scopes: the application acts as the person signing
 in. Mail cannot, because notices are raised by a background worker where nobody
-is signed in. It therefore needs the **`Mail.Send` application permission**,
-granted with admin consent, and used through the client-credentials flow.
+is signed in. It therefore needs **application** permissions, granted with admin
+consent, and used through the client-credentials flow. There are two, and
+missing the second is easy:
+
+| Permission | What needs it |
+| --- | --- |
+| **`Mail.Send`** | Sending. This is the one that matters, and the one nothing can verify short of a real send. |
+| **`User.Read.All`** | The health check only. It reads `GET /users/{sender}` to confirm the mailbox exists. `Directory.Read.All` also serves. |
+
+`User.Read.All` was omitted from these instructions for a long time, and the
+consequence was a confidently wrong error message: an administrator who granted
+`Mail.Send` alone — exactly as advised below — got a 403 from the health check
+and was told *"The Mail.Send application permission is missing"*, sending them
+to re-grant a permission that was already correct. The check now names
+`User.Read.All` first and says plainly that `Mail.Send` is not what answers that
+call.
+
+If you would rather not grant a directory-read permission at all, that is a
+defensible choice: skip it, accept that the health check will report a 403, and
+rely on the first real notification as the test. Mail itself does not need it.
 
 **That permission lets the application send as any mailbox in the tenant.**
 That is far more than sending firm notices needs.

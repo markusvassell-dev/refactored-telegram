@@ -1621,9 +1621,24 @@ export async function markNotificationRead(formData: FormData): Promise<ActionRe
   });
 }
 
-export async function markAllNotificationsRead(): Promise<ActionResult> {
+/**
+ * Clearing the whole list.
+ *
+ * Takes the form data solely to check the token, which is the only reason this
+ * signature exists. It used to take no argument at all — while the form was
+ * already sending a token, because `ActionForm` writes one into every form it
+ * renders. Nothing read it.
+ *
+ * That is also why it compiled and why nobody noticed. `ActionForm` types its
+ * action as `(formData: FormData) => …`, and TypeScript accepts a function of
+ * no arguments wherever one of one argument is wanted. The check was not
+ * bypassed; it was never written, and the type system had no way to say so.
+ */
+export async function markAllNotificationsRead(formData: FormData): Promise<ActionResult> {
   return run(async () => {
     const actor = await requireUser();
+    await assertCsrf(formData.get('csrf')?.toString());
+
     const { cleared } = await container.userNotifications.markAllRead(actor.id);
     revalidatePath('/notifications');
     return { ok: true, message: cleared === 0 ? 'Nothing was unread.' : `Marked ${cleared} read.` };

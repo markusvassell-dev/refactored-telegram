@@ -1,10 +1,10 @@
 import { createServer } from 'node:http';
 import { hostname } from 'node:os';
 import { randomUUID } from 'node:crypto';
-import type { JobType } from '@element/services';
+import type { JobRecord, JobType } from '@element/services';
 import { buildWorkerContext } from './context.js';
 import { buildHandlers } from './handlers.js';
-import { backoffDelay, diagnosePollingFailure, REPEAT_FAILURE_LOG_AFTER_MS } from './polling-failure.js';
+import { dispatchLoop } from './dispatch.js';
 
 /**
  * Worker entry point.
@@ -27,10 +27,17 @@ let lastFailureAt: Date | null = null;
 let processed = 0;
 let failed = 0;
 
-async function runOne(): Promise<boolean> {
-  const job = await context.queue.claim(WORKER_ID);
-  if (!job) return false;
-
+/**
+ * Runs one claimed job to completion.
+ *
+ * **Never rejects**, which is a contract rather than a courtesy: `dispatchLoop`
+ * holds these promises and races them, so a rejection would be thrown into the
+ * loop and end the worker. The old shape could reject — `queue.fail` is called
+ * inside the `catch` below and was not itself guarded, so a database outage
+ * during a failure took the whole thing down — and the loop caught it only
+ * because it awaited each job one at a time. It no longer does.
+ */
+async function runJob(job: JobRecord): Promise<void> {
   const jobLogger = logger.child({
     jobId: job.id,
     jobType: job.jobType,
@@ -39,11 +46,26 @@ async function runOne(): Promise<boolean> {
     attempt: job.attempt,
   });
 
+  try {
+    await runHandler(job, jobLogger);
+  } catch (error) {
+    // Everything below has already tried to record itself; reaching here means
+    // the recording failed too. Saying so is all that is left, and it must not
+    // propagate.
+    failed += 1;
+    lastFailureAt = new Date();
+    jobLogger.error('Could not record the outcome of a job', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function runHandler(job: JobRecord, jobLogger: ReturnType<typeof logger.child>): Promise<void> {
   const handler = handlers[job.jobType as JobType];
   if (!handler) {
     await context.queue.fail(job, new Error(`No handler is registered for job type ${job.jobType}`));
     jobLogger.error('No handler registered for job type');
-    return true;
+    return;
   }
 
   inFlight += 1;
@@ -94,63 +116,25 @@ async function runOne(): Promise<boolean> {
   } finally {
     inFlight -= 1;
   }
-
-  return true;
 }
 
 /**
- * Back off geometrically when the queue cannot be reached, say the reason once,
- * repeat it at most every five minutes while it persists, and say so again when
- * it recovers. See polling-failure.ts for why.
+ * Claims work and runs up to `WORKER_CONCURRENCY` jobs at once.
+ *
+ * The loop itself is in dispatch.ts, where it can be tested — which is the
+ * point, since the reason this ran serially for so long is that nothing in this
+ * file can be imported without starting a worker and an HTTP server.
  */
-async function loop(): Promise<void> {
-  const concurrency = context.env.WORKER_CONCURRENCY;
-  const idleDelay = context.env.WORKER_POLL_INTERVAL_MS;
-
-  let consecutiveFailures = 0;
-  let lastFailureLoggedAt = 0;
-
-  while (running) {
-    if (inFlight >= concurrency) {
-      await sleep(50);
-      continue;
-    }
-
-    let failed = false;
-
-    const claimed = await runOne().catch((error: unknown) => {
-      failed = true;
-      consecutiveFailures += 1;
-
-      const now = Date.now();
-      const isFirst = consecutiveFailures === 1;
-      if (isFirst || now - lastFailureLoggedAt >= REPEAT_FAILURE_LOG_AFTER_MS) {
-        lastFailureLoggedAt = now;
-        logger.error('Queue polling failed', {
-          message: error instanceof Error ? error.message : String(error),
-          consecutiveFailures,
-          diagnosis: diagnosePollingFailure(error) ?? undefined,
-          // Said once, so nobody reads the silence that follows as the problem
-          // having gone away.
-          note: isFirst ? 'Backing off; this will be repeated at most every five minutes while it persists.' : undefined,
-        });
-      }
-
-      return false;
-    });
-
-    if (!failed && consecutiveFailures > 0) {
-      logger.info('Queue polling recovered', { afterFailures: consecutiveFailures });
-      consecutiveFailures = 0;
-      lastFailureLoggedAt = 0;
-    }
-
-    if (failed) {
-      await sleep(backoffDelay(idleDelay, consecutiveFailures));
-    } else if (!claimed) {
-      await sleep(idleDelay);
-    }
-  }
+function loop(): Promise<void> {
+  return dispatchLoop<JobRecord>({
+    claim: () => context.queue.claim(WORKER_ID),
+    run: runJob,
+    concurrency: context.env.WORKER_CONCURRENCY,
+    idleDelayMs: context.env.WORKER_POLL_INTERVAL_MS,
+    logger,
+    isRunning: () => running,
+    sleep,
+  });
 }
 
 function sleep(ms: number): Promise<void> {
@@ -161,8 +145,17 @@ function sleep(ms: number): Promise<void> {
 async function maintenance(): Promise<void> {
   while (running) {
     try {
-      const reclaimed = await context.queue.reclaimStuckJobs();
-      if (reclaimed > 0) logger.warn('Reclaimed stuck jobs', { reclaimed });
+      const { released, buried } = await context.queue.reclaimStuckJobs();
+      if (released > 0) logger.warn('Reclaimed stuck jobs', { released });
+      if (buried > 0) {
+        // Distinct from a reclaim, and at error level, because this is the
+        // shape of a job that ends the worker process rather than failing:
+        // usually memory, and never something a retry will fix.
+        logger.error('Dead-lettered jobs that used every attempt without ever reporting a failure', {
+          buried,
+          likelyCause: 'the worker was killed mid-run — check its memory limit',
+        });
+      }
 
       await context.queue.enqueue({
         jobType: 'PURGE_TEMPORARY_FILES',

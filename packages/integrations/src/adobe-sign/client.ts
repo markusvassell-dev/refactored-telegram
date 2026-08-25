@@ -348,14 +348,14 @@ export class AdobeSignRestClient implements AdobeSignProvider {
         ? undefined // Adobe's own default; sending NONE would disable the check.
         : { securityOption: { authenticationMethod: request.authenticationMethod } };
 
-    if (!request.allowDelegation) {
-      // Said out loud on every send rather than assumed. See the note on
-      // `allowDelegation` in types.ts: the caller has asked for something this
-      // client cannot yet express, and silence would read as compliance.
-      this.logger.warn('Delegation was requested off, but this client cannot yet tell Adobe that', {
-        idempotencyKey: request.idempotencyKey,
-      });
-    }
+    // `request.allowDelegation` is deliberately not read here. Adobe publishes
+    // no per-agreement control over delegation — see the note in types.ts —
+    // so there is nothing to send and nothing this code can do about it. The
+    // warning that used to stand here fired on every single send and named no
+    // action anybody could take, which is the kind of line people learn to
+    // scroll past. What replaced it is real: `agreementHistory` reads Adobe's
+    // `ACTION_DELEGATED` events, so a signer who does hand the letter on is
+    // reported as `DELEGATED` rather than silently signing.
 
     const orders = [...new Set(request.signers.map((signer) => signer.order))].sort((a, b) => a - b);
     const participantSets = orders.map((order, index) => ({
@@ -618,10 +618,10 @@ export class AdobeSignRestClient implements AdobeSignProvider {
       // delivery rather than of reading.
       if (type === 'EMAIL_VIEWED' && date && entry.viewedAt === null) entry.viewedAt = date;
 
-      // This application asks for delegation to be off and cannot yet tell
-      // Adobe so (see `allowDelegation`). If it happens anyway, the person who
-      // signed an engagement letter is not the person the firm named, and the
-      // signing panel has to say so.
+      // Delegation cannot be forbidden per agreement (see `allowDelegation` in
+      // types.ts), so detecting it is the whole of the mitigation. If it
+      // happens, the person who signed an engagement letter is not the person
+      // the firm named, and the signing panel has to say so.
       if (type === 'ACTION_DELEGATED' || type === 'ACTION_AUTO_DELEGATED' || type === 'ACTION_REPLACED_SIGNER') {
         entry.delegated = true;
       }

@@ -130,16 +130,31 @@ describe('sending through Graph', () => {
   });
 });
 
+/**
+ * What the health check may and may not claim.
+ *
+ * It reads `GET /users/{sender}`, which needs `User.Read.All` — a different
+ * application permission from `Mail.Send`, and one the setup instructions did
+ * not mention for a long time. Microsoft publishes no way to prove `Mail.Send`
+ * short of sending a message, so the check's job is to report what it saw
+ * rather than what one would like that to imply.
+ */
 describe('the health check', () => {
-  it('explains a 403 as a permission problem rather than repeating the number', async () => {
-    // 403 here means the Mail.Send application permission is missing or not
-    // consented, or an access policy excludes this mailbox. Those are the
-    // things to go and look at.
+  it('blames the permission the read actually needs, not the one it does not', async () => {
+    // The defect, as an assertion. An administrator who granted Mail.Send
+    // alone — which is exactly what docs/notifications.md advises — gets this
+    // 403, and used to be told "The Mail.Send application permission is
+    // missing". That sends them to re-grant a permission that is already
+    // correct. Mail.Send is not what answers this call and cannot be why it
+    // was refused.
     const { mailer } = mailerWith([{ status: 403 }]);
 
     const result = await mailer.healthCheck();
     expect(result.ok).toBe(false);
-    expect(result.detail).toMatch(/permission|policy/i);
+    expect(result.detail).toMatch(/User\.Read\.All/);
+    // Named, but only to rule it out.
+    expect(result.detail).toMatch(/not the cause/i);
+    expect(result.detail).toMatch(/policy/i);
   });
 
   it('explains a 404 as the mailbox not existing', async () => {
@@ -150,9 +165,17 @@ describe('the health check', () => {
     expect(result.detail).toMatch(/no mailbox named/i);
   });
 
-  it('passes when the mailbox can be read', async () => {
+  it('passes, and says plainly that sending is still unproven', async () => {
+    // A pass here used to read as "mail works". It does not: a tenant with
+    // User.Read.All and no Mail.Send passes this and fails the first real
+    // notification. Whoever reads the Integrations screen has to be told which
+    // of the two they are looking at.
     const { mailer } = mailerWith([{ status: 200, body: { mail: 'engagements@firm.test' } }]);
-    await expect(mailer.healthCheck()).resolves.toMatchObject({ ok: true });
+
+    const result = await mailer.healthCheck();
+    expect(result.ok).toBe(true);
+    expect(result.detail).toMatch(/not proven|unproven/i);
+    expect(result.detail).toMatch(/Mail\.Send/);
   });
 });
 

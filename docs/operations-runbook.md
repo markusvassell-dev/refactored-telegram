@@ -47,7 +47,11 @@ dead-lettering.
 2. Check disk space in `DOCUMENT_TEMP_DIRECTORY`. Each conversion writes a
    scratch profile.
 3. Check memory. LibreOffice is the heaviest step; if the worker is being
-   OOM-killed, lower `WORKER_CONCURRENCY` or raise the memory limit.
+   OOM-killed, lower `WORKER_CONCURRENCY` or raise the memory limit. Note that
+   until 25 August 2026 the worker ran one job at a time regardless of that
+   setting, so this advice could not do anything; it can now, and a worker that
+   started being OOM-killed around that date is running up to four handlers
+   where it used to run one.
 4. Retry the job.
 
 Conversion is a pure function of the .docx, so a retry is always safe.

@@ -1270,7 +1270,17 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       // otherwise sit in the table for ever with nothing pointing at it.
       const orphaned = await context.store.purgeExpired();
 
-      return { purged, orphaned };
+      // The job table itself, which nothing used to sweep. Succeeded rows only
+      // — a dead-lettered job is the record of what went wrong and stays until
+      // somebody deletes it deliberately.
+      const jobsDeleted = await context.queue.purgeSucceededJobs(context.env.JOB_RETENTION_DAYS);
+
+      return {
+        purged,
+        orphaned,
+        jobsDeleted,
+        userMessage: `Purged ${purged} working ${purged === 1 ? 'copy' : 'copies'}, ${orphaned} orphaned, and ${jobsDeleted} finished job ${jobsDeleted === 1 ? 'record' : 'records'}.`,
+      };
     },
   };
 }

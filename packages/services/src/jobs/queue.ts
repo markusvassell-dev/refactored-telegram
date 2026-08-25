@@ -136,6 +136,14 @@ export class JobQueue {
    *
    * SKIP LOCKED means a second worker polling at the same moment simply gets a
    * different row instead of blocking or stealing this one.
+   *
+   * The `attempt < maxAttempts` bound is load-bearing and was missing. `fail`
+   * is the only thing that ever dead-letters a job, and it runs when a
+   * **handler throws** — a job that ends the process instead, such as an
+   * out-of-memory during PDF conversion or a container eviction, never reaches
+   * it. `reclaimStuckJobs` would then return the row to `PENDING`, this query
+   * would take it again, and it would kill the worker again, with `attempt`
+   * climbing past `maxAttempts` for ever and nothing looking at it.
    */
   async claim(workerId: string): Promise<JobRecord | null> {
     const rows = await this.prisma.$queryRaw<
@@ -162,6 +170,9 @@ export class JobQueue {
            FROM "background_job" AS c
           WHERE c."status" = 'PENDING'
             AND c."runAt" <= NOW()
+            -- See the note above: this bound is what stops a job that kills
+            -- the worker from being taken for ever.
+            AND c."attempt" < c."maxAttempts"
           ORDER BY c."runAt" ASC, c."createdAt" ASC
           FOR UPDATE SKIP LOCKED
           LIMIT 1
@@ -270,14 +281,77 @@ export class JobQueue {
     });
   }
 
-  /** Releases jobs whose worker died mid-run so they become runnable again. */
-  async reclaimStuckJobs(olderThanMs = 15 * 60_000): Promise<number> {
+  /**
+   * Releases jobs whose worker died mid-run, and buries the ones that keep
+   * killing it.
+   *
+   * A worker that dies never calls `fail`, so nothing about such a job is ever
+   * written down: it simply sits in `RUNNING` with a lock nobody holds. Putting
+   * it back is right — a deploy in the middle of a long job should not lose the
+   * work — but putting it back *unconditionally* is how a job that kills the
+   * process gets retried for ever.
+   *
+   * So a job that has already used its attempts is dead-lettered here instead,
+   * and the reason says the worker died rather than that the job failed. Those
+   * are different things: one sends somebody to the handler's logic, the other
+   * to the container's memory limit, and a job with no `failureReason` at all —
+   * which is what this produced before — sends them nowhere.
+   */
+  async reclaimStuckJobs(olderThanMs = 15 * 60_000): Promise<{ released: number; buried: number }> {
     const cutoff = new Date(Date.now() - olderThanMs);
-    const result = await this.prisma.backgroundJob.updateMany({
-      where: { status: 'RUNNING', lockedAt: { lt: cutoff } },
+    const stuck = { status: 'RUNNING' as JobStatus, lockedAt: { lt: cutoff } };
+
+    // Buried first. Doing it the other way round would release these rows and
+    // then immediately bury them, and for the moment in between they would be
+    // claimable — which is the whole thing being prevented.
+    const buried = await this.prisma.backgroundJob.updateMany({
+      where: { ...stuck, attempt: { gte: this.prisma.backgroundJob.fields.maxAttempts } },
+      data: {
+        status: 'DEAD_LETTER',
+        failureReason: 'The worker stopped while this job was running, and its attempts are exhausted.',
+        userMessage:
+          'This job was interrupted every time it ran. That usually means it exhausted the worker’s memory rather than that it failed — check the worker’s resource limits before retrying it.',
+        completedAt: new Date(),
+        lockedBy: null,
+        lockedAt: null,
+      },
+    });
+
+    const released = await this.prisma.backgroundJob.updateMany({
+      where: stuck,
       data: { status: 'PENDING', lockedBy: null, lockedAt: null, runAt: new Date() },
     });
-    return result.count;
+
+    return { released: released.count, buried: buried.count };
+  }
+
+  /**
+   * Deletes succeeded jobs past their retention window.
+   *
+   * Nothing deleted from this table at all, and four schedulers in the worker
+   * write to it on a fixed cadence whether or not there is any work — the
+   * notification-mail drain enqueues once a minute, the purge, Adobe sync and
+   * Karbon trigger polls once an hour each. That is about 1,500 rows a day
+   * before a single engagement is touched, and roughly half a million a year.
+   *
+   * Nothing breaks as it grows: `@@index([status, runAt])` keeps the claim
+   * query fast at any size. What degrades is everything a person touches — the
+   * System Jobs page, the backups, and any count over the whole table.
+   *
+   * **`DEAD_LETTER` rows are never swept, whatever their age.** They are the
+   * record of what went wrong, they are the only thing an administrator has to
+   * read, and there are few of them precisely because they are the exception.
+   * `PENDING` and `RUNNING` are live work and are not the sweep's business
+   * either.
+   */
+  async purgeSucceededJobs(retentionDays: number): Promise<number> {
+    const cutoff = new Date(Date.now() - retentionDays * 86_400_000);
+
+    const { count } = await this.prisma.backgroundJob.deleteMany({
+      where: { status: 'SUCCEEDED', completedAt: { lt: cutoff } },
+    });
+
+    return count;
   }
 
   async countByStatus(): Promise<Record<string, number>> {

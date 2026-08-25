@@ -48,15 +48,29 @@ export interface CreateAgreementRequest {
   /**
    * Whether a signer may hand the letter to somebody else to sign.
    *
-   * NOT YET HONOURED, and deliberately left that way rather than guessed. The
-   * field a request uses to forbid delegation could not be confirmed against
-   * Adobe's specification from this environment, and inventing a field name is
-   * worse than sending none: an unrecognised key is ignored silently, which
-   * would leave this reading as enforced while Adobe applied its own default.
+   * **UNSUPPORTED, and now confirmed as such rather than merely unresolved.**
+   * This was previously recorded as a field that "could not be confirmed from
+   * this environment", which left a reader thinking the answer was out there.
+   * Checked against Adobe's published Swagger on 2026-08-25: no model involved
+   * in creating an agreement — `AgreementInfo`, `ParticipantSetInfo`,
+   * `ParticipantSetMemberInfo` — carries any delegation control. There is no
+   * field to send. Forbidding delegation is an **Adobe account or group
+   * setting**, made once in the Acrobat Sign admin console, and it applies to
+   * every agreement the account sends.
    *
-   * `AdobeSignRestClient.createAgreement` logs a warning when this is false so
-   * the gap is visible in the record of every send that assumed otherwise.
-   * Resolve it against the published spec before relying on it.
+   * So this flag records the firm's intent and nothing more, and no warning is
+   * logged for it: a line on every send naming an action nobody can take is a
+   * line people learn to scroll past.
+   *
+   * The mitigation is detection instead of prevention. `getAgreement` reads
+   * Adobe's `ACTION_DELEGATED`, `ACTION_AUTO_DELEGATED` and
+   * `ACTION_REPLACED_SIGNER` events, so a signer who hands an engagement letter
+   * to somebody else is reported as `DELEGATED` rather than appearing simply to
+   * have signed. That is what makes the account setting checkable after the
+   * fact, and it is the reason a letter signed by the wrong person cannot pass
+   * unremarked.
+   *
+   * See docs/adobe-sign-setup.md for where the account setting lives.
    */
   allowDelegation: boolean;
   /**

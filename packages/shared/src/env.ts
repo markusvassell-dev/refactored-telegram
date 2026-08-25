@@ -149,6 +149,19 @@ export const envSchema = z
 
     // ---- Worker ----
     WORKER_CONCURRENCY: z.coerce.number().int().positive().default(4),
+    /**
+     * How long a succeeded job stays in the table.
+     *
+     * Nothing used to delete from `background_job` at all, and four schedulers
+     * write to it on a fixed cadence whether or not there is work — the
+     * notification-mail drain alone is 1,440 rows a day. Thirty days keeps a
+     * month of history for anybody asking what ran, which is longer than
+     * anybody has ever looked back.
+     *
+     * Only `SUCCEEDED` rows are ever swept. A dead-lettered job is the record
+     * of what went wrong and the only thing an administrator has to read.
+     */
+    JOB_RETENTION_DAYS: z.coerce.number().int().positive().default(30),
     WORKER_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(2_000),
     WORKER_HEALTH_PORT: z.coerce.number().int().positive().default(3001),
 
