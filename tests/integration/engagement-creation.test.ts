@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@element/database';
 import { createAuditLogger } from '@element/audit';
-import { EngagementService } from '@element/services';
+import { DocumentStore, EngagementService } from '@element/services';
+import { createLogger } from '@element/shared';
 
 /**
  * Starting an engagement by hand.
@@ -16,7 +17,15 @@ import { EngagementService } from '@element/services';
 
 const prisma = new PrismaClient();
 const audit = createAuditLogger(prisma);
-const engagements = new EngagementService({ prisma, audit });
+const logger = createLogger({ level: 'error' });
+const store = new DocumentStore({
+  prisma,
+  rootDirectory: '/tmp/element-engagements-tests/storage',
+  retentionHours: 72,
+  maxBytes: 25 * 1024 * 1024,
+  signingSecret: 'test-signing-secret-test-signing-secret',
+});
+const engagements = new EngagementService({ prisma, audit, store, logger });
 
 const clientIds: string[] = [];
 let actorId: string;

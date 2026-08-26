@@ -53,8 +53,6 @@ const preparation = new PreparationService({ prisma, audit, pricing, logger });
 const fields = new FieldFormService({ prisma, audit });
 const dateRules = new DateRuleService({ prisma, audit });
 const feeRules = new FeeRuleService({ prisma, audit });
-const engagements = new EngagementService({ prisma, audit });
-
 const store = new DocumentStore({
   prisma,
   rootDirectory: configuration.DOCUMENT_STORAGE_DIRECTORY,
@@ -62,6 +60,8 @@ const store = new DocumentStore({
   maxBytes: configuration.DOCUMENT_MAX_UPLOAD_BYTES,
   signingSecret: configuration.SESSION_SECRET,
 });
+
+const engagements = new EngagementService({ prisma, audit, store, logger });
 
 const pdfConverter = libreOfficeConverter({
   binary: configuration.LIBREOFFICE_BINARY,

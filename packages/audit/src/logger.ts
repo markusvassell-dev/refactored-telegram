@@ -25,6 +25,11 @@ export const AUDIT_EVENT_TYPES = [
   // belongs in the trail with the before and after.
   'CLIENT_LEGAL_NAME_CORRECTED',
   'ENGAGEMENT_CREATED',
+  // The engagement row and its nineteen cascading children are gone; this entry
+  // and its `beforeValue` snapshot are the only surviving record of what was
+  // there. `audit_event` carries no foreign key to engagement precisely so it
+  // outlives one.
+  'ENGAGEMENT_DELETED',
   'GENERATION_REQUESTED',
   'SOURCE_DOCUMENT_SELECTED',
   'PARTICIPANT_RECORDED',

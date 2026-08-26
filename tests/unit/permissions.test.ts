@@ -72,6 +72,18 @@ describe('role permissions', () => {
     expect(can(administrator, 'wording:approve')).toBe(false);
   });
 
+  it('lets only an administrator delete an engagement', () => {
+    // Deleting a record is administration, not a judgement about the client
+    // work, so it sits with `user:manage` and `template:manage` rather than
+    // with the approvals. A partner who also needs it holds both roles — which
+    // is the same answer this file already gives for `signing:send`.
+    expect(can(administrator, 'engagement:delete')).toBe(true);
+    expect(can(partner, 'engagement:delete')).toBe(false);
+    expect(can(reviewer, 'engagement:delete')).toBe(false);
+    expect(can(preparer, 'engagement:delete')).toBe(false);
+    expect(can(readOnly, 'engagement:delete')).toBe(false);
+  });
+
   it('combines permissions additively across roles', () => {
     const both = { roles: ['ADMINISTRATOR', 'PARTNER_OR_FINAL_APPROVER'] as const };
     expect(can(both, 'user:manage')).toBe(true);

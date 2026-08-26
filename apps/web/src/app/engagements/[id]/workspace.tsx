@@ -14,6 +14,7 @@ import {
   confirmDateFact,
   confirmServiceSelection,
   confirmSigner,
+  deleteEngagement,
   generateCoverLetter,
   importKarbonDocument,
   locatePriorYearDocuments,
@@ -82,6 +83,7 @@ export function ReviewWorkspace({
   dateFacts,
   fieldForm,
   generationGate,
+  canDelete,
 }: {
   csrfToken: string;
   engagement: any;
@@ -92,6 +94,8 @@ export function ReviewWorkspace({
   dateFacts: DateFactPrompt[];
   fieldForm: FieldForm;
   generationGate: { ok: boolean; blockers: string[]; warnings: string[] };
+  /** Whether the viewer holds `engagement:delete`. The page decides; this only renders. */
+  canDelete: boolean;
 }): ReactNode {
   const [tab, setTab] = useState<Tab>('Overview');
 
@@ -124,7 +128,12 @@ export function ReviewWorkspace({
         aria-labelledby={`tab-${tab.replace(/\s+/g, '-')}`}
       >
         {tab === 'Overview' ? (
-          <Overview csrfToken={csrfToken} engagement={engagement} generationGate={generationGate} />
+          <Overview
+            csrfToken={csrfToken}
+            engagement={engagement}
+            generationGate={generationGate}
+            canDelete={canDelete}
+          />
         ) : null}
         {tab === 'Source Documents' ? (
           <SourceDocuments csrfToken={csrfToken} engagement={engagement} />
@@ -177,10 +186,12 @@ function Overview({
   csrfToken,
   engagement,
   generationGate,
+  canDelete,
 }: {
   csrfToken: string;
   engagement: any;
   generationGate: { ok: boolean; blockers: string[]; warnings: string[] };
+  canDelete: boolean;
 }): ReactNode {
   const latest = engagement.documentVersions?.[0];
   const needsCompilationConfirmation = engagement.engagementType === 'T2' && engagement.compilationSelected === null;
@@ -290,6 +301,39 @@ function Overview({
           </div>
         </dl>
       </Card>
+
+      {canDelete ? (
+        <Card
+          title="Delete this engagement"
+          description="Removes the engagement and everything attached to it: participants, documents, extracted values, fees, dates, approvals and its whole status history. The audit log keeps a record of what was here, including a snapshot of the engagement, and that record cannot be edited or removed."
+        >
+          <ActionForm
+            action={deleteEngagement}
+            csrfToken={csrfToken}
+            submitLabel="Delete engagement"
+            variant="danger"
+            confirm="This deletes the engagement and every document, fee, date and approval attached to it. It cannot be undone. Continue?"
+          >
+            <input type="hidden" name="engagementId" value={engagement.id} />
+            <label className="label" htmlFor="delete-reason">
+              Why is this being deleted?
+            </label>
+            <textarea
+              id="delete-reason"
+              name="reason"
+              className="input"
+              rows={2}
+              required
+              minLength={10}
+              placeholder="Created against the wrong client"
+            />
+            <p className="mt-1 text-xs text-slate-500">
+              An engagement that has been sent for signature, or has a signature recorded against it, is refused rather
+              than deleted.
+            </p>
+          </ActionForm>
+        </Card>
+      ) : null}
     </>
   );
 }

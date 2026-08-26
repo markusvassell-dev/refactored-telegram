@@ -98,7 +98,7 @@ export function buildWorkerContext(): WorkerContext {
   const fields = new FieldFormService({ prisma, audit });
   const dateRules = new DateRuleService({ prisma, audit });
   const feeRules = new FeeRuleService({ prisma, audit });
-  const engagements = new EngagementService({ prisma, audit });
+  const engagements = new EngagementService({ prisma, audit, store, logger });
 
   const templateDirectory = resolve(process.cwd(), 'templates', 'normalized');
 
