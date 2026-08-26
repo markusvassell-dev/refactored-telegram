@@ -52,6 +52,7 @@ export const PERMISSIONS = [
   'integration:manage',
   'job:retry',
   'system:manage_test_mode',
+  'engagement:delete',
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -114,6 +115,11 @@ const ADMINISTRATOR: Permission[] = [
   'job:retry',
   'system:manage_test_mode',
   'audit:view',
+  // Removing a record is administration, not an opinion about the client work,
+  // so it sits with the other destructive-administrative permissions rather
+  // than with the approvals below. It refuses outright on an engagement
+  // carrying signature evidence, which is the part no role overrides.
+  'engagement:delete',
 ];
 
 /**

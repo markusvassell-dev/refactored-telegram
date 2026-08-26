@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { dateFactQuestion, dateRuleDefinitionSchema } from '@element/dates';
 import { FACT_TOKEN_PREFIX, type FieldForm } from '@element/services';
-import { formatMoney } from '@element/shared';
+import { can, formatMoney } from '@element/shared';
 import { container } from '@/lib/container';
 import { clientLabel } from '@/lib/client-name';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic';
  * approvals, Karbon activity, Adobe status, and the audit trail.
  */
 export default async function EngagementDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireUser();
+  const viewer = await requireUser();
   const { id } = await params;
   const csrfToken = (await sessionCsrfToken()) ?? '';
 
@@ -190,6 +190,7 @@ export default async function EngagementDetailPage({ params }: { params: Promise
         dateFacts={dateFacts}
         fieldForm={fieldForm}
         generationGate={gate}
+        canDelete={can(viewer, 'engagement:delete')}
       />
     </>
   );

@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
 import {
   AppError,
   PreconditionError,
@@ -1383,6 +1384,39 @@ export async function setUserActive(formData: FormData): Promise<ActionResult> {
     revalidatePath('/users');
     return isActive ? 'Account reactivated.' : 'Account deactivated. They can no longer sign in.';
   });
+}
+
+/**
+ * Removes an engagement entirely.
+ *
+ * `redirect` is called **outside** `run`, and has to be. It works by throwing,
+ * so inside the callback the catch block would treat a successful deletion as
+ * an unexpected failure, log a correlation id for it, and tell the user their
+ * delete did not work — while the engagement was in fact gone.
+ *
+ * The redirect itself is not decoration either: `revalidatePath` alone would
+ * re-render the engagement page, which now resolves to `notFound()`.
+ */
+export async function deleteEngagement(formData: FormData): Promise<ActionResult> {
+  const result = await run(async () => {
+    const actor = await requirePermission('engagement:delete');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const engagementId = formData.get('engagementId')?.toString();
+    if (!engagementId) throw new ValidationError('An engagement is required.');
+
+    await container.engagements.delete({
+      engagementId,
+      reason: formData.get('reason')?.toString() ?? '',
+      actor,
+    });
+
+    revalidatePath('/engagements');
+    return 'Engagement deleted. The audit log keeps a record of what it was.';
+  });
+
+  if (result.ok) redirect('/engagements');
+  return result;
 }
 
 // ---- Templates -------------------------------------------------------------

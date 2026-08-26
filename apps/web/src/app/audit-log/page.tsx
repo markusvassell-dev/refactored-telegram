@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { container } from '@/lib/container';
 import { pageAccess } from '@/lib/session';
 import { AccessDenied } from '@/components/access-denied';
@@ -119,7 +120,12 @@ export default async function AuditLogPage({
               {events.map((event) => (
                 <tr key={event.id}>
                   <td className="whitespace-nowrap text-xs">
-                    {event.createdAt.toISOString().slice(0, 19).replace('T', ' ')}
+                    {/* The row's way in to the payload. `beforeValue`/`afterValue` are
+                        deliberately not columns here — this table already scrolls
+                        sideways, and a snapshot is not a cell. */}
+                    <Link className="text-brand-700 underline" href={`/audit-log/${event.id}`}>
+                      {event.createdAt.toISOString().slice(0, 19).replace('T', ' ')}
+                    </Link>
                   </td>
                   <td className="text-xs font-medium">{event.eventType}</td>
                   <td className="text-xs">{event.objectType}</td>

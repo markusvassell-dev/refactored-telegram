@@ -4,9 +4,13 @@ import { deriveTaxYear, rollYearEndForward } from '@element/integrations';
 import {
   PreconditionError,
   ValidationError,
+  assertCan,
   type DocumentType,
   type EngagementType,
+  type Logger,
+  type Principal,
 } from '@element/shared';
+import type { DocumentStore } from './storage.js';
 
 /**
  * Starting an engagement by hand.
@@ -25,6 +29,24 @@ import {
 export interface EngagementServiceDeps {
   prisma: PrismaClient;
   audit: AuditLogger;
+  /**
+   * Required rather than optional, because `delete` uses it to remove the
+   * stored bytes. An absent store would leave every generated PDF and uploaded
+   * source document on disk after the engagement they belong to was deleted —
+   * and it would do it silently, which is the failure this codebase keeps
+   * meeting. A service that cannot finish a delete should not be constructible.
+   */
+  store: DocumentStore;
+  logger: Logger;
+}
+
+/** Shortest reason accepted for a deletion. Matches the wording and fee editors. */
+const MINIMUM_DELETE_REASON_LENGTH = 10;
+
+export interface DeleteEngagementInput {
+  engagementId: string;
+  reason: string;
+  actor: Principal;
 }
 
 export interface CreateEngagementInput {
@@ -437,6 +459,197 @@ export class EngagementService {
     }
 
     return parsed;
+  }
+
+  /**
+   * Removes an engagement, and leaves the audit trail able to say what it was.
+   *
+   * Deleting the row cascades through nineteen foreign keys: participants,
+   * documents, extracted fields, fees, dates, approvals, review comments,
+   * wording exceptions, cover letters, workflow history and queued jobs all go
+   * with it. Nothing in the schema blocks that, which is exactly why the guard
+   * below is the only thing standing between a mistaken click and the
+   * destruction of an evidentiary record.
+   *
+   * **The audit entry is written before the delete**, so a delete that fails
+   * still leaves a record of who tried and why. `audit_event` carries no
+   * foreign key to engagement — dropped deliberately, because a trail must
+   * outlive what it describes — so the entry survives the cascade and stays
+   * findable by `engagementId` afterwards.
+   *
+   * **The snapshot is redacted, and that is intended.** `redact()` masks email
+   * addresses and tail-masks anything named like a business number before the
+   * entry is stored. Every REVIEWER can read the audit log, which is a wider
+   * audience than the engagement itself had, so the masking is a feature of
+   * writing history down rather than a defect in it.
+   */
+  async delete(input: DeleteEngagementInput): Promise<void> {
+    assertCan(input.actor, 'engagement:delete');
+
+    const reason = input.reason.trim();
+    if (reason.length < MINIMUM_DELETE_REASON_LENGTH) {
+      throw new ValidationError(
+        'Give a reason for deleting this engagement. It is the only explanation the audit trail will carry.',
+      );
+    }
+
+    const engagement = await this.deps.prisma.engagement.findUnique({
+      where: { id: input.engagementId },
+      include: {
+        client: { select: { legalName: true } },
+        participants: {
+          select: { role: true, fullLegalName: true, email: true, signingOrder: true, contactConfirmed: true },
+          orderBy: [{ signingOrder: 'asc' }, { role: 'asc' }],
+        },
+        preparer: { select: { displayName: true } },
+        reviewer: { select: { displayName: true } },
+        finalApprover: { select: { displayName: true } },
+        feeCalculations: {
+          select: {
+            feeKind: true,
+            roundedFee: true,
+            previousFee: true,
+            isManualOverride: true,
+            isBlocked: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+        },
+        _count: {
+          select: {
+            documentVersions: true,
+            sourceDocuments: true,
+            approvals: true,
+            coverLetters: true,
+            workflowEvents: true,
+            adobeAgreements: true,
+            externalSignatures: true,
+          },
+        },
+      },
+    });
+
+    if (!engagement) {
+      throw new ValidationError('That engagement no longer exists.');
+    }
+
+    await this.assertNoSignatureEvidence(input.engagementId);
+
+    // Deliberately a chosen shape rather than the row as it came back.
+    // `redact()` decides what to mask from the *key names*, so a raw dump would
+    // mask by accident and miss by accident. Everything here is something a
+    // person asking "what was deleted, and should it have been?" needs.
+    const snapshot = {
+      engagementId: engagement.id,
+      clientLegalName: engagement.client.legalName,
+      engagementType: engagement.engagementType,
+      taxYear: engagement.taxYear,
+      yearEnd: engagement.yearEnd,
+      status: engagement.status,
+      karbonWorkItemId: engagement.karbonWorkItemId,
+      isTestMode: engagement.isTestMode,
+      blockedReason: engagement.blockedReason,
+      createdAt: engagement.createdAt,
+      updatedAt: engagement.updatedAt,
+      assignedPreparer: engagement.preparer?.displayName ?? null,
+      assignedReviewer: engagement.reviewer?.displayName ?? null,
+      finalApprover: engagement.finalApprover?.displayName ?? null,
+      participants: engagement.participants.map((participant) => ({
+        role: participant.role,
+        fullLegalName: participant.fullLegalName,
+        email: participant.email,
+        signingOrder: participant.signingOrder,
+        contactConfirmed: participant.contactConfirmed,
+      })),
+      fees: engagement.feeCalculations.map((fee) => ({
+        feeKind: fee.feeKind,
+        // `roundedFee` is the fee as quoted — the one that would have reached a
+        // client. Stringified because a Decimal serialises to an object that
+        // reads as nothing useful in a stored snapshot.
+        roundedFee: fee.roundedFee?.toString() ?? null,
+        previousFee: fee.previousFee?.toString() ?? null,
+        isManualOverride: fee.isManualOverride,
+        isBlocked: fee.isBlocked,
+      })),
+      recordCounts: engagement._count,
+    };
+
+    await this.deps.audit.record({
+      eventType: 'ENGAGEMENT_DELETED',
+      objectType: 'Engagement',
+      objectId: engagement.id,
+      engagementId: engagement.id,
+      userId: input.actor.id,
+      beforeValue: snapshot,
+      reason,
+    });
+
+    await this.deps.prisma.engagement.delete({ where: { id: engagement.id } });
+
+    await this.purgeStoredDocuments(engagement.id);
+  }
+
+  /**
+   * Refuses to delete an engagement that carries evidence of a client having
+   * been asked to sign, or having signed.
+   *
+   * An `ExternalSignature` row is a signature obtained outside this application
+   * and recorded against the engagement. A non-mock `AdobeAgreement` past
+   * `CREATED` means Adobe actually sent something to somebody. Neither can be
+   * reconstructed from a snapshot, and neither is this application's to discard.
+   *
+   * A mock agreement is deliberately *not* protected. It names no real signer
+   * and contacted nobody, and clearing test sends is most of what this button
+   * is for.
+   */
+  private async assertNoSignatureEvidence(engagementId: string): Promise<void> {
+    const [externalSignatures, sentAgreements] = await Promise.all([
+      this.deps.prisma.externalSignature.count({ where: { engagementId } }),
+      this.deps.prisma.adobeAgreement.count({
+        where: { engagementId, isMockProvider: false, status: { not: 'CREATED' } },
+      }),
+    ]);
+
+    if (externalSignatures > 0) {
+      throw new PreconditionError(
+        'This engagement has a signature recorded against it, so it cannot be deleted. A signed engagement letter is a record the firm has to keep.',
+      );
+    }
+
+    if (sentAgreements > 0) {
+      throw new PreconditionError(
+        'This engagement has been sent for signature through Adobe Sign, so it cannot be deleted. Cancel the agreement first; if it is already signed, it must be kept.',
+      );
+    }
+  }
+
+  /**
+   * Removes the stored bytes belonging to an engagement.
+   *
+   * **Two scopes, not one.** Source documents and external-signature evidence
+   * are stored under the raw engagement id, while generated documents and cover
+   * letters are stored under the same id with its hyphens stripped
+   * (`generation-service.ts`, `cover-letter-service.ts`). `sanitizeScope` keeps
+   * hyphens, so those are genuinely different scopes and purging one leaves the
+   * other behind as unreachable blobs.
+   *
+   * A failure here never fails the delete. The row and its children are already
+   * gone by this point, the expiry sweep reclaims anything left, and reporting
+   * a failure for work that mostly succeeded would send somebody looking for an
+   * engagement that no longer exists.
+   */
+  private async purgeStoredDocuments(engagementId: string): Promise<void> {
+    for (const scope of [engagementId, engagementId.replace(/-/g, '')]) {
+      try {
+        await this.deps.store.purgeScope(scope);
+      } catch (error) {
+        this.deps.logger.error('Could not purge stored documents for a deleted engagement', {
+          engagementId,
+          scope,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
   }
 
   /**
