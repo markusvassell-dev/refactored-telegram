@@ -18,6 +18,7 @@ import { AppError, isRetryable, newCorrelationId, toUserMessage, type Logger } f
 export const JOB_TYPES = [
   'KARBON_SYNC',
   'POLL_KARBON_TRIGGERS',
+  'SYNC_KARBON_WORK_STATUS',
   'ROLL_OVER_ENGAGEMENT',
   'SYNC_CLIENT_DOCUMENTS',
   'LOCATE_PRIOR_YEAR_DOCUMENTS',

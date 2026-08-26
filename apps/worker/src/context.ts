@@ -2,6 +2,7 @@ import { prisma } from '@element/database';
 import { createAuditLogger, type AuditLogger } from '@element/audit';
 import { libreOfficeConverter, type PdfConverter } from '@element/documents';
 import {
+  KarbonWorkStatusService,
   ApprovalService,
   CoverLetterService,
   CompletionDeliveryService,
@@ -62,6 +63,7 @@ export interface WorkerContext {
   coverLetters: CoverLetterService;
   coverLetterAutostart: CoverLetterAutostartDeps;
   completionDelivery: CompletionDeliveryService;
+  karbonWorkStatus: KarbonWorkStatusService;
   coverLetterNarratives: CoverLetterNarrativeService;
   karbonLibrary: KarbonLibraryService;
   clientImport: ClientImportService;
@@ -139,6 +141,8 @@ export function buildWorkerContext(): WorkerContext {
   // over the same four things.
   const coverLetterAutostart = { prisma, queue, workflow, coverLetters };
 
+  const karbonWorkStatus = new KarbonWorkStatusService({ prisma, audit, logger });
+
   const completionDelivery = new CompletionDeliveryService({
     prisma,
     audit,
@@ -194,6 +198,7 @@ export function buildWorkerContext(): WorkerContext {
     coverLetters,
     coverLetterAutostart,
     completionDelivery,
+    karbonWorkStatus,
     coverLetterNarratives,
     karbonLibrary,
     clientImport,

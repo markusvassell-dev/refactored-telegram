@@ -69,7 +69,7 @@ export default async function NewEngagementPage() {
     <>
       <PageHeader
         title="Start an engagement"
-        description="Creates the engagement and assigns it to you. Nothing is generated or sent — the next step is Prepare, on the engagement itself."
+        description="Every field typed by hand. To have the year, year-end and last year's reviewer worked out for you, use Create an engagement instead."
         actions={
           <Link className="btn-secondary" href="/engagements">
             Back to engagements

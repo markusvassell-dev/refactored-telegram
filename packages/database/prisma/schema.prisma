@@ -536,6 +536,10 @@ model Engagement {
   /// Set when generation must not proceed (for example, no prior-year fee).
   blockedReason         String?
   isTestMode            Boolean          @default(false)
+  /// The Karbon work status this application last pushed for this engagement.
+  /// Compared against the configured map to decide whether a push is owed, so a
+  /// missed transition is corrected on the next reconciliation rather than lost.
+  karbonWorkStatusPushed String?
   /// Deterministic key preventing duplicate active generations.
   idempotencyKey        String?          @unique
   initiatedBy           String?

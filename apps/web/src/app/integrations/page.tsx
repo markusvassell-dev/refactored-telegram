@@ -10,6 +10,7 @@ import {
   checkIntegrationConnection,
   clearIntegrationCredentials,
   saveIntegrationConnection,
+  setKarbonStatusMap,
   setKarbonStatusTriggers,
 } from '@/app/actions';
 
@@ -30,11 +31,12 @@ export default async function IntegrationsPage({
   const csrfToken = (await sessionCsrfToken()) ?? '';
   const canManage = can(user, 'integration:manage');
 
-  const [connections, providers, state, triggers] = await Promise.all([
+  const [connections, providers, state, triggers, statusMap] = await Promise.all([
     container.integrations.list(),
     container.providers(),
     container.testModeState(),
     container.settings.karbonStatusTriggers(),
+    container.settings.karbonStatusMap(),
   ]);
 
   return (
@@ -113,6 +115,7 @@ export default async function IntegrationsPage({
       ))}
 
       <StatusTriggers csrfToken={csrfToken} canManage={canManage} triggers={triggers} />
+      <WorkStatusMap csrfToken={csrfToken} canManage={canManage} statusMap={statusMap} />
 
       <section className="card">
         <div className="card-header">
@@ -166,6 +169,106 @@ export default async function IntegrationsPage({
   );
 }
 
+/**
+ * Which Karbon work status corresponds to each application status.
+ *
+ * Both halves of this feature existed and were never joined: the Karbon client
+ * has had `updateWorkItemStatus` for some time with **no caller**, and
+ * `karbon_status_map` has been a seeded, empty setting with a reader and **no
+ * writer**. This is the writer.
+ *
+ * Only the statuses a firm plausibly wants reflected in Karbon are offered.
+ * Listing all twenty-nine would make the useful three impossible to find, and
+ * an engagement passing through `GENERATING` is not news to anybody looking at
+ * a work item.
+ */
+const PUSHABLE_STATUSES = [
+  { value: 'SENT_FOR_SIGNATURE', label: 'Sent to the client for signature' },
+  { value: 'PARTIALLY_SIGNED', label: 'Some signers have signed' },
+  { value: 'SIGNED', label: 'Signed by everyone' },
+  { value: 'COMPLETE', label: 'Engagement letter complete and filed' },
+  { value: 'DELIVERED', label: 'Completion package delivered to the client' },
+  { value: 'DECLINED', label: 'A signer declined' },
+  { value: 'NEEDS_ATTENTION', label: 'Needs attention' },
+] as const;
+
+function WorkStatusMap({
+  csrfToken,
+  canManage,
+  statusMap,
+}: {
+  csrfToken: string;
+  canManage: boolean;
+  statusMap: Record<string, string>;
+}): ReactNode {
+  const configured = Object.keys(statusMap).length;
+
+  return (
+    <section className="card mb-6">
+      <div className="card-header">
+        <h2 className="text-base font-semibold">Update the Karbon work item as the engagement moves</h2>
+        <p className="mt-1 text-sm text-slate-600">
+          When an engagement reaches one of these statuses, the work item&rsquo;s status in Karbon is set to whatever
+          you write beside it. Checked hourly, so a change shows up in Karbon within the hour rather than instantly.
+        </p>
+        <p className="mt-2 text-sm text-slate-600">
+          <strong>Work status names are yours, not ours.</strong> One firm&rsquo;s &ldquo;Completed&rdquo; is
+          another&rsquo;s &ldquo;Complete&rdquo; or &ldquo;Ready to invoice&rdquo;, so nothing is guessed: type them
+          exactly as they appear in Karbon. A row left blank is never written.
+        </p>
+      </div>
+      <div className="card-body">
+        {configured === 0 ? (
+          <p className="mb-4 rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            Nothing is mapped, so this application does not change any work item status.
+          </p>
+        ) : null}
+
+        {canManage ? (
+          <ActionForm action={setKarbonStatusMap} csrfToken={csrfToken} submitLabel="Save status map">
+            <div className="space-y-3">
+              {PUSHABLE_STATUSES.map((status) => (
+                <div key={status.value} className="grid gap-2 sm:grid-cols-2">
+                  <div>
+                    <span className="label">{status.label}</span>
+                    <p className="field-note font-mono text-xs">{status.value}</p>
+                    <input type="hidden" name="appStatus" value={status.value} />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor={`karbon-status-${status.value}`}>
+                      Karbon work status
+                    </label>
+                    <input
+                      id={`karbon-status-${status.value}`}
+                      name="karbonStatus"
+                      className="input"
+                      defaultValue={statusMap[status.value] ?? ''}
+                      autoComplete="off"
+                      placeholder="Leave blank to change nothing"
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+            <p className="field-note mt-3">
+              A name Karbon does not recognise is rejected by Karbon, and the failure is recorded against the job rather
+              than changing the engagement. Nothing here can stop a letter being prepared, approved or sent.
+            </p>
+          </ActionForm>
+        ) : (
+          <ul className="space-y-1 text-sm text-slate-700">
+            {Object.entries(statusMap).map(([appStatus, karbonStatus]) => (
+              <li key={appStatus}>
+                <span className="font-medium">{appStatus.replace(/_/g, ' ').toLowerCase()}</span> &rarr; {karbonStatus}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
 /** Engagement types offered, with the label a person recognises. */
 const ENGAGEMENT_TYPES = [
   { value: 'T2', label: 'T2 corporate' },
@@ -210,9 +313,14 @@ function StatusTriggers({
         <h2 className="text-base font-semibold">Start an engagement from a Karbon status</h2>
         <p className="mt-1 text-sm text-slate-600">
           When a work item reaches one of these statuses, this application creates the client&rsquo;s engagement for the
-          new year, finds last year&rsquo;s letter in Karbon, and carries its values forward. It stops there:{' '}
-          <strong>nothing is generated, approved or sent automatically</strong> — the engagement waits in the review
-          queue like any other.
+          new year, finds last year&rsquo;s letter in Karbon, carries its values forward, and{' '}
+          <strong>generates the draft letter</strong> once everything it needs is present.
+        </p>
+        <p className="mt-2 text-sm text-slate-600">
+          It stops at a draft. <strong>Nothing is approved or sent automatically</strong> — the letter still goes to a
+          reviewer, still needs a second person&rsquo;s approval, and can still only be sent by a partner. No draft is
+          generated at all while something is missing: an unconfirmed compilation answer, or a fee awaiting approval,
+          refuses here exactly as it would refuse somebody pressing Generate.
         </p>
         <p className="mt-2 text-sm text-slate-600">
           Statuses and work types are whatever your Karbon tenant calls them, matched ignoring capitalisation. Leave the

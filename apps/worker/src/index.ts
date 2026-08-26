@@ -210,6 +210,35 @@ async function karbonTriggerPoll(): Promise<void> {
 }
 
 /**
+ * Bringing Karbon work items into line with where engagements have got to.
+ *
+ * Hourly, on the same bucket-key trick as the trigger poll above, and for the
+ * same two reasons: Karbon's rate allowance is shared with everything else the
+ * firm runs, and a work status label is not urgent.
+ *
+ * Separate from the trigger poll rather than folded into it because the two
+ * fail independently — Karbon refusing to accept a status write is no reason to
+ * stop asking it what has reached one — and because an unconfigured status map
+ * makes this pass free while the trigger poll still has work to do.
+ */
+async function karbonWorkStatusPush(): Promise<void> {
+  while (running) {
+    try {
+      await context.queue.enqueue({
+        jobType: 'SYNC_KARBON_WORK_STATUS',
+        idempotencyKey: `karbon_work_status_${new Date().toISOString().slice(0, 13)}`,
+        payload: {},
+      });
+    } catch (error) {
+      logger.error('Could not queue the Karbon work status push', {
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+    await sleep(15 * 60_000);
+  }
+}
+
+/**
  * Getting notices into inboxes.
  *
  * On its own loop rather than folded into maintenance, because the cadences
@@ -321,3 +350,4 @@ void loop();
 void maintenance();
 void notificationMail();
 void karbonTriggerPoll();
+void karbonWorkStatusPush();

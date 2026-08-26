@@ -49,9 +49,17 @@ export default async function EngagementsPage({
         description="Every engagement letter the application knows about, newest first."
         actions={
           can(user, 'engagement:create') ? (
-            <Link className="btn-primary" href="/engagements/new">
-              Start an engagement
-            </Link>
+            <div className="flex flex-wrap gap-2">
+              {/* The assisted route first, because it is the one to reach for:
+                  it works the year and year-end out and shows where each came
+                  from. Typing every field by hand stays available beside it. */}
+              <Link className="btn-primary" href="/engagements/create">
+                Create an engagement
+              </Link>
+              <Link className="btn-secondary" href="/engagements/new">
+                Start one by hand
+              </Link>
+            </div>
           ) : undefined
         }
       />
