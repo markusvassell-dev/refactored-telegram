@@ -1,0 +1,14 @@
+-- Recording which Karbon work status this application last pushed.
+--
+-- The status write-back reconciles rather than reacting to each transition:
+-- WorkflowService holds no queue, and threading one through it to fire on every
+-- status change would make a Karbon outage a reason a status change fails.
+--
+-- Instead a scheduled pass compares the configured mapping for an engagement's
+-- current status against the value below, and pushes when they differ. That
+-- makes a missed push self-correcting, makes a repeated push a no-op, and keeps
+-- Karbon entirely out of the path that changes an engagement's own status.
+--
+-- NULL means nothing has been pushed for this engagement yet, which is not the
+-- same as having pushed an empty status.
+ALTER TABLE "engagement" ADD COLUMN "karbonWorkStatusPushed" TEXT;

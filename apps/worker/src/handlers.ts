@@ -2,6 +2,7 @@ import {
   NotificationEmailService,
   enqueuePriorYearSearch,
   maybeStartCoverLetter,
+  maybeStartGeneration,
   summariseClientImport,
   SYSTEM_ACTOR_ID,
   SYSTEM_PRINCIPAL,
@@ -786,8 +787,20 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         highIncreaseThresholdPercent: threshold,
       });
 
-      // Preparation proposes; a person confirms. The engagement lands in the
-      // review queue rather than proceeding straight to generation.
+      // Preparation proposes, and the draft now follows by itself.
+      //
+      // This used to end here, parking the engagement in
+      // `SOURCE_DOCUMENT_REVIEW_REQUIRED` under the rule "preparation proposes;
+      // a person confirms". The rule has been changed on purpose: a Karbon
+      // status trigger is meant to leave the firm a finished draft, and
+      // stopping one step short meant every unattended rollover still waited on
+      // somebody to press Generate.
+      //
+      // Nothing about who decides has moved. `maybeStartGeneration` consults
+      // exactly the gate the button consults, so an unconfirmed compilation
+      // answer or a fee awaiting approval still refuses; and the draft it
+      // produces is still reviewed, approved by a second person, and sent only
+      // by a partner.
       const current = await context.workflow.currentStatus(engagementId);
       if (current === 'EXTRACTING_DATA') {
         await context.workflow.transition({
@@ -801,7 +814,18 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         });
       }
 
-      return { ...result };
+      const generation = await maybeStartGeneration(
+        {
+          prisma: context.prisma,
+          queue: context.queue,
+          workflow: context.workflow,
+          generation: context.generation,
+        },
+        engagementId,
+        job.correlationId,
+      );
+
+      return { ...result, generationStarted: generation.started, generationBlocked: generation.reason };
     },
 
     // ------------------------------------------------------------ Generation
@@ -1257,6 +1281,34 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         userMessage: result.delivered
           ? `Filed ${Object.keys(result.fileIds).length} document(s) into the client's Karbon documents.`
           : (result.skippedReason ?? 'Nothing was delivered.'),
+      };
+    },
+
+    /**
+     * Bringing the firm's work items into line with where engagements have got to.
+     *
+     * Reconciles rather than reacting to each transition — see
+     * `KarbonWorkStatusService` for why Karbon is kept out of the path that
+     * changes an engagement's own status. Unmapped statuses are skipped, so an
+     * unconfigured map makes this a no-op rather than a guess.
+     */
+    SYNC_KARBON_WORK_STATUS: async ({ job }) => {
+      const { karbon } = await context.providers();
+      const { testMode } = await context.testMode();
+      const statusMap = await context.settings.karbonStatusMap();
+
+      const result = await context.karbonWorkStatus.sync({
+        karbon,
+        statusMap,
+        testMode,
+        correlationId: job.correlationId,
+      });
+
+      return {
+        ...result,
+        userMessage:
+          result.skippedReason ??
+          `Pushed ${result.pushed} work status change(s); ${result.skipped} already correct.`,
       };
     },
 

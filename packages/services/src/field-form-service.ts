@@ -2,10 +2,10 @@ import type { Prisma, PrismaClient } from '@element/database';
 import type { AuditLogger } from '@element/audit';
 import { parseManifest, requiredFieldTokens, type TemplateManifest } from '@element/documents';
 import {
+  ENGAGEMENT_LETTER_BY_TYPE,
   ValidationError,
   money,
   type DocumentType,
-  type EngagementType,
   type ValueSource,
 } from '@element/shared';
 import { resolveFieldValue, type FieldValueBasis } from './field-values.js';
@@ -93,12 +93,6 @@ export interface SaveFieldsResult {
   errors: { token: string; message: string }[];
 }
 
-const DOCUMENT_TYPE_BY_ENGAGEMENT: Record<EngagementType, DocumentType> = {
-  T1_JOINT: 'T1_JOINT_ENGAGEMENT_LETTER',
-  T1_SINGLE: 'T1_SINGLE_ENGAGEMENT_LETTER',
-  T2: 'T2_ENGAGEMENT_LETTER',
-  T3: 'T3_ENGAGEMENT_LETTER',
-};
 
 /** Fee tokens are written by the pricing engine, never typed here. */
 export const FEE_TOKENS: readonly string[] = [
@@ -131,7 +125,7 @@ export class FieldFormService {
       select: { id: true, engagementType: true, compilationSelected: true },
     });
 
-    const documentType = DOCUMENT_TYPE_BY_ENGAGEMENT[engagement.engagementType];
+    const documentType = ENGAGEMENT_LETTER_BY_TYPE[engagement.engagementType];
 
     const template = await this.deps.prisma.documentTemplate.findUnique({
       where: { documentType },

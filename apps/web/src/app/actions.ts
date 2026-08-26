@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import {
+  ENGAGEMENT_LETTER_BY_TYPE,
   AppError,
   PreconditionError,
   ValidationError,
@@ -102,12 +103,6 @@ async function run(action: () => Promise<ActionOutcome>): Promise<ActionResult> 
   }
 }
 
-const DOCUMENT_TYPE_BY_ENGAGEMENT: Record<EngagementType, DocumentType> = {
-  T1_JOINT: 'T1_JOINT_ENGAGEMENT_LETTER',
-  T1_SINGLE: 'T1_SINGLE_ENGAGEMENT_LETTER',
-  T2: 'T2_ENGAGEMENT_LETTER',
-  T3: 'T3_ENGAGEMENT_LETTER',
-};
 
 /**
  * How a signature obtained elsewhere was obtained. Mirrors the database enum;
@@ -129,7 +124,7 @@ export async function startGeneration(formData: FormData): Promise<ActionResult>
       select: { clientId: true, engagementType: true, taxYear: true },
     });
 
-    const documentType = DOCUMENT_TYPE_BY_ENGAGEMENT[engagement.engagementType];
+    const documentType = ENGAGEMENT_LETTER_BY_TYPE[engagement.engagementType];
 
     // The gate is evaluated up front so the user gets a specific reason rather
     // than a job that fails minutes later.
@@ -1317,6 +1312,53 @@ export async function setKarbonStatusTriggers(formData: FormData): Promise<Actio
     return triggers.length === 0
       ? 'All Karbon status triggers removed. Engagements will only start when somebody starts one.'
       : `${triggers.length} Karbon status trigger(s) saved. A work item reaching one of these statuses will roll the client's engagement forward.`;
+  });
+}
+
+/**
+ * Which Karbon work status each application status corresponds to.
+ *
+ * Tenant-specific by nature — one firm's "Completed" is another's "Complete" or
+ * "Ready to invoice" — so this is the only place the mapping can come from. An
+ * application status left blank is **absent from the map and skipped**, which is
+ * the contract the setting has always carried and the reason an unconfigured
+ * map writes nothing to Karbon rather than guessing.
+ */
+export async function setKarbonStatusMap(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('integration:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const appStatuses = formData.getAll('appStatus').map((value) => value.toString().trim());
+    const karbonStatuses = formData.getAll('karbonStatus').map((value) => value.toString().trim());
+
+    const map: Record<string, string> = {};
+    appStatuses.forEach((appStatus, index) => {
+      const karbonStatus = karbonStatuses[index]?.trim() ?? '';
+      // A blank Karbon status is "do not push for this one", not an error, and
+      // must not be stored as an empty string — the sync treats any present
+      // entry as a target to write.
+      if (appStatus && karbonStatus) map[appStatus] = karbonStatus;
+    });
+
+    await container.settings.set('karbon_status_map', map, actor);
+
+    const context = await requestContext();
+    await container.audit.record({
+      eventType: 'CONFIGURATION_CHANGED',
+      objectType: 'SystemSetting',
+      objectId: 'karbon_status_map',
+      userId: actor.id,
+      afterValue: { map },
+      ipAddress: context.ipAddress,
+    });
+
+    revalidatePath('/integrations');
+
+    const count = Object.keys(map).length;
+    return count === 0
+      ? 'No statuses are mapped, so nothing is written back to Karbon work items.'
+      : `${count} status(es) mapped. A work item is updated within the hour of its engagement reaching one.`;
   });
 }
 

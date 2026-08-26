@@ -27,6 +27,8 @@ export * from './template-preview-service.js';
 export * from './engagement-service.js';
 export * from './completion-delivery-service.js';
 export * from './cover-letter-autostart.js';
+export * from './generation-autostart.js';
+export * from './karbon-work-status.js';
 export * from './karbon-target.js';
 export * from './prior-year-search.js';
 export * from './system-actor.js';

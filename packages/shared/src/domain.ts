@@ -152,3 +152,26 @@ export function orderForAdobeParticipantSets<T extends { role: string }>(
 ): T[] {
   return [...signers].sort((a, b) => orderOf(a) - orderOf(b) || a.role.localeCompare(b.role));
 }
+
+/**
+ * The engagement letter each engagement type is generated from.
+ *
+ * One definition, because four copies of it existed — in `engagement-service`,
+ * `bulk-rollout`, `field-form-service` and the web actions — and a map that
+ * decides which approved template an engagement uses is the wrong thing to keep
+ * four copies of. Adding a fifth for the automatic start is what prompted this.
+ *
+ * The failure it guards against is quiet: a type added to one copy and missed in
+ * another does not fail to compile, it generates the wrong letter, or refuses to
+ * generate one while a neighbouring code path insists there is a template.
+ */
+export const ENGAGEMENT_LETTER_BY_TYPE: Record<EngagementType, DocumentType> = {
+  T1_JOINT: 'T1_JOINT_ENGAGEMENT_LETTER',
+  T1_SINGLE: 'T1_SINGLE_ENGAGEMENT_LETTER',
+  T2: 'T2_ENGAGEMENT_LETTER',
+  T3: 'T3_ENGAGEMENT_LETTER',
+};
+
+export function documentTypeForEngagement(engagementType: EngagementType): DocumentType {
+  return ENGAGEMENT_LETTER_BY_TYPE[engagementType];
+}

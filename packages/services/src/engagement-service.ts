@@ -2,10 +2,10 @@ import { isUniqueConstraintError, type PrismaClient } from '@element/database';
 import type { AuditLogger } from '@element/audit';
 import { deriveTaxYear, rollYearEndForward } from '@element/integrations';
 import {
+  ENGAGEMENT_LETTER_BY_TYPE,
   PreconditionError,
   ValidationError,
   assertCan,
-  type DocumentType,
   type EngagementType,
   type Logger,
   type Principal,
@@ -104,12 +104,6 @@ export interface CreateEngagementResult {
   notes: string[];
 }
 
-const DOCUMENT_TYPE_BY_ENGAGEMENT: Record<EngagementType, DocumentType> = {
-  T1_JOINT: 'T1_JOINT_ENGAGEMENT_LETTER',
-  T1_SINGLE: 'T1_SINGLE_ENGAGEMENT_LETTER',
-  T2: 'T2_ENGAGEMENT_LETTER',
-  T3: 'T3_ENGAGEMENT_LETTER',
-};
 
 /** Year-end is a fiscal or trust period end; a T1 is always the calendar year. */
 const NEEDS_YEAR_END: readonly EngagementType[] = ['T2', 'T3'];
@@ -134,7 +128,7 @@ export class EngagementService {
     // Refuse an engagement that could never produce a document. This is not a
     // permanent restriction: it lifts by itself once a template is approved and
     // activated for the type.
-    const documentType = DOCUMENT_TYPE_BY_ENGAGEMENT[input.engagementType];
+    const documentType = ENGAGEMENT_LETTER_BY_TYPE[input.engagementType];
     const template = await this.deps.prisma.documentTemplate.findUnique({
       where: { documentType },
       include: { versions: { where: { status: 'ACTIVE' }, take: 1, select: { id: true } } },

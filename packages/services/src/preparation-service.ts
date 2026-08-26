@@ -3,6 +3,7 @@ import type { AuditLogger } from '@element/audit';
 import { evaluateDateRule, type DateRuleInputs } from '@element/dates';
 import { parseManifest, type TemplateManifest } from '@element/documents';
 import {
+  ENGAGEMENT_LETTER_BY_TYPE,
   money,
   sourceRank,
   type DocumentType,
@@ -68,12 +69,6 @@ export interface PrepareResult {
   signerNotes: string[];
 }
 
-const DOCUMENT_TYPE_BY_ENGAGEMENT: Record<EngagementType, DocumentType> = {
-  T1_JOINT: 'T1_JOINT_ENGAGEMENT_LETTER',
-  T1_SINGLE: 'T1_SINGLE_ENGAGEMENT_LETTER',
-  T2: 'T2_ENGAGEMENT_LETTER',
-  T3: 'T3_ENGAGEMENT_LETTER',
-};
 
 /** Prior-year fee tokens, by the fee they represent. */
 const FEE_TOKEN_BY_KIND: Record<FeeKind, string> = {
@@ -156,7 +151,7 @@ export class PreparationService {
       include: { client: { include: { contacts: true } } },
     });
 
-    const manifest = await this.activeManifest(DOCUMENT_TYPE_BY_ENGAGEMENT[engagement.engagementType]);
+    const manifest = await this.activeManifest(ENGAGEMENT_LETTER_BY_TYPE[engagement.engagementType]);
 
     const karbonFieldsRecorded = await this.recordKarbonValues(engagement);
     const signersProposed = await this.proposeSigners(engagement);

@@ -2,11 +2,11 @@ import type { Prisma, PrismaClient } from '@element/database';
 import type { AuditLogger } from '@element/audit';
 import { calculateFee, resolveRule, type CandidateRule, type PriceRule } from '@element/pricing';
 import {
+  ENGAGEMENT_LETTER_BY_TYPE,
   assertCan,
   bulkRolloutIdempotencyKey,
   generationIdempotencyKey,
   newCorrelationId,
-  type DocumentType,
   type EngagementType,
   type FeeKind,
   type Principal,
@@ -82,12 +82,6 @@ const FEE_KIND_BY_ENGAGEMENT: Record<EngagementType, FeeKind> = {
   T3: 'T3_PREPARATION',
 };
 
-const DOCUMENT_TYPE_BY_ENGAGEMENT: Record<EngagementType, DocumentType> = {
-  T1_JOINT: 'T1_JOINT_ENGAGEMENT_LETTER',
-  T1_SINGLE: 'T1_SINGLE_ENGAGEMENT_LETTER',
-  T2: 'T2_ENGAGEMENT_LETTER',
-  T3: 'T3_ENGAGEMENT_LETTER',
-};
 
 export class BulkRolloutService {
   constructor(
@@ -333,7 +327,7 @@ export class BulkRolloutService {
         continue;
       }
 
-      const documentType = DOCUMENT_TYPE_BY_ENGAGEMENT[row.engagementType];
+      const documentType = ENGAGEMENT_LETTER_BY_TYPE[row.engagementType];
 
       const generationKey = generationIdempotencyKey({
         clientId: row.clientId,

@@ -2,7 +2,7 @@ import type { PrismaClient, SourceDocumentKind } from '@element/database';
 import type { AuditLogger } from '@element/audit';
 import { countPdfPages, extractParagraphs, isPdf } from '@element/documents';
 import { extractPdfText, verifyCandidate, type VerificationOutcome } from '@element/integrations';
-import { ValidationError, type DocumentType, type EngagementType } from '@element/shared';
+import { ENGAGEMENT_LETTER_BY_TYPE, ValidationError } from '@element/shared';
 import type { DocumentStore } from './storage.js';
 
 /**
@@ -109,12 +109,6 @@ export interface UploadSourceDocumentResult {
   notes: string[];
 }
 
-const DOCUMENT_TYPE_BY_ENGAGEMENT: Record<EngagementType, DocumentType> = {
-  T1_JOINT: 'T1_JOINT_ENGAGEMENT_LETTER',
-  T1_SINGLE: 'T1_SINGLE_ENGAGEMENT_LETTER',
-  T2: 'T2_ENGAGEMENT_LETTER',
-  T3: 'T3_ENGAGEMENT_LETTER',
-};
 
 /**
  * Kinds whose contents can be scored against an expectation. A trial balance
@@ -226,7 +220,7 @@ export class SourceDocumentService {
           {
             clientLegalName: engagement.client.legalName,
             engagementType: engagement.engagementType,
-            documentType: DOCUMENT_TYPE_BY_ENGAGEMENT[engagement.engagementType],
+            documentType: ENGAGEMENT_LETTER_BY_TYPE[engagement.engagementType],
             priorTaxYear: engagement.taxYear - 1,
             corporationName: engagement.engagementType === 'T2' ? engagement.client.legalName : null,
             trustName: engagement.engagementType === 'T3' ? engagement.client.legalName : null,

@@ -54,6 +54,9 @@ export const AUDIT_EVENT_TYPES = [
   'KARBON_COMMENT',
   'KARBON_TASK',
   'KARBON_LIBRARY_SYNCED',
+  // The firm's work item is where the rest of the practice looks, so a status
+  // this application pushed there is worth being able to trace back.
+  'KARBON_WORK_STATUS_PUSHED',
   'STATUS_CHANGED',
   'COVER_LETTER_GENERATED',
   'COVER_LETTER_EDITED',
