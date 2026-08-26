@@ -482,17 +482,27 @@ export async function sendForSignature(formData: FormData): Promise<ActionResult
       adobeSign: providers.adobeSign,
       testMode: state.testMode,
       productionSendingEnabled: state.productionSendingEnabled,
-      sandboxConfigured: !providers.description.adobeSign.startsWith('blocked'),
+      adobeSignMode: providers.adobeSignMode,
       correlationId: newCorrelationId(),
     });
 
     revalidatePath(`/engagements/${engagementId}`);
 
-    return result.deduplicated
-      ? 'An agreement already exists for this approved version; a duplicate was not created.'
-      : state.testMode
-        ? `Test agreement ${result.agreementId} created with the ${providers.description.adobeSign}. No real client was contacted.`
-        : `Agreement ${result.agreementId} sent for signature.`;
+    if (result.deduplicated) {
+      return 'An agreement already exists for this approved version; a duplicate was not created.';
+    }
+
+    // Never let a fabricated agreement read like a real one. The adapter is
+    // named in every case rather than only outside Test Mode, because "Test
+    // Mode" and "a mock" are different facts: a Test Mode send through a real
+    // sandbox does reach Adobe and does email whoever is named on it.
+    if (providers.adobeSign.isMock) {
+      return `Agreement ${result.agreementId} was created with the ${providers.description.adobeSign}. Nothing reached Adobe and nobody was asked to sign — this id belongs to no real agreement.`;
+    }
+
+    return state.testMode
+      ? `Test agreement ${result.agreementId} created with the ${providers.description.adobeSign}. It is a real Adobe agreement on the sandbox account, so whoever is named on it will receive it.`
+      : `Agreement ${result.agreementId} sent for signature.`;
   });
 }
 

@@ -296,6 +296,23 @@ export class IntegrationConnectionService {
 
     const result = await this.runCheck(input.provider, connection.baseUrl, credentials);
 
+    // A check that succeeds against a connection the application will not use
+    // is two true statements that together produce a false belief. The check
+    // builds a client straight from the stored credentials; `resolveProviders`
+    // will not, because it requires `isEnabled`. So a green result on a
+    // switched-off connection reads as "this integration works" while every
+    // send, upload and poll goes to the mock adapter instead.
+    //
+    // Same rule as the mail health check: report what was observed, and name
+    // what it does not prove.
+    const reported =
+      result.ok && !connection.isEnabled
+        ? {
+            ok: true,
+            detail: `${result.detail ?? 'The credentials work.'} But this connection is switched off, so the application is not using it — it falls back to the mock adapter. Set "Use this connection" to Yes and save.`,
+          }
+        : result;
+
     await this.deps.prisma.integrationConnection.update({
       where: { provider: input.provider },
       data: {
@@ -311,11 +328,17 @@ export class IntegrationConnectionService {
       objectType: 'IntegrationConnection',
       objectId: input.provider,
       userId: input.actor.id,
-      afterValue: { healthCheck: result.ok ? 'ok' : 'failed', isSandbox: connection.isSandbox },
+      afterValue: {
+        healthCheck: result.ok ? 'ok' : 'failed',
+        isSandbox: connection.isSandbox,
+        // Recorded, because "the check passed" and "the application uses this"
+        // are separate facts and the audit trail should not conflate them.
+        inUse: connection.isEnabled,
+      },
       reason: result.ok ? 'Connection check succeeded.' : `Connection check failed: ${result.detail ?? 'no detail'}`,
     });
 
-    return result;
+    return reported;
   }
 
   /** Removes the stored credentials, keeping the connection row and its history. */

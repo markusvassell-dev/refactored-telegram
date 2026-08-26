@@ -66,8 +66,24 @@ beforeAll(async () => {
   admin = { id: user.id, email: user.email, displayName: user.displayName, roles: ['ADMINISTRATOR'] };
 });
 
+async function saveAdobe(input: { isSandbox: boolean; isEnabled: boolean; withRefreshToken?: boolean }) {
+  await connections.save({
+    provider: 'ADOBE_SIGN',
+    baseUrl: 'https://api.na3.adobesign.com',
+    isSandbox: input.isSandbox,
+    isEnabled: input.isEnabled,
+    credentials: {
+      clientId: 'client-id-value',
+      clientSecret: 'client-secret-value',
+      ...(input.withRefreshToken === false ? {} : { refreshToken: 'refresh-token-value' }),
+    },
+    testModeActive: false,
+    actor: admin,
+  });
+}
+
 afterEach(async () => {
-  await prisma.integrationConnection.deleteMany({ where: { provider: 'KARBON' } });
+  await prisma.integrationConnection.deleteMany({ where: { provider: { in: ['KARBON', 'ADOBE_SIGN'] } } });
 });
 
 afterAll(async () => {
@@ -163,5 +179,89 @@ describe('when there is no usable connection', () => {
 
     expect(karbon.name).toBe('karbon-blocked');
     expect(description.karbon).toMatch(/blocked/i);
+  });
+});
+
+
+/**
+ * Which Adobe adapter resolved, and — the part that matters — what the send
+ * gate is told about it.
+ *
+ * The gate used to read this off a description string:
+ *
+ * ```ts
+ * sandboxConfigured: !providers.description.adobeSign.startsWith('blocked')
+ * ```
+ *
+ * A sandbox connection that was merely switched off matched neither the
+ * blocked branch nor the usable one, fell through to the mock, and the mock's
+ * description does not begin with "blocked". So the guard that exists to stop
+ * a Test Mode send without a sandbox reported that a sandbox **was**
+ * configured, the gate passed, and the letter went to an adapter that
+ * fabricates an agreement id and answers SUCCEEDED.
+ */
+describe('which Adobe adapter a caller gets', () => {
+  it('reports a switched-off connection as disabled, not as a mock', async () => {
+    // The assertion that pins the defect. Before the change this resolved to
+    // `mock`, which the gate read as "a sandbox is configured".
+    await saveAdobe({ isSandbox: true, isEnabled: false });
+
+    const { adobeSignMode, description } = await providersWith(true);
+
+    expect(adobeSignMode).toBe('disabled');
+    expect(description.adobeSign).toMatch(/switched off/i);
+  });
+
+  it('will not let a connection be enabled without every credential', async () => {
+    // A stronger guard than the one above, and it means "enabled but missing a
+    // credential" cannot be reached through the application at all. The
+    // disabled branch still covers it, because a row edited directly in the
+    // database can still get there.
+    await expect(saveAdobe({ isSandbox: true, isEnabled: true, withRefreshToken: false })).rejects.toThrow(
+      /Refresh token is not set/i,
+    );
+
+    await saveAdobe({ isSandbox: true, isEnabled: false, withRefreshToken: false });
+    expect((await providersWith(true)).adobeSignMode).toBe('disabled');
+  });
+
+  it('reports a usable sandbox connection as sandbox', async () => {
+    await saveAdobe({ isSandbox: true, isEnabled: true });
+
+    const { adobeSignMode, adobeSign } = await providersWith(true);
+
+    expect(adobeSignMode).toBe('sandbox');
+    expect(adobeSign.isMock).toBe(false);
+  });
+
+  it('blocks rather than mocks when no connection exists and Test Mode is on', async () => {
+    // Safer than a mock, and already the behaviour: an adapter that cannot
+    // reach Adobe at all beats one that fabricates success. The mode says
+    // which, so the gate can name the fix.
+    const { adobeSignMode, adobeSign } = await providersWith(true);
+
+    expect(adobeSignMode).toBe('blocked');
+    await expect(adobeSign.findByExternalId('k')).rejects.toThrow();
+  });
+
+  it('hands out a labelled mock when Test Mode is off and nothing is configured', async () => {
+    const { adobeSignMode, adobeSign } = await providersWith(false);
+
+    expect(adobeSignMode).toBe('mock');
+    expect(adobeSign.isMock).toBe(true);
+  });
+
+  it('blocks a production connection under Test Mode, and says which reason', async () => {
+    // Same blocked adapter as "no connection", different mode — because the
+    // two need different sentences: connect a Developer Edition account, or
+    // stop pointing Test Mode at production.
+    await saveAdobe({ isSandbox: false, isEnabled: true });
+
+    const { adobeSignMode, adobeSign, description } = await providersWith(true);
+
+    expect(adobeSignMode).toBe('production');
+    expect(description.adobeSign).toMatch(/production connection/i);
+    // Structurally incapable of reaching Adobe, not merely discouraged.
+    await expect(adobeSign.findByExternalId('k')).rejects.toThrow();
   });
 });

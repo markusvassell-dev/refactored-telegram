@@ -14,7 +14,7 @@ import {
   type Principal,
 } from '@element/shared';
 import { parseManifest, type TemplateManifest } from '@element/documents';
-import { evaluateSendGate, type GateResult } from '@element/workflows';
+import { evaluateSendGate, type GateResult, type SendGateInput } from '@element/workflows';
 import type { JobQueue } from './jobs/queue.js';
 import { clientUploadTarget } from './karbon-target.js';
 import type { DocumentStore } from './storage.js';
@@ -58,8 +58,8 @@ export interface SendForSignatureInput {
   adobeSign: AdobeSignProvider;
   testMode: boolean;
   productionSendingEnabled: boolean;
-  /** True when a real sandbox connection is configured. */
-  sandboxConfigured: boolean;
+  /** Which Adobe adapter resolved, from `resolveProviders`. */
+  adobeSignMode: SendGateInput['adobeSignMode'];
   correlationId: string;
 }
 
@@ -92,7 +92,7 @@ export class SigningService {
     documentVersionId: string;
     testMode: boolean;
     productionSendingEnabled: boolean;
-    sandboxConfigured: boolean;
+    adobeSignMode: SendGateInput['adobeSignMode'];
   }): Promise<GateResult> {
     const [engagement, version, approval, participants] = await Promise.all([
       this.deps.prisma.engagement.findUniqueOrThrow({
@@ -144,7 +144,7 @@ export class SigningService {
       signersChangedSinceGeneration: rosterChanged(snapshot.signers, participants),
       testMode: input.testMode,
       productionSendingEnabled: input.productionSendingEnabled,
-      sandboxConfigured: input.sandboxConfigured,
+      adobeSignMode: input.adobeSignMode,
     });
   }
 
@@ -228,6 +228,7 @@ export class SigningService {
           title,
           status: 'OUT_FOR_SIGNATURE',
           isTestMode: input.testMode,
+          isMockProvider: input.adobeSign.isMock,
         },
         update: { agreementId: remote },
       });
@@ -276,6 +277,11 @@ export class SigningService {
         title,
         signingAttempt,
         isTestMode: input.testMode,
+        // Where this row came from, which is not the same question as Test
+        // Mode. A mock answers SUCCEEDED with an id belonging to nothing —
+        // no signer contacted, no document at Adobe — and without this the
+        // engagement reads as out for signature exactly like a real one.
+        isMockProvider: input.adobeSign.isMock,
         // What Adobe will actually do, not what was asked for. Adobe publishes
         // two cadences, daily and weekly, so a request for three business days
         // becomes weekly — and this record used to say "Every 3 business days"

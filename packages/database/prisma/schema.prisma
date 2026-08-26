@@ -1154,6 +1154,13 @@ model AdobeAgreement {
   title                       String
   signingAttempt              Int                  @default(1)
   isTestMode                  Boolean              @default(false)
+  /// True when the agreement was created against a mock adapter rather than
+  /// Adobe. The id in `agreementId` is then fabricated and belongs to nothing:
+  /// no signer was contacted, no document exists at Adobe, and the status poll
+  /// must not ask Adobe about it. Test Mode is a *policy*; this is a fact about
+  /// where the row came from, and the two are not the same — a Test Mode send
+  /// through a real sandbox reaches a real Adobe account.
+  isMockProvider              Boolean              @default(false)
   reminderFrequency           String?
   expiresAt                   DateTime?
   ccEmails                    Json?

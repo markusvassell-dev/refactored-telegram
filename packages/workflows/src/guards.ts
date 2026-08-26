@@ -160,11 +160,34 @@ export interface SendGateInput {
   signersChangedSinceGeneration: boolean;
   testMode: boolean;
   productionSendingEnabled: boolean;
-  /** True when a sandbox Adobe Sign connection is configured for test sends. */
-  sandboxConfigured: boolean;
+  /**
+   * Which Adobe adapter the caller actually got. Named rather than reduced to
+   * a boolean, because the four ways a Test Mode send can be wrong need four
+   * different sentences: the fix for "switched off" is a click on Integrations,
+   * and the fix for "no connection" is an afternoon with Adobe.
+   */
+  adobeSignMode: 'sandbox' | 'production' | 'mock' | 'blocked' | 'disabled';
 }
 
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Why a Test Mode send is refused, by cause.
+ *
+ * Each names the next action, because "no sandbox is configured" is the same
+ * sentence for a connection somebody finished and forgot to switch on as for
+ * one that does not exist — and those are minutes apart in effort.
+ */
+const ADOBE_MODE_BLOCKERS: Record<SendGateInput['adobeSignMode'], string> = {
+  sandbox: '',
+  disabled:
+    'The Adobe Sign connection is saved but switched off, so nothing would be sent to a signer. Open Integrations, set "Use this connection" to Yes, and save.',
+  mock: 'Test Mode is active and no Adobe Sign connection is configured, so no agreement would be sent to anybody.',
+  production:
+    'Test Mode is active and this is a production Adobe Sign connection, so sending is refused. Connect a Developer Edition or sandbox account for test sends.',
+  blocked:
+    'No Adobe Sign connection is configured, so no agreement would be sent to anybody. Connect one on Integrations.',
+};
 
 export function evaluateSendGate(input: SendGateInput): GateResult {
   const blockers: string[] = [];
@@ -226,13 +249,27 @@ export function evaluateSendGate(input: SendGateInput): GateResult {
   }
 
   // Test Mode must make it hard to confuse test and production.
-  if (input.testMode && !input.sandboxConfigured) {
-    blockers.push(
-      'Test Mode is active and no Adobe Sign sandbox connection is configured, so no agreement will be sent. Use the mock adapter or configure a sandbox.',
-    );
+  //
+  // This used to be one boolean derived from a description string, and a
+  // sandbox connection that was merely switched off slipped through it: the
+  // adapter fell back to the mock, the mock's description does not begin with
+  // "blocked", and the guard concluded a sandbox was configured. The send then
+  // went to a mock that fabricates an agreement id and answers SUCCEEDED,
+  // while every screen said the letter was out for signature.
+  if (input.testMode && input.adobeSignMode !== 'sandbox') {
+    blockers.push(ADOBE_MODE_BLOCKERS[input.adobeSignMode]);
   }
   if (!input.testMode && !input.productionSendingEnabled) {
     blockers.push('Production sending has not been enabled by an administrator.');
+  }
+
+  // With Test Mode off, a mock is worse than useless: the send reports an
+  // agreement id, the engagement moves to SENT_FOR_SIGNATURE, and no client
+  // was ever asked to sign anything. Test Mode at least labels what happened;
+  // outside it there is nothing to distinguish a fabricated send from a real
+  // one until somebody wonders why the client has not replied.
+  if (!input.testMode && (input.adobeSignMode === 'mock' || input.adobeSignMode === 'disabled')) {
+    blockers.push(ADOBE_MODE_BLOCKERS[input.adobeSignMode]);
   }
   if (input.testMode) {
     warnings.push('Test Mode is active. No real client will be contacted.');

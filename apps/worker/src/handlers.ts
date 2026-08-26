@@ -1001,6 +1001,11 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       const live = await context.prisma.adobeAgreement.findMany({
         where: {
           agreementId: { not: null },
+          // Never ask Adobe about an id Adobe never issued. A mock agreement
+          // would be a guaranteed miss on every pass, for ever — noise that
+          // buries the real failures on the System Jobs page and spends the
+          // rate allowance to learn nothing.
+          isMockProvider: false,
           OR: [
             { status: { in: ['CREATED', 'OUT_FOR_SIGNATURE', 'PARTIALLY_SIGNED'] } },
             { status: { in: ['COMPLETED', 'SIGNED'] }, signedPdfKarbonDocumentId: null },

@@ -363,7 +363,7 @@ describe('T2 with compilation selected', () => {
       adobeSign: adobe,
       testMode: true,
       productionSendingEnabled: false,
-      sandboxConfigured: true,
+      adobeSignMode: 'sandbox' as const,
       correlationId: 'test-correlation',
     });
 
@@ -398,7 +398,7 @@ describe('T2 with compilation selected', () => {
       adobeSign: adobe,
       testMode: true,
       productionSendingEnabled: false,
-      sandboxConfigured: true,
+      adobeSignMode: 'sandbox' as const,
       correlationId: 'test-correlation',
     }).catch(() => ({ agreementId: sent.agreementId, deduplicated: true }));
 
@@ -529,7 +529,7 @@ describe('sending preconditions', () => {
         adobeSign: adobe,
         testMode: true,
         productionSendingEnabled: false,
-        sandboxConfigured: true,
+        adobeSignMode: 'sandbox' as const,
         correlationId: 'test',
       }),
     ).rejects.toThrow(/cannot be sent/i);
@@ -564,7 +564,7 @@ describe('sending preconditions', () => {
       documentVersionId: generated.documentVersionId,
       testMode: true,
       productionSendingEnabled: false,
-      sandboxConfigured: false,
+      adobeSignMode: 'mock' as const,
     });
 
     expect(gate.ok).toBe(false);
@@ -972,7 +972,7 @@ describe('Adobe Sign webhooks', () => {
       adobeSign: adobe,
       testMode: true,
       productionSendingEnabled: false,
-      sandboxConfigured: true,
+      adobeSignMode: 'sandbox' as const,
       correlationId: 'test',
     });
 
@@ -1051,7 +1051,7 @@ describe('Adobe Sign webhooks', () => {
       adobeSign: adobe,
       testMode: true,
       productionSendingEnabled: false,
-      sandboxConfigured: true,
+      adobeSignMode: 'sandbox' as const,
       correlationId: 'test',
     });
 

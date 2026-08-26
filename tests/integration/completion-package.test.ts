@@ -463,3 +463,74 @@ describe('delivering the package into the client documents', () => {
     ).rejects.toThrow(PreconditionError);
   });
 });
+
+/**
+ * Telling a fabricated send apart from a real one.
+ *
+ * The Karbon filing path has drawn this line since August: recording a mock's
+ * fabricated document id would mark a signed letter as safely filed while it
+ * existed in one place only. The Adobe send never did — and it is the more
+ * consequential of the two, because this row is the record of a client having
+ * been asked to sign something.
+ */
+describe('an agreement created against a mock', () => {
+  it('is recorded as a mock, so it can never read as a letter that went out', async () => {
+    const { engagementId } = await seedEngagement();
+
+    const agreement = await prisma.adobeAgreement.create({
+      data: {
+        engagementId,
+        documentVersionId: (
+          await prisma.documentVersion.findFirstOrThrow({ where: { engagementId } })
+        ).id,
+        idempotencyKey: `mock-${randomUUID()}`,
+        agreementId: `mock-agreement-${randomUUID()}`,
+        title: 'T2 Engagement Letter',
+        status: 'OUT_FOR_SIGNATURE',
+        isTestMode: true,
+        isMockProvider: true,
+      },
+    });
+
+    const stored = await prisma.adobeAgreement.findUniqueOrThrow({ where: { id: agreement.id } });
+    expect(stored.isMockProvider).toBe(true);
+    // Distinct from Test Mode, which is a policy: a Test Mode send through a
+    // genuine sandbox reaches a genuine Adobe account and a real signer.
+    expect(stored.isTestMode).toBe(true);
+  });
+
+  it('is left out of the status poll, which would otherwise ask Adobe for ever', async () => {
+    // Adobe never issued this id. Polling for it is a guaranteed miss on every
+    // pass, burying real failures on the System Jobs page and spending the
+    // rate allowance to learn nothing.
+    const { engagementId } = await seedEngagement();
+    const versionId = (await prisma.documentVersion.findFirstOrThrow({ where: { engagementId } })).id;
+
+    await prisma.adobeAgreement.create({
+      data: {
+        engagementId,
+        documentVersionId: versionId,
+        idempotencyKey: `mock-poll-${randomUUID()}`,
+        agreementId: `mock-agreement-${randomUUID()}`,
+        title: 'Mocked',
+        status: 'OUT_FOR_SIGNATURE',
+        isMockProvider: true,
+      },
+    });
+
+    // The query the poll runs.
+    const polled = await prisma.adobeAgreement.findMany({
+      where: {
+        agreementId: { not: null },
+        isMockProvider: false,
+        OR: [
+          { status: { in: ['CREATED', 'OUT_FOR_SIGNATURE', 'PARTIALLY_SIGNED'] } },
+          { status: { in: ['COMPLETED', 'SIGNED'] }, signedPdfKarbonDocumentId: null },
+        ],
+      },
+      select: { id: true },
+    });
+
+    expect(polled).toHaveLength(0);
+  });
+});
