@@ -814,6 +814,18 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         });
       }
 
+      // Confirm what the application had no doubt about, before the generation
+      // gate is consulted. Preparation has just calculated every date from its
+      // rule and seeded the services from last year; leaving those sitting
+      // unconfirmed is what made an unattended rollover stop with a screen full
+      // of Confirm buttons and nothing to decide.
+      //
+      // It settles only the unambiguous. A conflict, a fee awaiting approval,
+      // an unanswered compilation question and a date the rule could not
+      // compute all survive this untouched, and each is reported back in
+      // `leftForAPerson`.
+      const settled = await context.engagementReadiness.settle(engagementId, job.correlationId);
+
       const generation = await maybeStartGeneration(
         {
           prisma: context.prisma,
@@ -825,7 +837,14 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         job.correlationId,
       );
 
-      return { ...result, generationStarted: generation.started, generationBlocked: generation.reason };
+      return {
+        ...result,
+        datesConfirmedAutomatically: settled.datesConfirmed,
+        servicesConfirmedAutomatically: settled.serviceSelectionsConfirmed,
+        leftForAPerson: settled.leftForAPerson,
+        generationStarted: generation.started,
+        generationBlocked: generation.reason,
+      };
     },
 
     // ------------------------------------------------------------ Generation
@@ -926,16 +945,47 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       });
 
       const current = await context.workflow.currentStatus(engagementId);
-      if (current === 'DRAFT_READY') {
-        await context.workflow.transition({
-          engagementId,
-          to: 'REVIEW_REQUIRED',
-          reason: 'Draft uploaded and review requested',
-          correlationId: job.correlationId,
-        });
+      if (current !== 'DRAFT_READY') {
+        return { ...result };
       }
 
-      return { ...result };
+      // The last thing checked before a person is asked to read a draft.
+      //
+      // It runs here rather than at generation because half of it needs a
+      // rendered document: whether the draft came from the approved template,
+      // whether its bytes match, whether its validation report is clean. The
+      // previous-year half needs nothing rendered but belongs in the same
+      // answer, so a reviewer is never told a thing is fine by one screen and
+      // blocked by another.
+      //
+      // A failing check does not silently hold the engagement at DRAFT_READY —
+      // that would look identical to an upload that never finished. It goes to
+      // NEEDS_ATTENTION with the reasons written out, which is the screen the
+      // firm already watches for blocked work, and which recovers straight to
+      // REVIEW_REQUIRED once the reasons are dealt with.
+      const readiness = await context.engagementReadiness.check(engagementId);
+
+      if (!readiness.ok) {
+        const reasons = readiness.sections
+          .filter((section) => !section.ok)
+          .map((section) => `${section.label}: ${section.outstanding.join(' ')}`)
+          .join(' ');
+
+        await context.workflow.needsAttention(engagementId, `The draft is not ready for review. ${reasons}`, {
+          correlationId: job.correlationId,
+        });
+
+        return { ...result, readyForReview: false, readiness: readiness.sections };
+      }
+
+      await context.workflow.transition({
+        engagementId,
+        to: 'REVIEW_REQUIRED',
+        reason: 'Draft uploaded, readiness checks passed, and review requested',
+        correlationId: job.correlationId,
+      });
+
+      return { ...result, readyForReview: true, settledAutomatically: readiness.settledAutomatically };
     },
 
     // ---------------------------------------------------------- Adobe Sign

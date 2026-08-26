@@ -3,6 +3,7 @@ import { createAuditLogger, type AuditLogger } from '@element/audit';
 import { libreOfficeConverter, type PdfConverter } from '@element/documents';
 import {
   KarbonWorkStatusService,
+  EngagementReadinessService,
   ApprovalService,
   CoverLetterService,
   CompletionDeliveryService,
@@ -64,6 +65,7 @@ export interface WorkerContext {
   coverLetterAutostart: CoverLetterAutostartDeps;
   completionDelivery: CompletionDeliveryService;
   karbonWorkStatus: KarbonWorkStatusService;
+  engagementReadiness: EngagementReadinessService;
   coverLetterNarratives: CoverLetterNarrativeService;
   karbonLibrary: KarbonLibraryService;
   clientImport: ClientImportService;
@@ -142,6 +144,7 @@ export function buildWorkerContext(): WorkerContext {
   const coverLetterAutostart = { prisma, queue, workflow, coverLetters };
 
   const karbonWorkStatus = new KarbonWorkStatusService({ prisma, audit, logger });
+  const engagementReadiness = new EngagementReadinessService({ prisma, audit });
 
   const completionDelivery = new CompletionDeliveryService({
     prisma,
@@ -199,6 +202,7 @@ export function buildWorkerContext(): WorkerContext {
     coverLetterAutostart,
     completionDelivery,
     karbonWorkStatus,
+    engagementReadiness,
     coverLetterNarratives,
     karbonLibrary,
     clientImport,
