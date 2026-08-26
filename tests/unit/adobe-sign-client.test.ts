@@ -372,6 +372,85 @@ describe('what is sent when creating an agreement', () => {
     expect(member).not.toHaveProperty('securityOption');
   });
 
+  it('gives each joint taxpayer their own participant set, sharing one order', async () => {
+    // Both taxpayers used to be placed in a single participant set. Adobe
+    // describes a set's `order` as the position at which a "signing group"
+    // signs, and publishes no rule anywhere for whether every member of such a
+    // set must sign or any one of them satisfies it.
+    //
+    // That unstated rule decided whether a joint T1 engagement letter is
+    // actually signed by both taxpayers, and neither answer is visible from
+    // the outside: the agreement reports COMPLETED and returns a signed PDF
+    // under either reading.
+    //
+    // One member per set means the same thing under both readings, which is
+    // why this asserts the shape rather than the outcome. The shared order is
+    // what keeps the two invitations simultaneous.
+    const { impl, sent } = recordingFetch();
+    const client = new AdobeSignRestClient({
+      baseUrl: 'https://api.na3.adobesign.com',
+      clientId: 'c',
+      clientSecret: 's',
+      refreshToken: 'r',
+      fetchImpl: impl,
+      rateLimiter: new RateLimiter({ requestsPerMinute: 100_000 }),
+    });
+
+    await client.createAgreement({
+      ...request,
+      engagementType: 'T1_JOINT',
+      signers: [
+        { email: 'one@example.test', name: 'Taxpayer One', order: 1, role: 'TAXPAYER_1' as const },
+        { email: 'two@example.test', name: 'Taxpayer Two', order: 1, role: 'TAXPAYER_2' as const },
+        { email: 'partner@firm.test', name: 'Firm Partner', order: 2, role: 'FIRM_SIGNER' as const },
+      ],
+    });
+
+    const creation = sent.find((call) => call.url.endsWith('/agreements'));
+    const sets = (creation?.body as { participantSetsInfo?: { order: number; memberInfos: { email: string }[] }[] })
+      ?.participantSetsInfo;
+
+    expect(sets).toHaveLength(3);
+    // Never more than one member in a set — that is the whole point.
+    for (const set of sets ?? []) expect(set.memberInfos).toHaveLength(1);
+
+    expect(sets?.map((set) => ({ order: set.order, email: set.memberInfos[0]?.email }))).toEqual([
+      { order: 1, email: 'one@example.test' },
+      { order: 1, email: 'two@example.test' },
+      { order: 2, email: 'partner@firm.test' },
+    ]);
+  });
+
+  it('renumbers signing orders to the consecutive sequence Adobe requires', async () => {
+    // Adobe rejects a signing order that is not a consecutive increasing
+    // sequence, and the orders this application holds are not obliged to be
+    // one. Renumbering applies to the distinct values, so signers who shared
+    // an order still share one afterwards.
+    const { impl, sent } = recordingFetch();
+    const client = new AdobeSignRestClient({
+      baseUrl: 'https://api.na3.adobesign.com',
+      clientId: 'c',
+      clientSecret: 's',
+      refreshToken: 'r',
+      fetchImpl: impl,
+      rateLimiter: new RateLimiter({ requestsPerMinute: 100_000 }),
+    });
+
+    await client.createAgreement({
+      ...request,
+      signers: [
+        { email: 'a@example.test', name: 'A', order: 5, role: 'AUTHORIZED_SIGNING_OFFICER' as const },
+        { email: 'b@example.test', name: 'B', order: 5, role: 'AUTHORIZED_SIGNING_OFFICER' as const },
+        { email: 'c@example.test', name: 'C', order: 9, role: 'FIRM_SIGNER' as const },
+      ],
+    });
+
+    const creation = sent.find((call) => call.url.endsWith('/agreements'));
+    const sets = (creation?.body as { participantSetsInfo?: { order: number }[] })?.participantSetsInfo;
+
+    expect(sets?.map((set) => set.order)).toEqual([1, 1, 2]);
+  });
+
   it('refuses phone verification rather than asking Adobe to check a number it has not got', async () => {
     // Adobe's `ParticipantSecurityOption` needs a `phoneInfo` — country code
     // and number — and nothing on an engagement participant carries a

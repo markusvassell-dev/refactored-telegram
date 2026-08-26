@@ -18,7 +18,16 @@ import { buildAdobeTag, resolveSignerIndices } from '@element/documents';
  */
 
 describe('resolving which Adobe participant set a role occupies', () => {
-  it('numbers sets by signing order, so the firm signing first is signer1', () => {
+  it('gives every signer their own set, so joint taxpayers are signer2 and signer3', () => {
+    // This used to assert that both taxpayers resolved to index 2, because the
+    // client put every signer sharing an order into one participant set and
+    // this function mirrored that.
+    //
+    // It no longer does. Adobe publishes no rule for whether every member of a
+    // multi-member set must sign or any one of them satisfies it, and on a
+    // joint T1 that unstated rule decides whether both spouses actually signed.
+    // Each signer now gets their own set, which means the same thing under
+    // either reading — and one set per person means one index per person.
     const indices = resolveSignerIndices([
       { role: 'FIRM_SIGNER', signingOrder: 1 },
       { role: 'TAXPAYER_1', signingOrder: 2 },
@@ -26,9 +35,29 @@ describe('resolving which Adobe participant set a role occupies', () => {
     ]);
 
     expect(indices.get('FIRM_SIGNER')).toBe(1);
-    // Both taxpayers share order 2, so they share a participant set.
     expect(indices.get('TAXPAYER_1')).toBe(2);
-    expect(indices.get('TAXPAYER_2')).toBe(2);
+    expect(indices.get('TAXPAYER_2')).toBe(3);
+  });
+
+  it('agrees with the client whatever sequence the participants arrive in', () => {
+    // The two sides of this are a database query in one package and a request
+    // body in another. Prisma orders by `signingOrder` and promises nothing
+    // about ties, so if the index depended on the sequence rows came back in,
+    // the tags and the sets could disagree between two runs of the same
+    // engagement — and a signature block collecting the wrong person's
+    // signature still produces a perfectly ordinary signed PDF.
+    const forwards = resolveSignerIndices([
+      { role: 'FIRM_SIGNER', signingOrder: 1 },
+      { role: 'TAXPAYER_1', signingOrder: 2 },
+      { role: 'TAXPAYER_2', signingOrder: 2 },
+    ]);
+    const backwards = resolveSignerIndices([
+      { role: 'TAXPAYER_2', signingOrder: 2 },
+      { role: 'TAXPAYER_1', signingOrder: 2 },
+      { role: 'FIRM_SIGNER', signingOrder: 1 },
+    ]);
+
+    expect([...backwards.entries()].sort()).toEqual([...forwards.entries()].sort());
   });
 
   it('collapses gaps in the orders rather than passing them through', () => {

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { orderForAdobeParticipantSets } from '@element/shared';
 
 /**
  * Template manifests.
@@ -279,10 +280,17 @@ export function buildAdobeTag(fieldType: SignatureAnchor['adobeFieldType'], sign
 /**
  * Maps each signing role to the Adobe participant-set index it occupies.
  *
- * Mirrors how `AdobeSignRestClient.createAgreement` builds participant sets: it
- * groups participants by distinct `signingOrder`, ascending, and Adobe numbers
- * those sets from 1. Deriving the index the same way here is what keeps the tags
- * in the document and the sets in the request describing the same people.
+ * Shares its ordering rule with `AdobeSignRestClient.createAgreement` rather
+ * than restating it: both call `orderForAdobeParticipantSets`, and Adobe
+ * numbers the resulting sets from 1. Keeping the two in one place is what stops
+ * the tags in the document and the sets in the request from describing
+ * different people — a disagreement that shows up nowhere, because a signature
+ * block collecting the wrong person's signature still produces a signed PDF.
+ *
+ * This used to group participants by distinct `signingOrder`, which matched a
+ * client that put every signer sharing an order into a single set. Now that
+ * each signer gets their own set, there is one index per person and position
+ * within a shared order matters.
  *
  * Roles absent from `participants` are absent from the result — the caller
  * decides whether that is fatal, because it depends on whether the anchor is
@@ -291,13 +299,11 @@ export function buildAdobeTag(fieldType: SignatureAnchor['adobeFieldType'], sign
 export function resolveSignerIndices(
   participants: readonly { role: string; signingOrder: number }[],
 ): Map<string, number> {
-  const orders = [...new Set(participants.map((participant) => participant.signingOrder))].sort((a, b) => a - b);
-  const indexByOrder = new Map(orders.map((order, position) => [order, position + 1]));
-
   const result = new Map<string, number>();
-  for (const participant of participants) {
-    const index = indexByOrder.get(participant.signingOrder);
-    if (index !== undefined) result.set(participant.role, index);
-  }
+  orderForAdobeParticipantSets(participants, (participant) => participant.signingOrder).forEach(
+    (participant, position) => {
+      result.set(participant.role, position + 1);
+    },
+  );
   return result;
 }

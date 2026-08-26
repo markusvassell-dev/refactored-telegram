@@ -122,3 +122,33 @@ export interface ProductBranding {
 export function productBranding(appName?: string): ProductBranding {
   return { name: appName?.trim() || 'Element Engagements' };
 }
+
+/**
+ * The sequence Adobe's participant sets are created in.
+ *
+ * Adobe addresses signature fields positionally — `signer1` is whoever holds
+ * the first participant set, not a named person — so the order in which sets
+ * are built decides which tag belongs to whom. Two places have to agree on it
+ * exactly: the client that builds `participantSetsInfo`, and the renderer that
+ * writes `{{Sig_es_:signerN:signature}}` into the document. If they ever
+ * disagree, one person's signature block collects another person's signature,
+ * and nothing in the request, the response or the signed PDF looks wrong.
+ *
+ * They used to agree by each independently grouping participants by distinct
+ * signing order, which held only while a set could hold several people. Now
+ * that every signer gets their own set — so that a joint T1 cannot complete on
+ * one spouse's signature — position within a shared order decides an index,
+ * and both sides derive it from here rather than from a comment asking them to
+ * mirror each other.
+ *
+ * The tiebreak is the role, because two participants sharing a signing order
+ * are otherwise indistinguishable and a database query is under no obligation
+ * to return them in a stable sequence. Roles are unique within an engagement's
+ * signers, so this is a total order.
+ */
+export function orderForAdobeParticipantSets<T extends { role: string }>(
+  signers: readonly T[],
+  orderOf: (signer: T) => number,
+): T[] {
+  return [...signers].sort((a, b) => orderOf(a) - orderOf(b) || a.role.localeCompare(b.role));
+}

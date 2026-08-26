@@ -1,6 +1,12 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { ADOBE_SIGN_DEFAULT_REQUESTS_PER_MINUTE, RateLimiter, retryAfterMs } from '../http/throttle.js';
-import { IntegrationError, ValidationError, createLogger, type Logger } from '@element/shared';
+import {
+  IntegrationError,
+  ValidationError,
+  createLogger,
+  orderForAdobeParticipantSets,
+  type Logger,
+} from '@element/shared';
 import { adobeReminderFrequency } from './types.js';
 import type {
   AdobeSignProvider,
@@ -357,9 +363,45 @@ export class AdobeSignRestClient implements AdobeSignProvider {
     // `ACTION_DELEGATED` events, so a signer who does hand the letter on is
     // reported as `DELEGATED` rather than silently signing.
 
+    // One participant set per signer, never one set holding several.
+    //
+    // Adobe's unit of "who must act at this point" is the participant *set*.
+    // Its `order` is published as "the position at which a **signing group**
+    // needs to sign", and several members may be placed in one set. What the
+    // specification never states anywhere is the completion rule for such a
+    // set: whether every member must sign, or whether any one of them
+    // satisfies it on the group's behalf.
+    //
+    // Both taxpayers on a joint T1 were being placed in a single set, so that
+    // unstated rule decided whether a joint engagement letter is actually
+    // signed. Under the second reading the agreement completes the moment
+    // either spouse signs, the other is never asked again, and nothing in the
+    // response distinguishes that from both having signed — the signed PDF
+    // comes back COMPLETED either way.
+    //
+    // Giving every signer their own set removes the question instead of
+    // betting on the answer. A set with exactly one member means the same
+    // thing under both readings. Sets that should act together share an
+    // `order` value, which is what Adobe calls hybrid routing, so the
+    // invitations still go out at the same time and neither taxpayer waits on
+    // the other. The agreement completes when every set has signed, and there
+    // is now one set per person.
+    //
+    // The distinct order values are renumbered to 1..n because Adobe requires
+    // "the different signingOrder specified in input" to form a consecutive
+    // increasing sequence. That constrains the distinct values, not the number
+    // of sets that may share one.
     const orders = [...new Set(request.signers.map((signer) => signer.order))].sort((a, b) => a - b);
-    const participantSets = orders.map((order, index) => ({
-      order: index + 1,
+    const orderPositions = new Map(orders.map((order, index) => [order, index + 1]));
+
+    // The sequence is shared with the renderer that writes the `signerN` tags;
+    // see `orderForAdobeParticipantSets`. Sorting here rather than trusting the
+    // caller's array is what makes the two agree without either depending on a
+    // database query returning rows in a particular sequence.
+    const orderedSigners = orderForAdobeParticipantSets(request.signers, (signer) => signer.order);
+
+    const participantSets = orderedSigners.map((signer) => ({
+      order: orderPositions.get(signer.order) as number,
       role: 'SIGNER',
       // `name` is not on Adobe's published `ParticipantSetMemberInfo`, which
       // has only `email` and `securityOption`. It is sent anyway because an
@@ -367,9 +409,7 @@ export class AdobeSignRestClient implements AdobeSignProvider {
       // Adobe does read it — but nothing here may assume the signer is
       // addressed by the name this application holds. Adobe addresses people
       // by the name on their own account.
-      memberInfos: request.signers
-        .filter((signer) => signer.order === order)
-        .map((signer) => ({ email: signer.email, name: signer.name, ...authentication })),
+      memberInfos: [{ email: signer.email, name: signer.name, ...authentication }],
     }));
 
     const created = await this.request<{ id?: string }>('/agreements', {
