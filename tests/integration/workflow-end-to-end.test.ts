@@ -255,11 +255,14 @@ beforeAll(async () => {
     where: { karbonEntityKey: 'E2E-ORG' },
     create: {
       karbonEntityKey: 'E2E-ORG',
+      // The signed letter files to the client's own Documents tab, and the
+      // record kind is part of that address.
+      karbonEntityType: 'Organization',
       legalName: 'Northwind Sample Holdings Ltd.',
       businessNumber: '00000 0000 RC0001',
       isTestFixture: true,
     },
-    update: {},
+    update: { karbonEntityType: 'Organization' },
   });
   clientId = client.id;
 

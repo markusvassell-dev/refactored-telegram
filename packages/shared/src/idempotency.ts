@@ -61,12 +61,18 @@ export function adobeAgreementIdempotencyKey(input: {
 }
 
 /** One upload per (work item, document version, file role). */
+/**
+ * `targetKey` is the Karbon key the file is linked to — a work item key or a
+ * client entity key. It is part of the identity on purpose: re-filing the same
+ * document to a *different* place (the client's own Documents tab rather than
+ * the year's work item) is a new upload, not a duplicate of the old one.
+ */
 export function karbonUploadIdempotencyKey(input: {
-  karbonWorkItemKey: string;
+  targetKey: string;
   documentVersionId: string;
   fileRole: string;
 }): string {
-  return prefixed('kbupload', [input.karbonWorkItemKey, input.documentVersionId, input.fileRole]);
+  return prefixed('kbupload', [input.targetKey, input.documentVersionId, input.fileRole]);
 }
 
 export function karbonCommentIdempotencyKey(input: {

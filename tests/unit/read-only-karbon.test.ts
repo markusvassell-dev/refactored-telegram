@@ -65,7 +65,7 @@ describe('writes, which are what Test Mode exists to prevent', () => {
 
     const attempts = [
       karbon.uploadDocument({
-        workItemKey: 'wi-1',
+        target: { workItemKey: 'wi-1' },
         fileName: 'x.pdf',
         content: Buffer.from('%PDF-1.4'),
         mimeType: 'application/pdf',

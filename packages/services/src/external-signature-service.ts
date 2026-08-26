@@ -15,6 +15,7 @@ import {
   type Logger,
   type Principal,
 } from '@element/shared';
+import { clientUploadTarget } from './karbon-target.js';
 import type { DocumentStore } from './storage.js';
 import type { WorkflowService } from './workflow-service.js';
 import type { NotificationService } from './notification-service.js';
@@ -319,14 +320,18 @@ export class ExternalSignatureService {
       return { uploaded: false, skipped: true, messages: ['This signature is already filed in Karbon.'] };
     }
 
-    const workItemKey = record.engagement.karbonWorkItem?.karbonKey;
-    if (!workItemKey) {
+    // The client's own Documents tab, matching the Adobe path — see the note
+    // there on why the client entity rather than the work item.
+    const resolved = clientUploadTarget(record.engagement.client);
+    if (!resolved.ok) {
       return {
         uploaded: false,
         skipped: true,
-        messages: ['This engagement has no linked Karbon work item, so the signed document was not uploaded.'],
+        messages: [`The signed document was not uploaded: ${resolved.unavailable}`],
       };
     }
+    const { target, entityKey: targetKey } = resolved;
+    const workItemKey = record.engagement.karbonWorkItem?.karbonKey ?? null;
 
     const content = await this.deps.store.get(record.evidenceReference);
 
@@ -343,13 +348,13 @@ export class ExternalSignatureService {
     });
 
     const idempotencyKey = karbonUploadIdempotencyKey({
-      karbonWorkItemKey: workItemKey,
+      targetKey,
       documentVersionId: record.documentVersionId,
       fileRole: 'SIGNED_PDF',
     });
 
     const upload = await input.karbon.uploadDocument({
-      workItemKey,
+      target,
       fileName,
       content,
       mimeType: 'application/pdf',
@@ -386,7 +391,7 @@ export class ExternalSignatureService {
         data: {
           engagementId: record.engagementId,
           documentVersionId: record.documentVersionId,
-          karbonWorkItemKey: workItemKey,
+          karbonWorkItemKey: null,
           type: 'DOCUMENT_UPLOAD',
           outcome:
             upload.outcome === 'SUCCEEDED'
@@ -396,7 +401,11 @@ export class ExternalSignatureService {
                 : 'SKIPPED_UNSUPPORTED',
           idempotencyKey,
           karbonObjectId: upload.objectId ?? null,
-          requestSummary: { fileRole: 'SIGNED_PDF', signedOutsideApplication: true } as never,
+          requestSummary: {
+            fileRole: 'SIGNED_PDF',
+            signedOutsideApplication: true,
+            target: { clientEntityKey: targetKey },
+          } as never,
           correlationId: input.correlationId,
         },
       })
@@ -406,7 +415,10 @@ export class ExternalSignatureService {
     // other. The note is the only thing telling them it carries no Adobe
     // certificate. Best-effort: a failed note must never fail the filing, and
     // it is a note for a human, never a trigger for anything.
-    if (reallyFiled) {
+    // The note stays on the work item where one exists — Karbon notes attach to
+    // timelines, not to a client's Documents tab — and is skipped without
+    // complaint when there is none, since the file itself no longer needs one.
+    if (reallyFiled && workItemKey) {
       const signedBy = record.signers.map((signer) => signer.fullLegalName).join(', ');
       await input.karbon
         .addComment({

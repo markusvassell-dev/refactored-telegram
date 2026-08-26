@@ -654,7 +654,7 @@ describe('uploading a file', () => {
     ]);
 
     const result = await client.uploadDocument({
-      workItemKey: 'WI-1',
+      target: { workItemKey: 'WI-1' },
       fileName: 'Signed.pdf',
       content: Buffer.from('%PDF-1.4'),
       mimeType: 'application/pdf',
@@ -680,7 +680,7 @@ describe('uploading a file', () => {
     ]);
 
     const result = await client.uploadDocument({
-      workItemKey: 'WI-1',
+      target: { workItemKey: 'WI-1' },
       fileName: 'Signed.pdf',
       content: Buffer.from('%PDF-1.4'),
       mimeType: 'application/pdf',
@@ -692,6 +692,102 @@ describe('uploading a file', () => {
     expect(result.message).toMatch(/already exists/i);
     // One call: the listing. Nothing was uploaded.
     expect(calls).toHaveLength(1);
+    expect(calls.some((call) => call.method === 'POST')).toBe(false);
+  });
+
+  /**
+   * Filing to the client's own Documents tab rather than a work item.
+   *
+   * A work item is one year's job; the client's Documents tab is their
+   * permanent file, and that is where a signed engagement letter belongs.
+   * Karbon links a file through whichever key it is handed, and the *kind* of
+   * entity is part of that address — `organization_keys` and `contact_keys`
+   * are different links, so a corporation filed through the contact field
+   * attaches to the wrong record and Karbon says nothing about it.
+   */
+  it('files a corporation through organization_keys', async () => {
+    const { client, calls } = clientWith([
+      fileList('ORG-1', 'Organization', []),
+      { status: 201, body: { Id: 'file-11', Name: 'Signed.pdf' } },
+    ]);
+
+    const result = await client.uploadDocument({
+      target: { entityKey: 'ORG-1', entityType: 'Organization' },
+      fileName: 'Signed.pdf',
+      content: Buffer.from('%PDF-1.4'),
+      mimeType: 'application/pdf',
+      idempotencyKey: 'idem-org',
+      neverOverwrite: true,
+    });
+
+    expect(result).toMatchObject({ outcome: 'SUCCEEDED', objectId: 'file-11' });
+    expect(calls[1]!.form?.get('organization_keys')).toBe('ORG-1');
+    // Not the work item field, and not the other entity field.
+    expect(calls[1]!.form?.get('workitem_keys')).toBeNull();
+    expect(calls[1]!.form?.get('contact_keys')).toBeNull();
+  });
+
+  it('files an individual through contact_keys', async () => {
+    const { client, calls } = clientWith([
+      fileList('CON-1', 'Organization', []),
+      { status: 201, body: { Id: 'file-12', Name: 'Signed.pdf' } },
+    ]);
+
+    const result = await client.uploadDocument({
+      target: { entityKey: 'CON-1', entityType: 'Contact' },
+      fileName: 'Signed.pdf',
+      content: Buffer.from('%PDF-1.4'),
+      mimeType: 'application/pdf',
+      idempotencyKey: 'idem-con',
+      neverOverwrite: true,
+    });
+
+    expect(result).toMatchObject({ outcome: 'SUCCEEDED', objectId: 'file-12' });
+    expect(calls[1]!.form?.get('contact_keys')).toBe('CON-1');
+    expect(calls[1]!.form?.get('organization_keys')).toBeNull();
+  });
+
+  it('refuses an entity whose kind it does not know, rather than picking one', async () => {
+    // The alternative is guessing between two fields that look interchangeable
+    // and are not. A wrong guess files a client's signed engagement letter
+    // against somebody else's record, and nothing about the response says so —
+    // the same silent shape mismatch every Karbon defect here has taken.
+    const { client, calls } = clientWith([]);
+
+    await expect(
+      client.uploadDocument({
+        target: { entityKey: 'X-1', entityType: 'Household' as never },
+        fileName: 'Signed.pdf',
+        content: Buffer.from('%PDF-1.4'),
+        mimeType: 'application/pdf',
+        idempotencyKey: 'idem-unknown',
+        neverOverwrite: true,
+      }),
+    ).rejects.toThrow(/neither Organization nor Contact/i);
+
+    // Refused before anything was listed or posted.
+    expect(calls).toHaveLength(0);
+  });
+
+  it('checks for a collision where the file will land, not on a work item', async () => {
+    // The pre-listing has to look in the same place the upload goes. Checking
+    // the work item before filing to the client's documents would miss every
+    // collision that matters and overwrite a signed letter.
+    const { client, calls } = clientWith([
+      fileList('ORG-1', 'Organization', [{ FileContextKey: 'existing-9', FileName: 'Signed.pdf' }]),
+    ]);
+
+    const result = await client.uploadDocument({
+      target: { entityKey: 'ORG-1', entityType: 'Organization' },
+      fileName: 'Signed.pdf',
+      content: Buffer.from('%PDF-1.4'),
+      mimeType: 'application/pdf',
+      idempotencyKey: 'idem-collide',
+      neverOverwrite: true,
+    });
+
+    expect(result).toMatchObject({ outcome: 'SKIPPED_DUPLICATE', objectId: 'existing-9' });
+    expect(calls[0]!.url).toContain('EntityKey=ORG-1');
     expect(calls.some((call) => call.method === 'POST')).toBe(false);
   });
 });

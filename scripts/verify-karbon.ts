@@ -742,7 +742,7 @@ async function verify(client: KarbonProvider, workItemKey: string | undefined): 
     'UPLOAD_DOCUMENT',
     () =>
       client.uploadDocument({
-        workItemKey: subject.workItemKey,
+        target: { workItemKey: subject.workItemKey },
         fileName: `ELEMENT ENGAGEMENTS VERIFICATION - SAFE TO DELETE.pdf`,
         content: testPdf,
         mimeType: 'application/pdf',

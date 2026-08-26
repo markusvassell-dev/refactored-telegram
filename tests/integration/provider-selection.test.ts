@@ -98,7 +98,7 @@ describe('a production Karbon connection under Test Mode', () => {
 
     expect(karbon.name).toBe('karbon-read-only');
     const write = await karbon.uploadDocument({
-      workItemKey: 'wi-1',
+      target: { workItemKey: 'wi-1' },
       fileName: 'x.pdf',
       content: Buffer.from('%PDF-1.4'),
       mimeType: 'application/pdf',

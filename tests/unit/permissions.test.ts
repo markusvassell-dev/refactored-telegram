@@ -150,7 +150,7 @@ describe('idempotency keys', () => {
   });
 
   it('separates uploads by file role', () => {
-    const base = { karbonWorkItemKey: 'WI-1', documentVersionId: 'v1' };
+    const base = { targetKey: 'WI-1', documentVersionId: 'v1' };
     expect(karbonUploadIdempotencyKey({ ...base, fileRole: 'SIGNED_PDF' })).not.toBe(
       karbonUploadIdempotencyKey({ ...base, fileRole: 'SIGNING_CERTIFICATE' }),
     );
