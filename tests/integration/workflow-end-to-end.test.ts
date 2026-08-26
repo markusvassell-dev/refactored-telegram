@@ -848,6 +848,78 @@ describe('completion cover letters', () => {
     expect(resolution.blockedReason).toMatch(/compilation cover letter must not be used/i);
   });
 
+  /**
+   * The T1 and compilation branches used to name a document type without ever
+   * checking an approved template existed for it, while the other two branches
+   * checked. Both templates happen to be approved in this release, so the gap
+   * showed nothing — until an administrator deactivates one, or a deployment
+   * ships without that manifest.
+   *
+   * What it would produce is the failure that is hardest to read: the trigger
+   * gate reports "template: yes", the automatic start enqueues the job, and
+   * generation throws on a template that was never there — once per engagement,
+   * every time its document set changes. Blocking with a reason is what the
+   * other branches already do.
+   */
+  for (const scenario of [
+    {
+      name: 'T1',
+      documentType: 'T1_COVER_LETTER' as const,
+      engagementType: 'T1_SINGLE' as const,
+      compilationSelected: false,
+      expected: /no approved T1 completion cover-letter template/i,
+    },
+    {
+      name: 'a compilation T2',
+      documentType: 'COMPILATION_COVER_LETTER' as const,
+      engagementType: 'T2' as const,
+      compilationSelected: true,
+      expected: /no approved compilation cover-letter template/i,
+    },
+  ]) {
+    it(`blocks ${scenario.name} rather than naming a cover-letter template that cannot be loaded`, async () => {
+      nextTaxYear += 1;
+      const engagement = await prisma.engagement.create({
+        data: {
+          clientId,
+          engagementType: scenario.engagementType,
+          taxYear: nextTaxYear,
+          yearEnd: new Date(Date.UTC(nextTaxYear, 11, 31)),
+          karbonWorkItemId: workItemId,
+          status: 'NOT_STARTED',
+          compilationSelected: scenario.compilationSelected,
+          assignedPreparerId: preparer.id,
+          assignedReviewerId: reviewer.id,
+          isTestMode: true,
+        },
+      });
+
+      // Approved in this release, so it has to be withdrawn to observe the
+      // branch at all. Restored in `finally` — every other test in this file
+      // depends on it being approved.
+      await prisma.documentTemplate.update({
+        where: { documentType: scenario.documentType },
+        data: { isProductionSupported: false },
+      });
+
+      try {
+        const resolution = await coverLetters.resolveDocumentType(engagement.id);
+        expect(resolution.documentType).toBeNull();
+        expect(resolution.blockedReason).toMatch(scenario.expected);
+
+        // The gate is the thing that matters: it is what the automatic start
+        // consults before enqueueing a job that could not have succeeded.
+        const gate = await coverLetters.evaluateTriggerGate(engagement.id, { assumeStatusReady: true });
+        expect(gate.ok).toBe(false);
+      } finally {
+        await prisma.documentTemplate.update({
+          where: { documentType: scenario.documentType },
+          data: { isProductionSupported: true },
+        });
+      }
+    });
+  }
+
   it('marks a cover letter stale when a source document changes, and blocks delivery', async () => {
     const engagement = await completedT2();
     await workflow.transition({ engagementId: engagement.id, to: 'READY_FOR_COVER_LETTER' });

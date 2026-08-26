@@ -64,11 +64,41 @@ export class CoverLetterService {
   constructor(private readonly deps: CoverLetterDeps) {}
 
   /**
+   * Is there an approved, active template for this type?
+   *
+   * The single question every branch of `resolveDocumentType` has to ask, in
+   * one place so that no branch can quietly skip it. Two of them used to: T1
+   * and the compilation letter named a document type without ever checking one
+   * existed, while T2-without-compilation and T3 checked properly.
+   *
+   * That difference could not show itself before, because nothing reached this
+   * code — `COMPLETE → READY_FOR_COVER_LETTER` had no caller, so the gate that
+   * consumes the answer was never evaluated in earnest. Now that the cover
+   * letter starts on its own, an unchecked branch means the gate reports
+   * "template: yes", the job is enqueued, and `loadTemplate` throws for a
+   * template that was never there — a dead-lettered job per engagement, every
+   * time its document set changes.
+   *
+   * Answering "no" here is what turns that into a visible blocker on the
+   * engagement instead, which is the same outcome the other two branches
+   * already produced.
+   */
+  private async approvedTemplateExists(documentType: DocumentType): Promise<boolean> {
+    const template = await this.deps.prisma.documentTemplate.findUnique({ where: { documentType } });
+    return template?.isProductionSupported === true;
+  }
+
+  /**
    * Chooses the cover-letter template for an engagement.
    *
    * A T2 engagement without compilation must NOT borrow the compilation cover
    * letter. If no approved non-compilation template exists the workflow is
    * blocked and says so.
+   *
+   * Every branch returns a document type only when an approved template for it
+   * actually exists. Naming a type nothing can load is worse than blocking,
+   * because it is indistinguishable from a working answer until generation
+   * fails.
    */
   async resolveDocumentType(engagementId: string): Promise<{ documentType: DocumentType | null; blockedReason: string | null }> {
     const engagement = await this.deps.prisma.engagement.findUniqueOrThrow({
@@ -78,12 +108,16 @@ export class CoverLetterService {
 
     if (engagement.engagementType === 'T2') {
       if (engagement.compilationSelected === true) {
-        return { documentType: 'COMPILATION_COVER_LETTER', blockedReason: null };
+        if (await this.approvedTemplateExists('COMPILATION_COVER_LETTER')) {
+          return { documentType: 'COMPILATION_COVER_LETTER', blockedReason: null };
+        }
+        return {
+          documentType: null,
+          blockedReason:
+            'This T2 engagement includes a compilation, and no approved compilation cover-letter template exists. An administrator must upload and activate one.',
+        };
       }
-      const available = await this.deps.prisma.documentTemplate.findUnique({
-        where: { documentType: 'T2_COVER_LETTER' },
-      });
-      if (available?.isProductionSupported) {
+      if (await this.approvedTemplateExists('T2_COVER_LETTER')) {
         return { documentType: 'T2_COVER_LETTER', blockedReason: null };
       }
       return {
@@ -94,11 +128,19 @@ export class CoverLetterService {
     }
 
     if (engagement.engagementType === 'T1_JOINT' || engagement.engagementType === 'T1_SINGLE') {
-      return { documentType: 'T1_COVER_LETTER', blockedReason: null };
+      if (await this.approvedTemplateExists('T1_COVER_LETTER')) {
+        return { documentType: 'T1_COVER_LETTER', blockedReason: null };
+      }
+      return {
+        documentType: null,
+        blockedReason:
+          'No approved T1 completion cover-letter template exists. An administrator must upload and activate one.',
+      };
     }
 
-    const t3 = await this.deps.prisma.documentTemplate.findUnique({ where: { documentType: 'T3_COVER_LETTER' } });
-    if (t3?.isProductionSupported) return { documentType: 'T3_COVER_LETTER', blockedReason: null };
+    if (await this.approvedTemplateExists('T3_COVER_LETTER')) {
+      return { documentType: 'T3_COVER_LETTER', blockedReason: null };
+    }
 
     return {
       documentType: null,
