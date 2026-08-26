@@ -85,6 +85,47 @@ export interface RollForwardInput {
   correlationId?: string | null;
 }
 
+/**
+ * What to propose from. A trigger has a work item key; a person choosing from a
+ * list has a client. Either is enough, and where both are present the work item
+ * wins because its title is the only place a tax year is ever stated outright.
+ */
+export interface ProposeInput {
+  karbonWorkItemKey?: string | null;
+  clientId?: string | null;
+  engagementType: EngagementType;
+}
+
+/**
+ * The engagement this application would create, and why it would choose each
+ * part of it.
+ *
+ * Every derived value carries its basis rather than arriving bare. A tax year
+ * read off a work item title and one guessed from the current calendar are both
+ * numbers; only one of them is worth confirming without looking.
+ */
+export interface ProposedEngagement {
+  clientId: string;
+  clientLegalName: string;
+  engagementType: EngagementType;
+  taxYear: number;
+  taxYearBasis: 'WORK_ITEM_TITLE' | 'PRIOR_YEAR_PLUS_ONE' | 'CURRENT_YEAR';
+  /** ISO date, or null when there is none to carry forward. */
+  yearEnd: string | null;
+  yearEndBasis: 'ROLLED_FROM_PRIOR_YEAR' | 'REQUIRED_FROM_YOU' | 'NOT_APPLICABLE';
+  priorYearEngagementId: string | null;
+  /** Last year's fee, for context. Not carried forward here — pricing does that. */
+  priorYearFee: string | null;
+  assignedPreparerId: string | null;
+  assignedReviewerId: string | null;
+  /** Set when this engagement already exists, so nothing should be created. */
+  alreadyExistsId: string | null;
+  /** Reasons nothing can be proposed at all. */
+  blockers: string[];
+  /** Things worth reading before confirming. Never reasons to refuse. */
+  notes: string[];
+}
+
 export interface RollForwardResult {
   engagementId: string;
   /** False when the engagement already existed, which is a success. */
@@ -265,81 +306,228 @@ export class EngagementService {
    * confirms; that boundary is not moved by the engagement having started
    * itself.
    */
-  async rollForward(input: RollForwardInput): Promise<RollForwardResult> {
-    const workItem = await this.deps.prisma.karbonWorkItem.findUnique({
-      where: { karbonKey: input.karbonWorkItemKey },
-      include: { client: { select: { id: true, legalName: true } } },
-    });
+  /**
+   * What would be created, without creating it.
+   *
+   * `rollForward` used to interleave deciding with writing, which meant the
+   * only way to find out what the application would choose was to let it
+   * choose. That is fine for a status trigger and useless for a person looking
+   * at a screen before they commit.
+   *
+   * So the deciding half lives here, reads nothing but the database, and is
+   * called by **both** the preview and the trigger. The rule it exists to hold
+   * is the one the date-rule and pricing editors already state: a preview that
+   * runs different code from the commit can lie about what will happen, and
+   * eventually will.
+   *
+   * Accepts either a Karbon work item or a client outright. The trigger has a
+   * work item key; a person choosing a client from a list does not, and
+   * requiring one would make this unusable from the page it was written for.
+   */
+  async propose(input: ProposeInput): Promise<ProposedEngagement> {
+    const engagementType = input.engagementType;
+    const notes: string[] = [];
+    const blockers: string[] = [];
 
-    if (!workItem) {
-      throw new PreconditionError(
+    const workItem = input.karbonWorkItemKey
+      ? await this.deps.prisma.karbonWorkItem.findUnique({
+          where: { karbonKey: input.karbonWorkItemKey },
+          include: { client: { select: { id: true, legalName: true } } },
+        })
+      : null;
+
+    if (input.karbonWorkItemKey && !workItem) {
+      blockers.push(
         `Karbon work item ${input.karbonWorkItemKey} is not known here, so there is nothing to roll forward. Synchronise it first.`,
       );
     }
 
-    if (!workItem.client) {
+    if (workItem && !workItem.client) {
       // Named rather than guessed. A work item with no client is either a
       // client this application has not imported or a Karbon record with no
       // client on it, and those need different answers from a person.
-      throw new PreconditionError(
+      blockers.push(
         `Karbon work item ${input.karbonWorkItemKey} is not linked to a client here, so there is no history to roll forward. Import the client from Karbon first.`,
       );
     }
 
-    const engagementType = input.engagementType;
+    const client = workItem?.client
+      ? workItem.client
+      : input.clientId
+        ? await this.deps.prisma.client.findUnique({
+            where: { id: input.clientId },
+            select: { id: true, legalName: true },
+          })
+        : null;
+
+    if (!client) {
+      if (blockers.length === 0) blockers.push('Choose a client to propose an engagement for.');
+      return {
+        clientId: input.clientId ?? '',
+        clientLegalName: '',
+        engagementType,
+        taxYear: new Date().getUTCFullYear(),
+        taxYearBasis: 'CURRENT_YEAR',
+        yearEnd: null,
+        yearEndBasis: NEEDS_YEAR_END.includes(engagementType) ? 'REQUIRED_FROM_YOU' : 'NOT_APPLICABLE',
+        priorYearEngagementId: null,
+        priorYearFee: null,
+        assignedPreparerId: null,
+        assignedReviewerId: null,
+        alreadyExistsId: null,
+        blockers,
+        notes,
+      };
+    }
 
     // Already rolled forward.
     //
     // One work item means one engagement, and that is the check that has to
     // come first — before any year is worked out. Deciding the year and *then*
     // looking for a duplicate gets it exactly wrong on the second run: the
-    // engagement this job created a moment ago is now the newest one, so the
-    // fallback reads it as "last year" and rolls forward again, creating a
-    // fresh engagement every time the job is retried.
-    //
-    // This runs from a queue with at-least-once delivery and from a poll that
-    // sees the same work item until its status changes, so converging on the
-    // existing engagement is the correct outcome rather than a tolerated
-    // failure.
-    const alreadyRolled = await this.deps.prisma.engagement.findFirst({
-      where: { karbonWorkItem: { karbonKey: input.karbonWorkItemKey } },
-      select: { id: true, taxYear: true, priorYearEngagementId: true },
-    });
-
-    if (alreadyRolled) {
-      return {
-        engagementId: alreadyRolled.id,
-        created: false,
-        taxYear: alreadyRolled.taxYear,
-        priorYearEngagementId: alreadyRolled.priorYearEngagementId,
-        notes: [`This work item already has a ${alreadyRolled.taxYear} engagement.`],
-      };
-    }
+    // engagement created a moment ago is now the newest one, so the fallback
+    // reads it as "last year" and rolls forward again, creating a fresh
+    // engagement every time the job is retried.
+    const alreadyRolled = input.karbonWorkItemKey
+      ? await this.deps.prisma.engagement.findFirst({
+          where: { karbonWorkItem: { karbonKey: input.karbonWorkItemKey } },
+          select: { id: true, taxYear: true, priorYearEngagementId: true, yearEnd: true },
+        })
+      : null;
 
     // The most recent engagement of this type for this client, whatever year it
     // was. Reading the newest rather than assuming last year matters for a
     // client the firm did not act for in the intervening year: their 2024
     // letter is still the right thing to carry forward into 2026.
     const previous = await this.deps.prisma.engagement.findFirst({
-      where: { clientId: workItem.client.id, engagementType },
+      where: { clientId: client.id, engagementType, ...(alreadyRolled ? { id: { not: alreadyRolled.id } } : {}) },
       orderBy: { taxYear: 'desc' },
-      select: { id: true, taxYear: true, yearEnd: true, assignedPreparerId: true, assignedReviewerId: true },
+      select: {
+        id: true,
+        taxYear: true,
+        yearEnd: true,
+        assignedPreparerId: true,
+        assignedReviewerId: true,
+        feeCalculations: {
+          where: { isBlocked: false },
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: { roundedFee: true },
+        },
+      },
     });
+
+    if (alreadyRolled) {
+      notes.push(`This work item already has a ${alreadyRolled.taxYear} engagement.`);
+      return {
+        clientId: client.id,
+        clientLegalName: client.legalName,
+        engagementType,
+        taxYear: alreadyRolled.taxYear,
+        taxYearBasis: 'WORK_ITEM_TITLE',
+        yearEnd: alreadyRolled.yearEnd ? alreadyRolled.yearEnd.toISOString().slice(0, 10) : null,
+        yearEndBasis: alreadyRolled.yearEnd ? 'ROLLED_FROM_PRIOR_YEAR' : 'NOT_APPLICABLE',
+        priorYearEngagementId: alreadyRolled.priorYearEngagementId,
+        priorYearFee: previous?.feeCalculations[0]?.roundedFee?.toString() ?? null,
+        assignedPreparerId: previous?.assignedPreparerId ?? null,
+        assignedReviewerId: previous?.assignedReviewerId ?? null,
+        alreadyExistsId: alreadyRolled.id,
+        blockers,
+        notes,
+      };
+    }
 
     // Karbon first where it names a year outright, then the deterministic
     // answer. `deriveTaxYear` returns null unless exactly one plausible year
     // appears, because a wrong tax year does not fail — it produces a
     // correct-looking letter for the wrong period.
-    const taxYear =
-      deriveTaxYear(workItem) ??
-      (previous ? previous.taxYear + 1 : new Date().getUTCFullYear());
+    const derived = workItem ? deriveTaxYear(workItem) : null;
+    const taxYear = derived ?? (previous ? previous.taxYear + 1 : new Date().getUTCFullYear());
+    const taxYearBasis: ProposedEngagement['taxYearBasis'] = derived
+      ? 'WORK_ITEM_TITLE'
+      : previous
+        ? 'PRIOR_YEAR_PLUS_ONE'
+        : 'CURRENT_YEAR';
 
     // Karbon holds no year-end field at all, so this is the roll-forward or
     // nothing.
-    const yearEnd =
-      previous?.yearEnd && NEEDS_YEAR_END.includes(engagementType)
-        ? rollYearEndForward(previous.yearEnd).toISOString().slice(0, 10)
-        : null;
+    const needsYearEnd = NEEDS_YEAR_END.includes(engagementType);
+    const rolled =
+      previous?.yearEnd && needsYearEnd ? rollYearEndForward(previous.yearEnd).toISOString().slice(0, 10) : null;
+
+    const yearEndBasis: ProposedEngagement['yearEndBasis'] = !needsYearEnd
+      ? 'NOT_APPLICABLE'
+      : rolled
+        ? 'ROLLED_FROM_PRIOR_YEAR'
+        : 'REQUIRED_FROM_YOU';
+
+    if (yearEndBasis === 'REQUIRED_FROM_YOU') {
+      // Not a blocker here, deliberately. The unattended path refuses — see
+      // `rollForward` — because nobody is present to answer. A person looking
+      // at this can simply type it, and refusing to show them the rest of a
+      // correct proposal because one field is unknowable would be perverse.
+      notes.push(
+        `There is no earlier ${engagementType.replace(/_/g, ' ')} engagement here to carry a year-end forward from, and Karbon publishes no year-end field. Enter it below; every year after this one rolls forward on its own.`,
+      );
+    }
+
+    // The same client, type and year reached by a different route — started by
+    // hand, or by a work item this one supersedes. The unique constraint would
+    // refuse the insert anyway; reporting it says what happened instead.
+    const existing = await this.deps.prisma.engagement.findUnique({
+      where: { clientId_engagementType_taxYear: { clientId: client.id, engagementType, taxYear } },
+      select: { id: true },
+    });
+
+    if (existing) {
+      notes.push(`A ${taxYear} ${engagementType.replace(/_/g, ' ')} engagement already exists for this client.`);
+    }
+
+    if (!previous) {
+      notes.push(
+        `No earlier ${engagementType.replace(/_/g, ' ')} engagement exists here for this client, so nothing is carried forward. Karbon may still hold last year's letter; the search will say.`,
+      );
+    }
+
+    return {
+      clientId: client.id,
+      clientLegalName: client.legalName,
+      engagementType,
+      taxYear,
+      taxYearBasis,
+      yearEnd: rolled,
+      yearEndBasis,
+      priorYearEngagementId: previous?.id ?? null,
+      priorYearFee: previous?.feeCalculations[0]?.roundedFee?.toString() ?? null,
+      assignedPreparerId: previous?.assignedPreparerId ?? null,
+      assignedReviewerId: previous?.assignedReviewerId ?? null,
+      alreadyExistsId: existing?.id ?? null,
+      blockers,
+      notes,
+    };
+  }
+
+  async rollForward(input: RollForwardInput): Promise<RollForwardResult> {
+    const proposal = await this.propose({
+      karbonWorkItemKey: input.karbonWorkItemKey,
+      engagementType: input.engagementType,
+    });
+
+    // The trigger cannot ask anybody anything, so what the page renders as a
+    // note is a refusal here.
+    if (proposal.blockers.length > 0) {
+      throw new PreconditionError(proposal.blockers.join(' '));
+    }
+
+    if (proposal.alreadyExistsId) {
+      return {
+        engagementId: proposal.alreadyExistsId,
+        created: false,
+        taxYear: proposal.taxYear,
+        priorYearEngagementId: proposal.priorYearEngagementId,
+        notes: proposal.notes,
+      };
+    }
 
     // A corporate or trust engagement with no year-end cannot be started
     // automatically, and this is the one place the rollover has to refuse.
@@ -356,28 +544,10 @@ export class EngagementService {
     //
     // So it goes back to a person, who is asked for the year-end on the form.
     // A T1 is unaffected: it is always calendar-year and needs none.
-    if (!yearEnd && NEEDS_YEAR_END.includes(engagementType)) {
+    if (proposal.yearEndBasis === 'REQUIRED_FROM_YOU') {
       throw new PreconditionError(
-        `${workItem.client.legalName} has no earlier ${engagementType.replace(/_/g, ' ')} engagement here, so there is no year-end to carry forward — and Karbon does not publish one. Start this engagement by hand, where the year-end is asked for; every year after it will roll forward on its own.`,
+        `${proposal.clientLegalName} has no earlier ${input.engagementType.replace(/_/g, ' ')} engagement here, so there is no year-end to carry forward — and Karbon does not publish one. Start this engagement by hand, where the year-end is asked for; every year after it will roll forward on its own.`,
       );
-    }
-
-    // The same client, type and year reached by a different route — started by
-    // hand, or by a work item this one supersedes. The unique constraint would
-    // refuse the insert anyway; returning it says what happened instead.
-    const existing = await this.deps.prisma.engagement.findUnique({
-      where: { clientId_engagementType_taxYear: { clientId: workItem.client.id, engagementType, taxYear } },
-      select: { id: true },
-    });
-
-    if (existing) {
-      return {
-        engagementId: existing.id,
-        created: false,
-        taxYear,
-        priorYearEngagementId: previous?.id ?? null,
-        notes: [`A ${taxYear} ${engagementType.replace(/_/g, ' ')} engagement already existed for this client.`],
-      };
     }
 
     // A client with no history here still gets an engagement. The alternative —
@@ -398,15 +568,15 @@ export class EngagementService {
     // stays null — and the fee blocks itself if nothing can be derived, which is
     // the check that actually matters.
     const result = await this.create({
-      clientId: workItem.client.id,
-      engagementType,
-      taxYear,
-      yearEnd,
+      clientId: proposal.clientId,
+      engagementType: input.engagementType,
+      taxYear: proposal.taxYear,
+      yearEnd: proposal.yearEnd,
       karbonWorkItemKey: input.karbonWorkItemKey,
       // The same people keep the client. Falling back to nobody rather than to
       // the actor, because the actor here is the system.
-      assignedPreparerId: previous?.assignedPreparerId ?? null,
-      assignedReviewerId: previous?.assignedReviewerId ?? null,
+      assignedPreparerId: proposal.assignedPreparerId,
+      assignedReviewerId: proposal.assignedReviewerId,
       actorId: input.actorId,
       isTestMode: input.isTestMode,
       initiationSource: input.initiationSource,
@@ -416,14 +586,9 @@ export class EngagementService {
     return {
       engagementId: result.engagementId,
       created: true,
-      taxYear,
+      taxYear: proposal.taxYear,
       priorYearEngagementId: result.priorYearEngagementId,
-      notes: previous
-        ? result.notes
-        : [
-            ...result.notes,
-            `No earlier ${engagementType.replace(/_/g, ' ')} engagement exists here for this client, so nothing was carried forward. Karbon may still hold last year's letter; the search will say.`,
-          ],
+      notes: [...result.notes, ...proposal.notes],
     };
   }
 

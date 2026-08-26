@@ -260,8 +260,21 @@ export async function resolveConflict(formData: FormData): Promise<ActionResult>
     await assertCsrf(formData.get('csrf')?.toString());
 
     const conflictId = formData.get('conflictId')?.toString();
-    const chosenValue = formData.get('chosenValue')?.toString();
-    const chosenSource = formData.get('chosenSource')?.toString();
+
+    // The value and its source travel together on the chosen radio.
+    //
+    // They used to be separate fields, and the source was a hidden input
+    // emitted *inside* the candidate loop — so every candidate's source was
+    // submitted and `formData.get` returned the first one whichever radio was
+    // picked. Choosing the second value resolved to the right value under the
+    // wrong source, and that source is what the audit trail and the provenance
+    // line on the field then reported. Nothing threw; the record was simply
+    // wrong about where a value came from.
+    const chosen = formData.get('chosen')?.toString();
+    const separator = chosen?.indexOf('::') ?? -1;
+    const chosenSource = separator > 0 ? chosen?.slice(0, separator) : undefined;
+    const chosenValue = separator > 0 ? chosen?.slice(separator + 2) : undefined;
+
     if (!conflictId || !chosenValue || !chosenSource) {
       throw new ValidationError('Choose which value is correct.');
     }

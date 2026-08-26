@@ -614,8 +614,12 @@ function ClientInformation({
                   <label key={`${candidate.source}-${candidate.value}`} className="mt-1 flex items-center gap-2 text-sm">
                     <input
                       type="radio"
-                      name="chosenValue"
-                      value={candidate.value}
+                      name="chosen"
+                      // The source travels with the value on the one input the
+                      // browser actually submits. Kept apart, the source was a
+                      // hidden field per candidate and the server read the
+                      // first one regardless of which radio was chosen.
+                      value={`${candidate.source}::${candidate.value}`}
                       defaultChecked={candidate.source === conflict.recommendedSource}
                       required
                     />
@@ -626,7 +630,6 @@ function ClientInformation({
                         {candidate.source === conflict.recommendedSource ? ' (recommended)' : ''}
                       </span>
                     </span>
-                    <input type="hidden" name="chosenSource" value={candidate.source} />
                   </label>
                 ))}
               </ActionForm>
