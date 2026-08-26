@@ -158,11 +158,31 @@ never a signed date.
 countersigned; Adobe releases the document to order 2 only once order 1 has
 signed, so this ordering is the whole of that guarantee.
 
-Signers sharing an order form one participant set and sign in parallel.
+**Every signer gets their own participant set.** Signers sharing an order are
+sent as separate sets carrying the same `order` value, which is what Adobe calls
+hybrid routing: they are invited at the same time and neither waits on the
+other, and the agreement completes only once every set has signed.
+
+This page previously said that signers sharing an order "form one participant
+set", which was what the code did and was never verified. Adobe describes a
+set's `order` as the position at which a *signing group* signs, and publishes no
+rule anywhere — not in the Swagger, not in the model descriptions — for whether
+every member of a multi-member set must sign or whether any one of them
+satisfies it on the group's behalf.
+
+On a joint T1 that unstated rule decides whether the engagement letter was
+actually signed by both taxpayers. Under the second reading it completes the
+moment either spouse signs, the other is never asked again, and **nothing
+distinguishes the two outcomes from the outside** — the agreement reports
+`COMPLETED` and returns a signed PDF either way.
+
+One member per set means the same thing under both readings, so the question no
+longer has to be answered. It is still open, and still worth one look during the
+first live run — see *What the specification audit found*.
 
 | Engagement | Order 1 | Order 2 |
 | --- | --- | --- |
-| **T1 joint** | Firm signer | Both taxpayers, in parallel |
+| **T1 joint** | Firm signer | Both taxpayers, each in their own set, invited together |
 | **T2** | Firm signer | Authorized signing officer |
 | **T3** | Firm signer | Trustee / executor / administrator / liquidator |
 
@@ -343,6 +363,30 @@ Three further findings are properties of Adobe's API rather than defects:
   record no telephone number. It is refused rather than sent, because sending
   it would apply no check while every signal said the letter went out verified.
 
+- **Two signers sharing an order were sent as one participant set.** Adobe
+  describes a set's `order` as the position at which a *signing group* signs,
+  and publishes no completion rule for a set holding several people: whether
+  all of them must sign, or any one of them satisfies it. On a joint T1 that
+  decides whether both spouses actually signed the engagement letter, and
+  neither outcome is visible afterwards — the agreement is `COMPLETED` and the
+  signed PDF is returned either way.
+
+  Each signer now gets their own set, with sets sharing an `order` where they
+  should act together. A one-member set means the same thing under both
+  readings, so the behaviour no longer depends on the unpublished answer.
+
+  The renderer that writes `{{Sig_es_:signerN:signature}}` derives its index
+  from the same ordering rule, in one shared function rather than by mirroring
+  the client from a comment. Those two had to change together: had only the
+  request changed, one taxpayer's signature block would have collected the
+  other's signature, and the result would still have been an ordinary signed
+  PDF.
+
 **All of this is `Unverified`, not `Supported`.** Code that now matches the
 specification has still never had an answer back from Adobe. Only the live
 two-signer run in Test Mode can promote it.
+
+**What the live run should confirm**, beyond that it works at all: that the
+agreement stays `OUT_FOR_SIGNATURE` after the *first* of the two same-order
+signers signs, and completes only after the second. That is the observation
+which turns the paragraph above from a well-founded precaution into a fact.

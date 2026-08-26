@@ -548,12 +548,22 @@ describe('who each signature field belongs to', () => {
     expect(text).toContain('{{Sig_es_:signer1:signature}}');
     expect(text).toContain('{{Dte_es_:signer1:date}}');
 
-    // Both taxpayers share order 2, so they share set 2. The manifest's old
-    // hardcoded literals put them at signer1 and signer2 with the firm at
-    // signer3 -- every field addressed to the wrong participant.
+    // Each taxpayer holds their own set, so they are signer2 and signer3.
+    //
+    // They used to share set 2, matching a client that put every signer at the
+    // same order into one participant set. That shape left it to an unpublished
+    // Adobe rule whether both spouses had to sign or either one sufficed, so
+    // each signer now gets their own set and each therefore its own index.
+    //
+    // The manifest's old hardcoded literals put the taxpayers at signer1 and
+    // signer2 with the firm at signer3 — every field addressed to the wrong
+    // participant, which is why none of these indices are written by hand.
     expect(text).toContain('{{Sig_es_:signer2:signature}}');
     expect(text).toContain('{{Dte_es_:signer2:date}}');
-    expect(text).not.toContain('signer3');
+    expect(text).toContain('{{Sig_es_:signer3:signature}}');
+    expect(text).toContain('{{Dte_es_:signer3:date}}');
+    // Three signers, three sets: nothing may address a fourth.
+    expect(text).not.toContain('signer4');
 
     // The email and telephone rules are left for the client to write on. The
     // firm's decision is that a client fills nothing in Adobe.
