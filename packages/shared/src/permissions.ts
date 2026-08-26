@@ -26,6 +26,7 @@ export const PERMISSIONS = [
 
   // Review
   'client:correct',
+  'client:manage',
   'review:comment',
   'review:request_changes',
   'review:approve_ordinary',
@@ -84,6 +85,17 @@ const REVIEWER: Permission[] = [
   // a document the client signs. Preparer is too low a bar for that; the same
   // people trusted to accept or reject content are the right floor.
   'client:correct',
+  // Typing a client's details by hand, rather than adopting Karbon's. Strictly
+  // more dangerous than the permission above — that one moves a value Karbon
+  // already holds, so the before and after are the whole explanation, while
+  // this one is a free-text field feeding a signed document and a new way for a
+  // typo to reach one. It therefore cannot sit any lower than the correction it
+  // generalises.
+  //
+  // It is also the only route by which a trust account number can ever reach a
+  // T3 letter: Karbon has no such field, and nothing else in this application
+  // writes one.
+  'client:manage',
 ];
 
 const PARTNER_OR_FINAL_APPROVER: Permission[] = [

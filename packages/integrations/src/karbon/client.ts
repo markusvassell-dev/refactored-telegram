@@ -1,4 +1,10 @@
-import { IntegrationError, describeVendorFailure, type Logger, createLogger } from '@element/shared';
+import {
+  IntegrationError,
+  describeVendorFailure,
+  looksLikeBusinessNumber,
+  type Logger,
+  createLogger,
+} from '@element/shared';
 import { KARBON_CAPABILITY_MATRIX } from './capabilities.js';
 import { KARBON_DOCUMENTED_REQUESTS_PER_MINUTE, RateLimiter, retryAfterMs } from '../http/throttle.js';
 import type {
@@ -1093,7 +1099,12 @@ function readBusinessNumber(raw: Record<string, unknown>): string | null {
   // A business number is nine digits, optionally with an RC/RT program suffix.
   // The identifier field is free text and is frequently a client code or the
   // company name, so anything that is not number-shaped is not returned as one.
-  return /\d{9}/.test(candidate.replace(/\s|-/g, '')) ? candidate : null;
+  //
+  // The test itself lives in `@element/shared` because the client edit form
+  // applies it too. Two copies would eventually disagree, and the disagreement
+  // would read as "this value is fine typed but not imported", which explains
+  // nothing to whoever hit it.
+  return looksLikeBusinessNumber(candidate) ? candidate : null;
 }
 
 /**

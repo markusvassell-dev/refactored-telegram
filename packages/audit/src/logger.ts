@@ -24,6 +24,15 @@ export const AUDIT_EVENT_TYPES = [
   // import will not touch one, so every change to it is somebody's decision and
   // belongs in the trail with the before and after.
   'CLIENT_LEGAL_NAME_CORRECTED',
+  // A client typed in by hand, for an entity Karbon does not hold. Distinct
+  // from an imported one: there is no vendor record behind it, so this entry is
+  // the only account of where the details came from.
+  'CLIENT_CREATED',
+  // Details edited by hand. Deliberately not folded into
+  // `CLIENT_LEGAL_NAME_CORRECTED` above, which means specifically "adopted the
+  // value Karbon holds" — a different act with different evidence behind it.
+  // One type for both would make the trail unable to say which happened.
+  'CLIENT_UPDATED',
   'ENGAGEMENT_CREATED',
   // The engagement row and its nineteen cascading children are gone; this entry
   // and its `beforeValue` snapshot are the only surviving record of what was

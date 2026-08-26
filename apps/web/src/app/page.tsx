@@ -208,7 +208,7 @@ export default async function DashboardPage() {
               <li key={item.key}>
                 <Link
                   href={item.href}
-                  className={`block rounded-lg border-l-4 bg-white p-4 shadow-sm hover:shadow ${
+                  className={`block rounded-lg border-l-4 bg-surface p-4 shadow-sm hover:shadow ${
                     item.severity === 'BLOCKER' ? 'border-red-500' : 'border-amber-400'
                   }`}
                 >
@@ -239,7 +239,7 @@ export default async function DashboardPage() {
             <li key={widget.label}>
               <Link
                 href={widget.href}
-                className={`block rounded-lg border-l-4 bg-white p-4 shadow-sm hover:shadow ${toneClass[widget.tone]}`}
+                className={`block rounded-lg border-l-4 bg-surface p-4 shadow-sm hover:shadow ${toneClass[widget.tone]}`}
               >
                 <span className="block text-3xl font-semibold text-slate-900">{widget.count}</span>
                 <span className="mt-1 block text-sm font-medium text-slate-800">{widget.label}</span>

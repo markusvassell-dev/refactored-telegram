@@ -68,6 +68,13 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
       <PageHeader
         title={client.legalName}
         description="Who this client is, what Karbon calls them, and every document Karbon holds for them."
+        actions={
+          can(user, 'client:manage') ? (
+            <Link className="btn-secondary" href={`/clients/${client.id}/edit`}>
+              Edit details
+            </Link>
+          ) : undefined
+        }
       />
 
       {/*

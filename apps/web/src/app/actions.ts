@@ -1973,6 +1973,85 @@ export async function adoptKarbonLegalName(formData: FormData): Promise<ActionRe
   });
 }
 
+/** The fields both client forms submit, read off the form data in one place. */
+function clientDetailsFrom(formData: FormData) {
+  const text = (name: string) => formData.get(name)?.toString() ?? '';
+
+  return {
+    legalName: text('legalName'),
+    displayName: text('displayName'),
+    businessNumber: text('businessNumber'),
+    trustAccountNumber: text('trustAccountNumber'),
+    addressLine1: text('addressLine1'),
+    addressLine2: text('addressLine2'),
+    city: text('city'),
+    province: text('province'),
+    postalCode: text('postalCode'),
+    country: text('country'),
+    clientGroup: text('clientGroup'),
+  };
+  // Nothing here reads a Karbon column. A field absent from this function
+  // cannot be written by either form, whatever a request happens to post —
+  // which is the guarantee, not the form's markup.
+}
+
+/**
+ * Adds a client this application does not already hold.
+ *
+ * The counterpart to the import, for the entity Karbon has no record of. It is
+ * also the only way a trust account number ever reaches a T3 letter: Karbon
+ * publishes no such field and nothing else in this application writes one.
+ */
+export async function createClient(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('client:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const result = await container.clientDirectory.create({
+      details: clientDetailsFrom(formData),
+      actor,
+    });
+
+    revalidatePath('/clients');
+
+    return `${result.legalName} added. It is not linked to Karbon, so its documents cannot be catalogued and no prior-year letter will be found automatically.`;
+  });
+}
+
+/**
+ * Corrects the details this application holds for a client.
+ *
+ * Distinct from `adoptKarbonLegalName` above, which moves a value Karbon
+ * already holds. This is for the value that is in neither place.
+ */
+export async function updateClient(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('client:manage');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const clientId = formData.get('clientId')?.toString();
+    if (!clientId) throw new ValidationError('A client is required.');
+
+    const result = await container.clientDirectory.update({
+      clientId,
+      details: clientDetailsFrom(formData),
+      reason: formData.get('reason')?.toString() ?? null,
+      actor,
+    });
+
+    revalidatePath('/clients');
+    revalidatePath(`/clients/${clientId}`);
+    // The workspace prints the client's name and address on every tab.
+    revalidatePath('/engagements');
+
+    const message = `Updated ${result.changed.length} field(s) on ${result.legalName}: ${result.changed.join(', ')}.`;
+
+    return result.staleDraftWarning
+      ? { message, blockers: [result.staleDraftWarning] }
+      : message;
+  });
+}
+
 /**
  * Catalogues every document Karbon holds for a client.
  *

@@ -11,6 +11,7 @@ export * from './ids.js';
 export * from './permissions.js';
 export * from './entra.js';
 export * from './address.js';
+export * from './client-fields.js';
 export * from './storage-durability.js';
 export * from './build-identity.js';
 export * from './database-problem.js';
