@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@element/database';
+import type { Principal } from '@element/shared';
 
 /**
  * The actor recorded when nobody is present.
@@ -29,6 +30,27 @@ export const SYSTEM_ACTOR_ID = 'system';
  * So: null where no person acted. The column is nullable in every case, and
  * "the system calculated this" is a truthful thing for it to say.
  */
+/**
+ * The system, as a principal, for services that take one.
+ *
+ * `PREPARER` and nothing more, and the ceiling is the point. Preparing a draft
+ * is exactly what the system does unattended — it starts a cover letter nobody
+ * had got round to starting. Reviewing one, approving one and sending one are
+ * judgements, and a principal that could make them would turn every "the
+ * system did it" into a hole in separation of duties.
+ *
+ * So the absence here is load-bearing: this principal cannot approve, cannot
+ * send, and cannot approve a fee. A test asserts that, because the tempting fix
+ * for some future permission error is to widen this, and widening it is how the
+ * one rule that keeps a person in the loop would quietly stop applying.
+ */
+export const SYSTEM_PRINCIPAL: Principal = {
+  id: SYSTEM_ACTOR_ID,
+  email: 'system@element-engagements.internal',
+  displayName: 'Element Engagements',
+  roles: ['PREPARER'],
+};
+
 export async function resolveUserActor(
   prisma: PrismaClient,
   actorId: string | null | undefined,

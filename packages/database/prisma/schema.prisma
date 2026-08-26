@@ -81,6 +81,8 @@ enum EngagementStatus {
   COVER_LETTER_CHANGES_REQUESTED
   COVER_LETTER_APPROVED
   READY_FOR_DELIVERY
+  /// The package is in the client's own Karbon Documents tab.
+  DELIVERED
 }
 
 enum DocumentVersionStatus {
@@ -264,6 +266,8 @@ enum CoverLetterStatus {
   CHANGES_REQUESTED
   APPROVED
   READY_FOR_DELIVERY
+  /// Filed into the client's own Karbon Documents tab. The end of the line.
+  DELIVERED
   STALE
 }
 
@@ -1349,6 +1353,10 @@ model CoverLetterPackage {
   staleReason        String?
   markedStaleAt      DateTime?
   readyForDeliveryAt DateTime?
+  deliveredAt        DateTime?
+  /// What went into Karbon and under which file id, so a later reader can find
+  /// the delivered package rather than take its existence on trust.
+  karbonFileIds      Json?
   approvedByUserId   String?
   approvedAt         DateTime?
   createdAt          DateTime          @default(now())

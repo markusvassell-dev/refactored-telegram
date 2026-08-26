@@ -18,6 +18,7 @@ import {
   describeDifferences,
   enqueuePriorYearSearch,
   karbonStatusTriggerSchema,
+  maybeStartCoverLetter,
   summariseClientImport,
   factToken,
   type ClientImportSource,
@@ -647,8 +648,19 @@ export async function markCoverLetterReady(formData: FormData): Promise<ActionRe
     if (!coverLetterPackageId) throw new ValidationError('A cover letter is required.');
 
     await container.coverLetters.markReadyForDelivery({ coverLetterPackageId, actor });
+
+    // The step that was missing entirely: READY_FOR_DELIVERY was where a cover
+    // letter stopped. The package — this letter and every enclosure — now goes
+    // to the client's own Karbon Documents tab.
+    await container.queue.enqueue({
+      jobType: 'DELIVER_COMPLETION_PACKAGE',
+      idempotencyKey: `deliver_${coverLetterPackageId}`,
+      payload: { coverLetterPackageId },
+      correlationId: newCorrelationId(),
+    });
+
     revalidatePath('/cover-letters');
-    return 'Marked ready for delivery. Cover letters are not sent through Adobe Sign.';
+    return 'Marked ready for delivery, and queued for filing into the client\'s Karbon documents. Cover letters are never sent through Adobe Sign.';
   });
 }
 
@@ -1483,7 +1495,14 @@ export async function uploadSourceDocument(formData: FormData): Promise<ActionRe
           // eslint-disable-next-line no-restricted-syntax
           `Content verification scored it ${Math.round(result.verificationScore * 100)}%.`;
 
-    const message = `Attached ${file.name}. ${score} Reading it has been queued.`;
+    // The final document this engagement was waiting for may have just
+    // arrived. Quiet when it has not — this runs on every upload, and a line
+    // per upload saying "still waiting" is noise rather than news.
+    const started = await maybeStartCoverLetter(container.coverLetterAutostart, engagementId);
+
+    const message = `Attached ${file.name}. ${score} Reading it has been queued.${
+      started.started ? ' Everything the completion cover letter needs is now here, so it has started generating.' : ''
+    }`;
 
     const details = [...result.notes, ...result.disqualifiers];
     return details.length > 0 ? { message, blockers: details } : message;
@@ -2017,9 +2036,13 @@ export async function useSourceDocumentCandidate(formData: FormData): Promise<Ac
       correlationId,
     });
 
+    const started = await maybeStartCoverLetter(container.coverLetterAutostart, document.engagementId);
+
     revalidatePath(`/engagements/${document.engagementId}`);
 
-    return `${document.fileName} is now the prior-year document for this engagement. It is being read; its values arrive as suggestions a reviewer still confirms.`;
+    return `${document.fileName} is now the prior-year document for this engagement. It is being read; its values arrive as suggestions a reviewer still confirms.${
+      started.started ? ' The completion cover letter has also started generating.' : ''
+    }`;
   });
 }
 
@@ -2079,9 +2102,13 @@ export async function importKarbonDocument(formData: FormData): Promise<ActionRe
       correlationId: newCorrelationId(),
     });
 
+    const started = await maybeStartCoverLetter(container.coverLetterAutostart, engagementId);
+
     revalidatePath(`/engagements/${engagementId}`);
 
-    return `Brought ${catalogued.fileName} in from ${catalogued.sourceLabel}. It is being read now, and its contents are scored against this client and year before anything is used.`;
+    return `Brought ${catalogued.fileName} in from ${catalogued.sourceLabel}. It is being read now, and its contents are scored against this client and year before anything is used.${
+      started.started ? ' The completion cover letter has also started generating.' : ''
+    }`;
   });
 }
 

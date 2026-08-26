@@ -39,6 +39,7 @@ export const ENGAGEMENT_STATUSES = [
   'COVER_LETTER_CHANGES_REQUESTED',
   'COVER_LETTER_APPROVED',
   'READY_FOR_DELIVERY',
+  'DELIVERED',
 ] as const;
 
 export type EngagementStatus = (typeof ENGAGEMENT_STATUSES)[number];
@@ -133,6 +134,7 @@ export const ALLOWED_TRANSITIONS: Readonly<Record<EngagementStatus, readonly Eng
     'COVER_LETTER_IN_REVIEW',
     'COVER_LETTER_CHANGES_REQUESTED',
     'READY_FOR_DELIVERY',
+    'DELIVERED',
   ],
 
   COMPLETE: ['READY_FOR_COVER_LETTER', 'NEEDS_ATTENTION'],
@@ -151,8 +153,13 @@ export const ALLOWED_TRANSITIONS: Readonly<Record<EngagementStatus, readonly Eng
 
   COVER_LETTER_APPROVED: ['READY_FOR_DELIVERY', 'COVER_LETTER_CHANGES_REQUESTED', 'NEEDS_ATTENTION'],
 
+  READY_FOR_DELIVERY: ['DELIVERED', 'COVER_LETTER_CHANGES_REQUESTED', 'NEEDS_ATTENTION'],
+
   // A stale source document sends an already-delivered package back for review.
-  READY_FOR_DELIVERY: ['COVER_LETTER_CHANGES_REQUESTED', 'NEEDS_ATTENTION'],
+  // Delivery is not undone by it — the files are in the client's Karbon
+  // documents and this application cannot unsend them — but the engagement
+  // stops reading as finished until somebody regenerates and approves again.
+  DELIVERED: ['COVER_LETTER_CHANGES_REQUESTED', 'NEEDS_ATTENTION'],
 };
 
 /** Statuses that represent an explicit internal approval having occurred. */
@@ -166,6 +173,7 @@ export const APPROVAL_STATUSES: readonly EngagementStatus[] = [
   'COMPLETE',
   'COVER_LETTER_APPROVED',
   'READY_FOR_DELIVERY',
+  'DELIVERED',
 ];
 
 /** Statuses where a reviewer is expected to act. Drives the Review Queue. */

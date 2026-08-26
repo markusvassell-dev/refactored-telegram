@@ -29,6 +29,7 @@ import {
   evaluateCoverLetterTriggerGate,
   type GateResult,
 } from '@element/workflows';
+import { resolveUserActor } from './system-actor.js';
 import type { DocumentStore } from './storage.js';
 import type { WorkflowService } from './workflow-service.js';
 
@@ -106,7 +107,19 @@ export class CoverLetterService {
     };
   }
 
-  async evaluateTriggerGate(engagementId: string): Promise<GateResult & { documentType: DocumentType | null }> {
+  /**
+   * @param options.assumeStatusReady Evaluates every condition *except* the
+   * engagement's status, by asking the gate as though it had already reached
+   * `READY_FOR_COVER_LETTER`. That is what the automatic start needs: an
+   * engagement sitting at `COMPLETE` is exactly the one it should move
+   * forward, so treating its status as a blocker would make the answer always
+   * no. Nothing else is relaxed, and the caller is the only thing that decides
+   * whether the status may be changed.
+   */
+  async evaluateTriggerGate(
+    engagementId: string,
+    options: { assumeStatusReady?: boolean } = {},
+  ): Promise<GateResult & { documentType: DocumentType | null }> {
     const [engagement, sources, resolution] = await Promise.all([
       this.deps.prisma.engagement.findUniqueOrThrow({
         where: { id: engagementId },
@@ -133,7 +146,7 @@ export class CoverLetterService {
     const gate = evaluateCoverLetterTriggerGate({
       missingRequiredSourceDocuments: missingRequired,
       internalApprovalTaskComplete: Boolean(internalApproval),
-      status: engagement.status,
+      status: options.assumeStatusReady ? 'READY_FOR_COVER_LETTER' : engagement.status,
       hasApprovedCoverLetterTemplate: resolution.documentType !== null,
       clientIdentityMatches: selected.every((source) => (source.verificationScore ?? 1) >= 0.5),
       periodMatches: true,
@@ -321,7 +334,13 @@ export class CoverLetterService {
         pageCount: pdf.pageCount,
         renderedFieldValues: { values, enclosures: enclosures.included } as unknown as Prisma.InputJsonValue,
         validationReport: validation as unknown as Prisma.InputJsonValue,
-        createdBy: input.actor.id,
+        // Null when nobody was present. `createdBy` is a foreign key to
+        // `user.id`, and there is no `system` user — writing one is a
+        // constraint violation that surfaces minutes later as a dead-lettered
+        // job rather than here. It also does the right thing downstream:
+        // separation of duties compares an approver against the *author*, and
+        // a letter no person wrote is one any qualified person may approve.
+        createdBy: await resolveUserActor(this.deps.prisma, input.actor.id),
       },
     });
 

@@ -1,8 +1,10 @@
 import {
   NotificationEmailService,
   enqueuePriorYearSearch,
+  maybeStartCoverLetter,
   summariseClientImport,
   SYSTEM_ACTOR_ID,
+  SYSTEM_PRINCIPAL,
   type JobHandler,
   type JobType,
 } from '@element/services';
@@ -1074,7 +1076,15 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         });
       }
 
-      return { ...result };
+      // Same as the Adobe path: the engagement letter being done is one of the
+      // two things a cover letter waits for.
+      const started = await maybeStartCoverLetter(
+        context.coverLetterAutostart,
+        record.engagementId,
+        job.correlationId,
+      );
+
+      return { ...result, coverLetterStarted: started.started };
     },
 
     RETRIEVE_SIGNED_DOCUMENTS: async ({ job }) => {
@@ -1103,7 +1113,16 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         });
       }
 
-      return { ...result };
+      // One of the two things a cover letter waits for. The other is the final
+      // documents being uploaded, and they arrive in either order — so this is
+      // called from both sides and does nothing until the last one lands.
+      const started = await maybeStartCoverLetter(
+        context.coverLetterAutostart,
+        record.engagementId,
+        job.correlationId,
+      );
+
+      return { ...result, coverLetterStarted: started.started };
     },
 
     // -------------------------------------------------------- Cover letters
@@ -1181,26 +1200,59 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       const actorId = requireString(job.payload, 'actorId');
       const { testMode } = await context.testMode();
 
-      const actor = await context.prisma.user.findUniqueOrThrow({
-        where: { id: actorId },
-        include: { userRoles: true },
-      });
+      // `system` is not a user row and never will be, so looking one up throws
+      // — which is what the automatic start would have hit on its first run.
+      // The system principal carries `PREPARER` and nothing above it: starting
+      // a draft is what runs unattended, approving one is not.
+      const actor =
+        actorId === SYSTEM_ACTOR_ID
+          ? SYSTEM_PRINCIPAL
+          : await context.prisma.user
+              .findUniqueOrThrow({ where: { id: actorId }, include: { userRoles: true } })
+              .then((user) => ({
+                id: user.id,
+                email: user.email,
+                displayName: user.displayName,
+                roles: user.userRoles.map((row) => row.role),
+              }));
 
       // The service enters COVER_LETTER_GENERATING itself, so both this job
       // and a direct call follow the same status path.
       const result = await context.coverLetters.generate({
         engagementId,
-        actor: {
-          id: actor.id,
-          email: actor.email,
-          displayName: actor.displayName,
-          roles: actor.userRoles.map((row) => row.role),
-        },
+        actor,
         correlationId: job.correlationId,
         testMode,
       });
 
       return { ...result };
+    },
+
+    /**
+     * Filing the finished package into the client's Karbon documents.
+     *
+     * The last step of the whole workflow, and the one that did not exist:
+     * `READY_FOR_DELIVERY` was a status nothing consumed, so an approved cover
+     * letter and the final documents it encloses went nowhere.
+     */
+    DELIVER_COMPLETION_PACKAGE: async ({ job }) => {
+      const coverLetterPackageId = requireString(job.payload, 'coverLetterPackageId');
+      const { karbon } = await context.providers();
+      const { testMode } = await context.testMode();
+
+      const result = await context.completionDelivery.deliver({
+        coverLetterPackageId,
+        karbon,
+        correlationId: job.correlationId,
+        testMode,
+      });
+
+      return {
+        ...result,
+        userMessage: result.delivered
+          ? `Filed ${Object.keys(result.fileIds).length} document(s) into the client's Karbon documents.`
+          : (result.skippedReason ?? 'Nothing was delivered.'),
+      };
     },
 
     DETECT_STALE_SOURCES: async ({ job }) => {
