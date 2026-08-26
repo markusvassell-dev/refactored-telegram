@@ -106,6 +106,24 @@ export const KARBON_CAPABILITY_MATRIX: readonly CapabilityReport[] = [
       'The application never overwrites an existing approved, signed, or certificate document. On a name collision the upload is skipped, the collision is recorded, and the reviewer is told.',
   },
   {
+    capability: 'UPLOAD_DOCUMENT_TO_CLIENT',
+    // UNVERIFIED, and deliberately separate from UPLOAD_DOCUMENT above.
+    //
+    // The verified run on 2026-08-10 exercised `workitem_keys`. This is a
+    // different form field on the same endpoint, and "the endpoint works" is
+    // not evidence that a field does — that inference is exactly what produced
+    // the four Karbon endpoints that did not exist. `organization_keys` and
+    // `contact_keys` are published in Karbon's OpenAPI specification and have
+    // never been sent from here.
+    //
+    // What promotes it: the first real completion package landing in a
+    // client's Documents tab, checked by eye in Karbon on the day.
+    support: 'UNVERIFIED',
+    operation: 'POST /v3/Files (multipart/form-data: file plus organization_keys or contact_keys)',
+    limitation:
+      "Files the signed engagement letter and its certificate to the client's own Documents tab rather than a work item. A client whose Karbon record kind is unknown is refused rather than filed through a guessed field: organization_keys and contact_keys are different links, and the wrong one attaches the document to the wrong record without an error.",
+  },
+  {
     capability: 'ADD_COMMENT',
     // Observed 2026-08-10: a note was posted and returned a note key. Getting
     // there took two corrections — the body was missing all three required

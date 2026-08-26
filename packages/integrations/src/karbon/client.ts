@@ -675,15 +675,24 @@ export class KarbonRestClient implements KarbonProvider {
   }
 
   async uploadDocument(request: KarbonUploadRequest): Promise<KarbonWriteResult> {
-    // Never overwrite an approved, signed, or certificate document.
+    const field = uploadTargetField(request.target);
+
+    // Never overwrite an approved, signed, or certificate document. The
+    // pre-listing looks in the same place the upload will land — checking the
+    // work item before filing to the client's documents would miss every
+    // collision that matters.
     if (request.neverOverwrite) {
-      const existing = await this.listDocuments({ workItemKey: request.workItemKey });
+      const scope =
+        'workItemKey' in request.target
+          ? { workItemKey: request.target.workItemKey }
+          : { entityKey: request.target.entityKey };
+      const existing = await this.listDocuments(scope);
       const collision = existing.find((document) => document.fileName === request.fileName);
       if (collision) {
         return {
           outcome: 'SKIPPED_DUPLICATE',
           objectId: collision.documentId,
-          message: `A document named "${request.fileName}" already exists on this work item and was not replaced.`,
+          message: `A document named "${request.fileName}" already exists there and was not replaced.`,
         };
       }
     }
@@ -697,8 +706,13 @@ export class KarbonRestClient implements KarbonProvider {
 
     // `POST /WorkItems/{key}/Documents` does not exist — it answered 404. Karbon
     // uploads through `POST /Files` as multipart, carrying the entity key as a
-    // form field. Confirmed against Karbon's published OpenAPI specification.
-    form.append('workitem_keys', request.workItemKey);
+    // form field: `workitem_keys` for a work item, `organization_keys` or
+    // `contact_keys` for a client's own Documents tab. Confirmed against
+    // Karbon's published OpenAPI specification (karbon-api-reference,
+    // 2026-08-25) — though only the work-item field has ever been observed
+    // working against the live tenant; the entity fields are UNVERIFIED until
+    // a delivery runs for real.
+    form.append(field.name, field.key);
 
     const response = await this.request<Record<string, unknown> | null>({
       method: 'POST',
@@ -982,6 +996,41 @@ function cardAddress(card: Record<string, unknown>): Record<string, unknown> {
  * names, so stripping status annotations too would be guessing where this is
  * matching.
  */
+/**
+ * The form field an upload target travels in, refused rather than guessed.
+ *
+ * Exported so the mock refuses exactly what this client refuses. An entity
+ * target whose kind is unknown cannot be mapped to a plausible neighbour:
+ * `organization_keys` and `contact_keys` are different links, and a file
+ * attached through the wrong one lands on the wrong record without an error —
+ * the same silent shape mismatch every Karbon defect here has taken.
+ */
+export function uploadTargetField(target: KarbonUploadRequest['target']): { name: string; key: string } {
+  if ('workItemKey' in target) {
+    if (!target.workItemKey) {
+      throw new IntegrationError('Karbon', 'An upload was requested against an empty work item key.', {
+        retryable: false,
+      });
+    }
+    return { name: 'workitem_keys', key: target.workItemKey };
+  }
+
+  if (!target.entityKey) {
+    throw new IntegrationError('Karbon', 'An upload was requested against an empty client entity key.', {
+      retryable: false,
+    });
+  }
+
+  if (target.entityType === 'Organization') return { name: 'organization_keys', key: target.entityKey };
+  if (target.entityType === 'Contact') return { name: 'contact_keys', key: target.entityKey };
+
+  throw new IntegrationError(
+    'Karbon',
+    `This client's Karbon record kind is "${String(target.entityType)}", which is neither Organization nor Contact, so the file cannot be linked to it. Re-import the client from Karbon so the record kind is known.`,
+    { retryable: false, context: { entityType: String(target.entityType) } },
+  );
+}
+
 export function splitEntityName(fullName: string): { legalName: string; tradeName: string | null } {
   const whole = fullName.trim();
   const match = /^(.*?)\s*\(([^()]+)\)$/.exec(whole);

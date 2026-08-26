@@ -1,5 +1,6 @@
 import { IntegrationError, NotFoundError } from '@element/shared';
 import { KARBON_CAPABILITY_MATRIX } from './capabilities.js';
+import { uploadTargetField } from './client.js';
 import type {
   CapabilityReport,
   KarbonClient,
@@ -225,8 +226,17 @@ export class MockKarbonProvider implements KarbonProvider {
   }
 
   async uploadDocument(request: KarbonUploadRequest): Promise<KarbonWriteResult> {
+    // Refuses exactly what the real client refuses — an entity target whose
+    // kind is unknown — by running the same mapping. A mock that accepted it
+    // would let a delivery path pass every test and fail on its first real
+    // run, which is precisely how the download-scope defect survived.
+    const field = uploadTargetField(request.target);
+
     this.record('uploadDocument', {
-      workItemKey: request.workItemKey,
+      // Recorded so a test can assert *where* a file went, not merely that one
+      // did: `workitem_keys`, `organization_keys` or `contact_keys`.
+      targetField: field.name,
+      targetKey: field.key,
       fileName: request.fileName,
       idempotencyKey: request.idempotencyKey,
     });
@@ -234,9 +244,14 @@ export class MockKarbonProvider implements KarbonProvider {
     const replayed = this.idempotencyLog.get(request.idempotencyKey);
     if (replayed) return { ...replayed, outcome: 'SKIPPED_DUPLICATE' };
 
+    const workItemKey = 'workItemKey' in request.target ? request.target.workItemKey : null;
+    const entityKey = 'entityKey' in request.target ? request.target.entityKey : null;
+
     if (request.neverOverwrite) {
       const collision = [...this.documents.values()].find(
-        (document) => document.workItemKey === request.workItemKey && document.fileName === request.fileName,
+        (document) =>
+          (workItemKey !== null ? document.workItemKey === workItemKey : document.entityKey === entityKey) &&
+          document.fileName === request.fileName,
       );
       if (collision) {
         const result: KarbonWriteResult = {
@@ -253,8 +268,8 @@ export class MockKarbonProvider implements KarbonProvider {
     this.documents.set(documentId, {
       documentId,
       fileName: request.fileName,
-      workItemKey: request.workItemKey,
-      entityKey: null,
+      workItemKey,
+      entityKey,
       byteSize: request.content.byteLength,
       mimeType: request.mimeType,
       uploadedAt: new Date().toISOString(),

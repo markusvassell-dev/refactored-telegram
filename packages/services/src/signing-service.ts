@@ -14,8 +14,9 @@ import {
   type Principal,
 } from '@element/shared';
 import { parseManifest, type TemplateManifest } from '@element/documents';
-import { evaluateSendGate, type GateResult } from '@element/workflows';
+import { evaluateSendGate, type GateResult, type SendGateInput } from '@element/workflows';
 import type { JobQueue } from './jobs/queue.js';
+import { clientUploadTarget } from './karbon-target.js';
 import type { DocumentStore } from './storage.js';
 import type { WorkflowService } from './workflow-service.js';
 import type { NotificationService } from './notification-service.js';
@@ -57,8 +58,8 @@ export interface SendForSignatureInput {
   adobeSign: AdobeSignProvider;
   testMode: boolean;
   productionSendingEnabled: boolean;
-  /** True when a real sandbox connection is configured. */
-  sandboxConfigured: boolean;
+  /** Which Adobe adapter resolved, from `resolveProviders`. */
+  adobeSignMode: SendGateInput['adobeSignMode'];
   correlationId: string;
 }
 
@@ -91,7 +92,7 @@ export class SigningService {
     documentVersionId: string;
     testMode: boolean;
     productionSendingEnabled: boolean;
-    sandboxConfigured: boolean;
+    adobeSignMode: SendGateInput['adobeSignMode'];
   }): Promise<GateResult> {
     const [engagement, version, approval, participants] = await Promise.all([
       this.deps.prisma.engagement.findUniqueOrThrow({
@@ -143,7 +144,7 @@ export class SigningService {
       signersChangedSinceGeneration: rosterChanged(snapshot.signers, participants),
       testMode: input.testMode,
       productionSendingEnabled: input.productionSendingEnabled,
-      sandboxConfigured: input.sandboxConfigured,
+      adobeSignMode: input.adobeSignMode,
     });
   }
 
@@ -227,6 +228,7 @@ export class SigningService {
           title,
           status: 'OUT_FOR_SIGNATURE',
           isTestMode: input.testMode,
+          isMockProvider: input.adobeSign.isMock,
         },
         update: { agreementId: remote },
       });
@@ -275,6 +277,11 @@ export class SigningService {
         title,
         signingAttempt,
         isTestMode: input.testMode,
+        // Where this row came from, which is not the same question as Test
+        // Mode. A mock answers SUCCEEDED with an id belonging to nothing —
+        // no signer contacted, no document at Adobe — and without this the
+        // engagement reads as out for signature exactly like a real one.
+        isMockProvider: input.adobeSign.isMock,
         // What Adobe will actually do, not what was asked for. Adobe publishes
         // two cadences, daily and weekly, so a request for three business days
         // becomes weekly — and this record used to say "Every 3 business days"
@@ -631,15 +638,22 @@ export class SigningService {
       throw new PreconditionError('The agreement does not belong to this engagement. Nothing was uploaded.');
     }
 
-    const workItemKey = record.engagement.karbonWorkItem?.karbonKey;
+    // Filed against the client's own Karbon record — their Documents tab —
+    // not the work item. A work item is a year's job; the signed letter is a
+    // record of the relationship, and the firm reads a client's file on the
+    // client. This changed on 2026-08-25: everything before that date filed to
+    // the work item, which is why older engagements show these files there.
+    const resolved = clientUploadTarget(record.engagement.client);
     const messages: string[] = [];
-    if (!workItemKey) {
+    if (!resolved.ok) {
       return {
         signedUploaded: false,
         certificateUploaded: false,
-        messages: ['This engagement has no linked Karbon work item, so the signed files were not uploaded.'],
+        messages: [`The signed files were not uploaded: ${resolved.unavailable}`],
       };
     }
+    const { target, entityKey: targetKey } = resolved;
+    const workItemKey = record.engagement.karbonWorkItem?.karbonKey ?? null;
 
     const [signedPdf, certificate] = await Promise.all([
       input.adobeSign.downloadSignedPdf(input.agreementId),
@@ -662,12 +676,12 @@ export class SigningService {
     });
 
     const signedUpload = await input.karbon.uploadDocument({
-      workItemKey,
+      target,
       fileName: signedName,
       content: signedPdf,
       mimeType: 'application/pdf',
       idempotencyKey: karbonUploadIdempotencyKey({
-        karbonWorkItemKey: workItemKey,
+        targetKey,
         documentVersionId: record.documentVersionId,
         fileRole: 'SIGNED_PDF',
       }),
@@ -676,12 +690,12 @@ export class SigningService {
     });
 
     const certificateUpload = await input.karbon.uploadDocument({
-      workItemKey,
+      target,
       fileName: certificateName,
       content: certificate,
       mimeType: 'application/pdf',
       idempotencyKey: karbonUploadIdempotencyKey({
-        karbonWorkItemKey: workItemKey,
+        targetKey,
         documentVersionId: record.documentVersionId,
         fileRole: 'SIGNING_CERTIFICATE',
       }),
@@ -741,7 +755,9 @@ export class SigningService {
         data: {
           engagementId: record.engagementId,
           documentVersionId: record.documentVersionId,
-          karbonWorkItemKey: workItemKey,
+          // Null on purpose: the file went to the client entity, not a work
+          // item, and the target is recorded in the summary below.
+          karbonWorkItemKey: null,
           type: 'DOCUMENT_UPLOAD',
           outcome:
             upload.outcome === 'SUCCEEDED'
@@ -750,12 +766,12 @@ export class SigningService {
                 ? 'SKIPPED_TEST_MODE'
                 : 'SKIPPED_UNSUPPORTED',
           idempotencyKey: karbonUploadIdempotencyKey({
-            karbonWorkItemKey: workItemKey,
+            targetKey,
             documentVersionId: record.documentVersionId,
             fileRole: role,
           }),
           karbonObjectId: upload.objectId ?? null,
-          requestSummary: { fileRole: role } as never,
+          requestSummary: { fileRole: role, target: { clientEntityKey: targetKey } } as never,
           correlationId: input.correlationId,
         },
       }).catch(() => undefined); // The unique idempotency key makes this a no-op on retry.
@@ -768,10 +784,13 @@ export class SigningService {
 
     // A note saying who signed, so the work item reads as a record on its own.
     //
-    // Two PDFs appearing on a work item say a signature happened somewhere; they
-    // do not say who signed or when without opening them. Posted after the
+    // The note stays on the work item even though the files no longer do —
+    // Karbon notes attach to timelines, not to a client's Documents tab, and
+    // the person working the job is the person who needs to know the letter
+    // came back. Skipped without complaint when the engagement has no work
+    // item: files can now reach the client without one. Posted after the
     // uploads so it cannot claim a filing that did not occur.
-    if (reallyFiled) {
+    if (reallyFiled && workItemKey) {
       const signedList = record.signers
         .filter((signer) => signer.signedAt)
         .map(
@@ -782,7 +801,7 @@ export class SigningService {
       const note = [
         `Engagement letter signed via Adobe Acrobat Sign${record.isTestMode ? ' (TEST MODE — not a real client signature)' : ''}.`,
         signedList.length > 0 ? `Signed by: ${signedList.join('; ')}.` : 'No signer completion dates were recorded.',
-        `The signed letter and Adobe audit report are filed on this work item.`,
+        `The signed letter and Adobe audit report are filed in ${record.engagement.client.legalName}'s documents.`,
       ].join(' ');
 
       const comment = await input.karbon.addComment({

@@ -18,6 +18,7 @@ import {
   describeDifferences,
   enqueuePriorYearSearch,
   karbonStatusTriggerSchema,
+  maybeStartCoverLetter,
   summariseClientImport,
   factToken,
   type ClientImportSource,
@@ -481,17 +482,27 @@ export async function sendForSignature(formData: FormData): Promise<ActionResult
       adobeSign: providers.adobeSign,
       testMode: state.testMode,
       productionSendingEnabled: state.productionSendingEnabled,
-      sandboxConfigured: !providers.description.adobeSign.startsWith('blocked'),
+      adobeSignMode: providers.adobeSignMode,
       correlationId: newCorrelationId(),
     });
 
     revalidatePath(`/engagements/${engagementId}`);
 
-    return result.deduplicated
-      ? 'An agreement already exists for this approved version; a duplicate was not created.'
-      : state.testMode
-        ? `Test agreement ${result.agreementId} created with the ${providers.description.adobeSign}. No real client was contacted.`
-        : `Agreement ${result.agreementId} sent for signature.`;
+    if (result.deduplicated) {
+      return 'An agreement already exists for this approved version; a duplicate was not created.';
+    }
+
+    // Never let a fabricated agreement read like a real one. The adapter is
+    // named in every case rather than only outside Test Mode, because "Test
+    // Mode" and "a mock" are different facts: a Test Mode send through a real
+    // sandbox does reach Adobe and does email whoever is named on it.
+    if (providers.adobeSign.isMock) {
+      return `Agreement ${result.agreementId} was created with the ${providers.description.adobeSign}. Nothing reached Adobe and nobody was asked to sign — this id belongs to no real agreement.`;
+    }
+
+    return state.testMode
+      ? `Test agreement ${result.agreementId} created with the ${providers.description.adobeSign}. It is a real Adobe agreement on the sandbox account, so whoever is named on it will receive it.`
+      : `Agreement ${result.agreementId} sent for signature.`;
   });
 }
 
@@ -647,8 +658,19 @@ export async function markCoverLetterReady(formData: FormData): Promise<ActionRe
     if (!coverLetterPackageId) throw new ValidationError('A cover letter is required.');
 
     await container.coverLetters.markReadyForDelivery({ coverLetterPackageId, actor });
+
+    // The step that was missing entirely: READY_FOR_DELIVERY was where a cover
+    // letter stopped. The package — this letter and every enclosure — now goes
+    // to the client's own Karbon Documents tab.
+    await container.queue.enqueue({
+      jobType: 'DELIVER_COMPLETION_PACKAGE',
+      idempotencyKey: `deliver_${coverLetterPackageId}`,
+      payload: { coverLetterPackageId },
+      correlationId: newCorrelationId(),
+    });
+
     revalidatePath('/cover-letters');
-    return 'Marked ready for delivery. Cover letters are not sent through Adobe Sign.';
+    return 'Marked ready for delivery, and queued for filing into the client\'s Karbon documents. Cover letters are never sent through Adobe Sign.';
   });
 }
 
@@ -1483,7 +1505,14 @@ export async function uploadSourceDocument(formData: FormData): Promise<ActionRe
           // eslint-disable-next-line no-restricted-syntax
           `Content verification scored it ${Math.round(result.verificationScore * 100)}%.`;
 
-    const message = `Attached ${file.name}. ${score} Reading it has been queued.`;
+    // The final document this engagement was waiting for may have just
+    // arrived. Quiet when it has not — this runs on every upload, and a line
+    // per upload saying "still waiting" is noise rather than news.
+    const started = await maybeStartCoverLetter(container.coverLetterAutostart, engagementId);
+
+    const message = `Attached ${file.name}. ${score} Reading it has been queued.${
+      started.started ? ' Everything the completion cover letter needs is now here, so it has started generating.' : ''
+    }`;
 
     const details = [...result.notes, ...result.disqualifiers];
     return details.length > 0 ? { message, blockers: details } : message;
@@ -1621,9 +1650,24 @@ export async function markNotificationRead(formData: FormData): Promise<ActionRe
   });
 }
 
-export async function markAllNotificationsRead(): Promise<ActionResult> {
+/**
+ * Clearing the whole list.
+ *
+ * Takes the form data solely to check the token, which is the only reason this
+ * signature exists. It used to take no argument at all — while the form was
+ * already sending a token, because `ActionForm` writes one into every form it
+ * renders. Nothing read it.
+ *
+ * That is also why it compiled and why nobody noticed. `ActionForm` types its
+ * action as `(formData: FormData) => …`, and TypeScript accepts a function of
+ * no arguments wherever one of one argument is wanted. The check was not
+ * bypassed; it was never written, and the type system had no way to say so.
+ */
+export async function markAllNotificationsRead(formData: FormData): Promise<ActionResult> {
   return run(async () => {
     const actor = await requireUser();
+    await assertCsrf(formData.get('csrf')?.toString());
+
     const { cleared } = await container.userNotifications.markAllRead(actor.id);
     revalidatePath('/notifications');
     return { ok: true, message: cleared === 0 ? 'Nothing was unread.' : `Marked ${cleared} read.` };
@@ -2002,9 +2046,13 @@ export async function useSourceDocumentCandidate(formData: FormData): Promise<Ac
       correlationId,
     });
 
+    const started = await maybeStartCoverLetter(container.coverLetterAutostart, document.engagementId);
+
     revalidatePath(`/engagements/${document.engagementId}`);
 
-    return `${document.fileName} is now the prior-year document for this engagement. It is being read; its values arrive as suggestions a reviewer still confirms.`;
+    return `${document.fileName} is now the prior-year document for this engagement. It is being read; its values arrive as suggestions a reviewer still confirms.${
+      started.started ? ' The completion cover letter has also started generating.' : ''
+    }`;
   });
 }
 
@@ -2064,9 +2112,13 @@ export async function importKarbonDocument(formData: FormData): Promise<ActionRe
       correlationId: newCorrelationId(),
     });
 
+    const started = await maybeStartCoverLetter(container.coverLetterAutostart, engagementId);
+
     revalidatePath(`/engagements/${engagementId}`);
 
-    return `Brought ${catalogued.fileName} in from ${catalogued.sourceLabel}. It is being read now, and its contents are scored against this client and year before anything is used.`;
+    return `Brought ${catalogued.fileName} in from ${catalogued.sourceLabel}. It is being read now, and its contents are scored against this client and year before anything is used.${
+      started.started ? ' The completion cover letter has also started generating.' : ''
+    }`;
   });
 }
 

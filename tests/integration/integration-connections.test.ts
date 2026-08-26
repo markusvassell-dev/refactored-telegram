@@ -256,6 +256,74 @@ describe('checking a connection', () => {
     expect((row.lastCheckError as string).length).toBeLessThanOrEqual(500);
   }, 60_000);
 
+  /**
+   * A check that passes against a connection the application will not use.
+   *
+   * Both statements are true — the credentials work; the application uses the
+   * mock — and together they produce a false belief. The check builds a client
+   * straight from stored credentials; `resolveProviders` additionally requires
+   * `isEnabled`, so a green result on a switched-off connection reads as "this
+   * integration works" while every send and upload goes to a mock.
+   *
+   * The vendor call is stubbed on the prototype rather than mocked at the
+   * module boundary: the point of the assertion is what `checkConnection` does
+   * *around* a successful result, and reaching a real vendor to get one is not
+   * something a test should do.
+   */
+  it('says a working connection is not the one in use when it is switched off', async () => {
+    await saveKarbon({ isEnabled: false });
+
+    const service = integrations as unknown as {
+      runCheck: () => Promise<{ ok: boolean; detail?: string }>;
+    };
+    const original = service.runCheck;
+    service.runCheck = async () => ({ ok: true, detail: 'The vendor answered a read-only request successfully.' });
+
+    try {
+      const result = await integrations.checkConnection({ provider: 'KARBON', actor: admin });
+
+      expect(result.ok).toBe(true);
+      // Still true, and still said.
+      expect(result.detail).toMatch(/answered a read-only request/i);
+      // And the part that was missing.
+      expect(result.detail).toMatch(/switched off/i);
+      expect(result.detail).toMatch(/mock adapter/i);
+      expect(result.detail).toMatch(/Use this connection/i);
+    } finally {
+      service.runCheck = original;
+    }
+  });
+
+  it('says nothing extra when the connection is the one in use', async () => {
+    await saveKarbon({ isEnabled: true });
+
+    const service = integrations as unknown as {
+      runCheck: () => Promise<{ ok: boolean; detail?: string }>;
+    };
+    const original = service.runCheck;
+    service.runCheck = async () => ({ ok: true, detail: 'The vendor answered a read-only request successfully.' });
+
+    try {
+      const result = await integrations.checkConnection({ provider: 'KARBON', actor: admin });
+      expect(result.detail).not.toMatch(/switched off/i);
+    } finally {
+      service.runCheck = original;
+    }
+  });
+
+  it('records whether the checked connection is actually in use', async () => {
+    // "The check passed" and "the application uses this" are separate facts,
+    // and the audit trail should not conflate them either.
+    await saveKarbon({ baseUrl: 'https://karbon.invalid/v3', isEnabled: false });
+    await integrations.checkConnection({ provider: 'KARBON', actor: admin });
+
+    const event = await prisma.auditEvent.findFirstOrThrow({
+      where: { objectType: 'IntegrationConnection', objectId: 'KARBON' },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(event.afterValue).toMatchObject({ inUse: false });
+  }, 60_000);
+
   it('records the attempt in the audit trail either way', async () => {
     await saveKarbon({ baseUrl: 'https://karbon.invalid/v3' });
     await integrations.checkConnection({ provider: 'KARBON', actor: admin });

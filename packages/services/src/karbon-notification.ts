@@ -179,14 +179,17 @@ export class KarbonNotificationService {
       if (!file.reference) continue;
 
       const idempotencyKey = karbonUploadIdempotencyKey({
-        karbonWorkItemKey: workItemKey,
+        targetKey: workItemKey,
         documentVersionId: input.documentVersionId,
         fileRole: file.role,
       });
 
       const content = await this.deps.store.get(file.reference);
       const result = await input.karbon.uploadDocument({
-        workItemKey,
+        // Drafts stay on the work item. They are working papers for the job in
+        // hand, not records for the client's permanent file — only the signed
+        // letter and the completion package go to the client's Documents tab.
+        target: { workItemKey },
         fileName: file.name,
         content,
         mimeType: file.mime,

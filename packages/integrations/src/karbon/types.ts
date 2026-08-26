@@ -146,8 +146,22 @@ export interface KarbonWorkItemQuery {
   limit?: number;
 }
 
+/**
+ * Where an uploaded file is linked in Karbon.
+ *
+ * Karbon's `POST /v3/Files` links a file to whichever entity key it is handed —
+ * `workitem_keys`, `organization_keys` or `contact_keys` — and the three are
+ * different places in the product: a work item's Files tab versus the client's
+ * own Documents tab. The entity kind is part of the address, not a detail: a
+ * client stored as an Organization cannot be filed to through `contact_keys`,
+ * so a target that does not say which it is cannot be sent at all.
+ */
+export type KarbonUploadTarget =
+  | { workItemKey: string }
+  | { entityKey: string; entityType: 'Organization' | 'Contact' };
+
 export interface KarbonUploadRequest {
-  workItemKey: string;
+  target: KarbonUploadTarget;
   fileName: string;
   content: Uint8Array | Buffer;
   mimeType: string;
@@ -187,6 +201,7 @@ export type KarbonCapability =
   | 'LIST_CLIENT_LIBRARY'
   | 'DOWNLOAD_DOCUMENT'
   | 'UPLOAD_DOCUMENT'
+  | 'UPLOAD_DOCUMENT_TO_CLIENT'
   | 'ADD_COMMENT'
   | 'CREATE_TASK'
   | 'UPDATE_TASK'

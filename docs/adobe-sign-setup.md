@@ -322,7 +322,17 @@ and each of them is the kind that raises no error:
 | `authenticationMethod` at the top of each member | `ParticipantSetMemberInfo` has exactly two properties, `email` and `securityOption`. This is the **second** time this field has been dropped silently — once by never being sent, once by being sent where Adobe does not look. Both times a firm that configured knowledge-based authentication would have got plain email verification |
 | `reminderFrequency: 'EVERY_THIRD_DAY_UNTIL_SIGNED'` | The enum is `DAILY_UNTIL_SIGNED` and `WEEKLY_UNTIL_SIGNED`. Three business days is the default cadence, so **every agreement this application has ever built carried an unpublished value** |
 
-Two further findings are properties of Adobe's API rather than defects:
+Three further findings are properties of Adobe's API rather than defects:
+
+- **Delegation cannot be forbidden per agreement.** No model involved in
+  creating one carries any such control, so `allowDelegation: false` — which is
+  what every send asks for — has nowhere to go. It is an **account or group
+  setting** in the Acrobat Sign admin console (Account → Account Settings →
+  Send Settings, "Allow recipients to delegate"), applying to everything the
+  account sends. **Turn it off there.** Until somebody does, this application
+  detects rather than prevents: a signer who hands an engagement letter on is
+  reported as `DELEGATED` on the signing panel rather than appearing to have
+  signed, so a letter signed by the wrong person cannot pass unremarked.
 
 - **Adobe has no `DECLINED` agreement status.** A client who refuses and a
   partner who withdraws the letter both leave the agreement `CANCELLED`. The

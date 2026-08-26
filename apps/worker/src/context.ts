@@ -4,6 +4,8 @@ import { libreOfficeConverter, type PdfConverter } from '@element/documents';
 import {
   ApprovalService,
   CoverLetterService,
+  CompletionDeliveryService,
+  type CoverLetterAutostartDeps,
   CoverLetterNarrativeService,
   KarbonLibraryService,
   ClientImportService,
@@ -58,6 +60,8 @@ export interface WorkerContext {
   signing: SigningService;
   externalSignature: ExternalSignatureService;
   coverLetters: CoverLetterService;
+  coverLetterAutostart: CoverLetterAutostartDeps;
+  completionDelivery: CompletionDeliveryService;
   coverLetterNarratives: CoverLetterNarrativeService;
   karbonLibrary: KarbonLibraryService;
   clientImport: ClientImportService;
@@ -130,6 +134,20 @@ export function buildWorkerContext(): WorkerContext {
     templateDirectory,
   });
 
+  // The dependency bundle for the automatic cover-letter start. Grouped rather
+  // than passed piecemeal so both callers — the worker and the web app — hand
+  // over the same four things.
+  const coverLetterAutostart = { prisma, queue, workflow, coverLetters };
+
+  const completionDelivery = new CompletionDeliveryService({
+    prisma,
+    audit,
+    store,
+    workflow,
+    notifications: userNotifications,
+    logger,
+  });
+
   const coverLetterNarratives = new CoverLetterNarrativeService({
     prisma,
     audit,
@@ -174,6 +192,8 @@ export function buildWorkerContext(): WorkerContext {
     signing,
     externalSignature,
     coverLetters,
+    coverLetterAutostart,
+    completionDelivery,
     coverLetterNarratives,
     karbonLibrary,
     clientImport,

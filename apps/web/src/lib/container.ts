@@ -167,6 +167,9 @@ export const container = {
   participants,
   externalSignature,
   coverLetters,
+  // The same four dependencies the worker bundles, so an upload from a screen
+  // and a completion from a job start the cover letter by the identical path.
+  coverLetterAutostart: { prisma, queue, workflow, coverLetters },
   coverLetterNarratives,
   users,
   integrations,

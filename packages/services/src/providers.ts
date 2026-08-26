@@ -53,6 +53,30 @@ const karbonRequestBudget = new RateLimiter({
  * mistake a mocked integration for a working one.
  */
 
+/**
+ * Which of the five Adobe outcomes the caller actually got.
+ *
+ * A machine-readable companion to the description string, and the send gate
+ * keys off this rather than the prose. It used to key off the prose:
+ *
+ * ```ts
+ * sandboxConfigured: !providers.description.adobeSign.startsWith('blocked')
+ * ```
+ *
+ * A connection marked sandbox but *unusable* — switched off, or missing a
+ * credential — matched neither the blocked branch nor the usable one and fell
+ * through to the mock, whose description does not begin with "blocked". So the
+ * guard that exists to stop a Test Mode send without a sandbox reported that a
+ * sandbox **was** configured, the gate passed, and the letter went to a mock
+ * that fabricates an agreement id and answers `SUCCEEDED`.
+ *
+ * `disabled` is separate from `mock` on purpose, and it is the whole reason
+ * this type exists: a connection that is present and switched off is somebody's
+ * half-finished configuration, not a decision to work without a vendor, and the
+ * two need different sentences because they need different fixes.
+ */
+export type AdobeSignMode = 'sandbox' | 'production' | 'mock' | 'blocked' | 'disabled';
+
 export interface ResolvedProviders {
   karbon: KarbonProvider;
   adobeSign: AdobeSignProvider;
@@ -64,6 +88,8 @@ export interface ResolvedProviders {
     mailer: string;
     testMode: boolean;
   };
+  /** The same fact as `description.adobeSign`, in a form code may branch on. */
+  adobeSignMode: AdobeSignMode;
 }
 
 interface StoredCredentials {
@@ -117,6 +143,9 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
       karbon: overrides.karbon,
       adobeSign: overrides.adobeSign,
       mailer: overrides.mailer ?? new MockEmailSender(),
+      // An injected adapter is whatever the test says it is; `isMock` is the
+      // only thing that can be said about it truthfully.
+      adobeSignMode: overrides.adobeSign.isMock ? 'mock' : 'sandbox',
       description: {
         karbon: `${overrides.karbon.name} (injected)`,
         adobeSign: `${overrides.adobeSign.name} (injected)`,
@@ -193,6 +222,7 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
   // ---- Adobe Acrobat Sign -------------------------------------------------
   let adobeSign: AdobeSignProvider;
   let adobeDescription: string;
+  let adobeMode: AdobeSignMode;
 
   const adobeUsable =
     adobeConnection?.enabled &&
@@ -202,12 +232,20 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
     adobeConnection.baseUrl;
 
   if (testModeState.testMode && !adobeConnection?.isSandbox) {
-    adobeSign =
-      overrides?.adobeSign ??
-      new BlockedAdobeSignProvider(
-        'Test Mode is active and no Adobe Sign sandbox connection is configured, so no agreement was created.',
-      );
-    adobeDescription = 'blocked (test mode, no sandbox configured)';
+    // Both reasons land here and the adapter is the same for both — blocked,
+    // structurally incapable of reaching Adobe. But the *reason* differs, and
+    // so does what somebody does about it: connect a Developer Edition
+    // account, or stop pointing Test Mode at production. Conflating them meant
+    // one sentence that only ever described half the cases.
+    const reason = adobeConnection
+      ? 'Test Mode is active and this is a production Adobe Sign connection, so no agreement was created.'
+      : 'Test Mode is active and no Adobe Sign connection is configured, so no agreement was created.';
+
+    adobeSign = overrides?.adobeSign ?? new BlockedAdobeSignProvider(reason);
+    adobeDescription = adobeConnection
+      ? 'blocked (test mode, production connection)'
+      : 'blocked (test mode, no connection configured)';
+    adobeMode = adobeConnection ? 'production' : 'blocked';
   } else if (adobeUsable) {
     adobeSign = new AdobeSignRestClient({
       baseUrl: (adobeConnection.baseUrl ?? env.ADOBE_SIGN_API_BASE_URL) as string,
@@ -218,10 +256,24 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
       logger: options.logger,
     });
     adobeDescription = adobeConnection.isSandbox ? 'Adobe Sign sandbox connection' : 'Adobe Sign production connection';
+    adobeMode = adobeConnection.isSandbox ? 'sandbox' : 'production';
+  } else if (adobeConnection) {
+    // Present but not usable: switched off, or a credential missing. Falling
+    // through to the mock here is what let a Test Mode send be "sent" to
+    // nobody while every signal said it had gone out, so this is now its own
+    // outcome with its own sentence — the fix is a click, and the reviewer has
+    // to be told which click.
+    adobeSign =
+      overrides?.adobeSign ?? new MockAdobeSignProvider({ webhookSecret: env.ADOBE_SIGN_WEBHOOK_SECRET });
+    adobeDescription = adobeConnection.enabled
+      ? 'unusable (Adobe Sign connection is missing a credential)'
+      : 'disabled (the Adobe Sign connection is switched off)';
+    adobeMode = 'disabled';
   } else {
     adobeSign =
       overrides?.adobeSign ?? new MockAdobeSignProvider({ webhookSecret: env.ADOBE_SIGN_WEBHOOK_SECRET });
     adobeDescription = 'mock adapter (no Adobe Sign connection configured)';
+    adobeMode = 'mock';
   }
 
   // ---- Staff notification e-mail ------------------------------------------
@@ -261,6 +313,7 @@ export async function resolveProviders(options: ProviderFactoryOptions): Promise
     karbon,
     adobeSign,
     mailer,
+    adobeSignMode: adobeMode,
     description: {
       karbon: karbonDescription,
       adobeSign: adobeDescription,

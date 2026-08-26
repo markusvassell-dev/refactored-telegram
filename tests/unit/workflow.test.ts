@@ -200,7 +200,7 @@ describe('send gate', () => {
     signersChangedSinceGeneration: false,
     testMode: false,
     productionSendingEnabled: true,
-    sandboxConfigured: false,
+    adobeSignMode: 'sandbox' as const,
   };
 
   it('passes when every precondition is satisfied', () => {
@@ -253,10 +253,18 @@ describe('send gate', () => {
     expect(evaluateSendGate({ ...ready, status: 'DRAFT_READY' }).ok).toBe(false);
   });
 
-  it('refuses in Test Mode with no sandbox configured', () => {
-    const gate = evaluateSendGate({ ...ready, testMode: true, productionSendingEnabled: false });
+  it('refuses in Test Mode with no Adobe connection configured', () => {
+    // The mode has to be stated now rather than inherited from the fixture:
+    // this used to be one boolean and "not configured" is four situations,
+    // each with a different next step.
+    const gate = evaluateSendGate({
+      ...ready,
+      testMode: true,
+      productionSendingEnabled: false,
+      adobeSignMode: 'blocked',
+    });
     expect(gate.ok).toBe(false);
-    expect(gate.blockers.join(' ')).toMatch(/test mode/i);
+    expect(gate.blockers.join(' ')).toMatch(/no Adobe Sign connection is configured/i);
   });
 
   it('warns but allows a sandbox send in Test Mode', () => {
@@ -264,10 +272,57 @@ describe('send gate', () => {
       ...ready,
       testMode: true,
       productionSendingEnabled: false,
-      sandboxConfigured: true,
+      adobeSignMode: 'sandbox',
     });
     expect(gate.ok).toBe(true);
     expect(gate.warnings.join(' ')).toMatch(/no real client/i);
+  });
+
+  /**
+   * Which adapter resolved, and why each refusal reads differently.
+   *
+   * This used to be one boolean, derived from whether a description string
+   * began with "blocked". A sandbox connection that was merely switched off
+   * fell through to the mock — whose description does not begin with
+   * "blocked" — so the guard concluded a sandbox was configured, the gate
+   * passed, and the letter was "sent" to an adapter that fabricates an
+   * agreement id and answers SUCCEEDED. Nothing threw, and every screen said
+   * the letter was out for signature.
+   */
+  it('refuses a Test Mode send when the connection is merely switched off', () => {
+    // The defect, as an assertion. Against the previous gate this passed.
+    const gate = evaluateSendGate({ ...ready, testMode: true, adobeSignMode: 'disabled' });
+
+    expect(gate.ok).toBe(false);
+    // Names the click, because the fix is a click.
+    expect(gate.blockers.join(' ')).toMatch(/switched off/i);
+    expect(gate.blockers.join(' ')).toMatch(/Use this connection/i);
+  });
+
+  it('tells a missing connection apart from a switched-off one', () => {
+    // Minutes of work apart, so the same sentence for both is a bad sentence.
+    const missing = evaluateSendGate({ ...ready, testMode: true, adobeSignMode: 'mock' });
+
+    expect(missing.ok).toBe(false);
+    expect(missing.blockers.join(' ')).toMatch(/no Adobe Sign connection is configured/i);
+    expect(missing.blockers.join(' ')).not.toMatch(/switched off/i);
+  });
+
+  it('refuses a production connection under Test Mode', () => {
+    const gate = evaluateSendGate({ ...ready, testMode: true, adobeSignMode: 'production' });
+
+    expect(gate.ok).toBe(false);
+    expect(gate.blockers.join(' ')).toMatch(/production Adobe Sign connection/i);
+  });
+
+  it('refuses to send through a mock with Test Mode off', () => {
+    // The worse half of the same defect. Test Mode at least labels what
+    // happened; outside it a fabricated send is indistinguishable from a real
+    // one until somebody wonders why the client never replied.
+    const gate = evaluateSendGate({ ...ready, testMode: false, adobeSignMode: 'mock' });
+
+    expect(gate.ok).toBe(false);
+    expect(gate.blockers.join(' ')).toMatch(/no Adobe Sign connection/i);
   });
 
   it('refuses a production send that an administrator has not armed', () => {

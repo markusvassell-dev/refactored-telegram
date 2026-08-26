@@ -74,9 +74,24 @@ async function makeUser(email: string, roles: Principal['roles']): Promise<Princ
  */
 async function readyToSendEngagement(
   options: { signers?: number; engagementType?: 'T2' | 'T1_JOINT'; karbonWorkItem?: boolean } = {},
-): Promise<{ engagementId: string; documentVersionId: string; participantIds: string[]; workItemKey: string | null }> {
+): Promise<{
+  engagementId: string;
+  documentVersionId: string;
+  participantIds: string[];
+  workItemKey: string | null;
+  clientId: string;
+}> {
   const client = await prisma.client.create({
-    data: { legalName: `External Signature Co ${randomUUID().slice(0, 8)}`, isTestFixture: true },
+    data: {
+      legalName: `External Signature Co ${randomUUID().slice(0, 8)}`,
+      // A signed letter files to the client's own Documents tab, so the
+      // fixture needs the two columns that address one: the Karbon key and
+      // the record kind. A client missing either is refused rather than
+      // guessed at, which is its own test below.
+      karbonEntityKey: `EXT-ORG-${randomUUID().slice(0, 8)}`,
+      karbonEntityType: 'Organization',
+      isTestFixture: true,
+    },
   });
   clientIds.push(client.id);
 
@@ -149,7 +164,7 @@ async function readyToSendEngagement(
     participantIds.push(participant.id);
   }
 
-  return { engagementId: engagement.id, documentVersionId: version.id, participantIds, workItemKey };
+  return { engagementId: engagement.id, documentVersionId: version.id, participantIds, workItemKey, clientId: client.id };
 }
 
 function recordInput(fixture: Awaited<ReturnType<typeof readyToSendEngagement>>, overrides: Record<string, unknown> = {}) {
@@ -415,7 +430,15 @@ describe('filing the signed document into Karbon', () => {
 
     const upload = karbon.calls.find((call) => call.operation === 'uploadDocument');
     expect(upload).toBeDefined();
-    expect((upload!.payload as { workItemKey: string }).workItemKey).toBe(fixture.workItemKey);
+
+    // The client's own Documents tab, not the work item. A work item is one
+    // year's job; a signed engagement letter is a record of the relationship
+    // and belongs in the client's permanent file. Everything filed before
+    // 2026-08-25 went to the work item, which is why older engagements show
+    // these files there.
+    const payload = upload!.payload as { targetField: string; targetKey: string };
+    expect(payload.targetField).toBe('organization_keys');
+    expect(payload.targetKey).not.toBe(fixture.workItemKey);
 
     // The application knows where the copy is, so a later reader can find it.
     const signature = await prisma.externalSignature.findFirstOrThrow({
@@ -542,10 +565,37 @@ describe('filing the signed document into Karbon', () => {
     expect(karbon.calls.filter((call) => call.operation === 'uploadDocument')).toHaveLength(1);
   });
 
-  it('says plainly when there is no work item to file against', async () => {
-    // Not an error. An engagement that was never linked to Karbon has nowhere
-    // for the document to go, and pretending otherwise would hide it.
+  it('files without a work item, because the client is what it files to', async () => {
+    // This used to refuse: filing went to the work item, so an engagement with
+    // no linked work item had nowhere to put the document. It files to the
+    // client's own Documents tab now, and a missing work item is no longer a
+    // reason to withhold the one document proving a client agreed to a fee.
     const fixture = await readyToSendEngagement();
+    await service.record(recordInput(fixture));
+
+    const karbon = connectedKarbon();
+    const result = await service.fileToKarbon({
+      externalSignatureId: (await prisma.externalSignature.findFirstOrThrow({
+        where: { engagementId: fixture.engagementId },
+      })).id,
+      karbon,
+      correlationId: 'test-correlation',
+    });
+
+    expect(result.uploaded).toBe(true);
+    const upload = karbon.calls.find((call) => call.operation === 'uploadDocument');
+    expect((upload!.payload as { targetField: string }).targetField).toBe('organization_keys');
+  });
+
+  it('refuses, naming the fix, when the client is not linked to Karbon', async () => {
+    // Not an error, and not silence. A client with no Karbon record has nowhere
+    // for the document to go, and the message says which of the two columns is
+    // missing so somebody can act on it rather than guess.
+    const fixture = await readyToSendEngagement();
+    await prisma.client.update({
+      where: { id: fixture.clientId },
+      data: { karbonEntityKey: null, karbonEntityType: null },
+    });
     await service.record(recordInput(fixture));
 
     const karbon = connectedKarbon();
@@ -559,7 +609,8 @@ describe('filing the signed document into Karbon', () => {
 
     expect(result.uploaded).toBe(false);
     expect(result.skipped).toBe(true);
-    expect(result.messages.join(' ')).toMatch(/no linked Karbon work item/i);
+    expect(result.messages.join(' ')).toMatch(/not linked to a Karbon record/i);
+    expect(result.messages.join(' ')).toMatch(/Import the client/i);
     expect(karbon.calls.filter((call) => call.operation === 'uploadDocument')).toHaveLength(0);
   });
 
@@ -604,6 +655,9 @@ describe('filing the signed document into Karbon', () => {
       where: { engagementId: fixture.engagementId, type: 'DOCUMENT_UPLOAD' },
     });
     expect(activity.outcome).toBe('SUCCEEDED');
-    expect(activity.karbonWorkItemKey).toBe(fixture.workItemKey);
+    // Null, and deliberately: the file went to the client entity, not a work
+    // item. Where it actually went is in the request summary.
+    expect(activity.karbonWorkItemKey).toBeNull();
+    expect(activity.requestSummary).toMatchObject({ target: { clientEntityKey: expect.any(String) } });
   });
 });
