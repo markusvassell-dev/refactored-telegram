@@ -1,5 +1,6 @@
 import {
   NotificationEmailService,
+  enqueuePreparation,
   enqueuePriorYearSearch,
   maybeStartCoverLetter,
   maybeStartGeneration,
@@ -296,6 +297,16 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         });
       }
 
+      // Preparation does not wait for the search. It reads the client record,
+      // not a document, so a rolled-forward engagement whose prior-year letter
+      // is never found still arrives with its own details filled in.
+      await enqueuePreparation(
+        { prisma: context.prisma, queue: context.queue },
+        result.engagementId,
+        correlationId ?? newCorrelationId(),
+        { reason: 'Preparing an engagement rolled forward from Karbon.' },
+      );
+
       return { ...result, priorYearSearchEnqueued: search.enqueued };
     },
 
@@ -485,14 +496,15 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         return { requiresUserChoice: true, candidates: outcome.ranked.length };
       }
 
-      await context.workflow.transition({
-        engagementId,
-        to: 'EXTRACTING_DATA',
-        reason: outcome.reason,
-        correlationId: job.correlationId,
-      });
-
-      await context.queue.enqueue({
+      // Enqueue first, and only then say the engagement is extracting.
+      //
+      // The order used to be the other way round, and the enqueue's answer was
+      // not read. Dedup is by key across every state including `SUCCEEDED`, so
+      // re-selecting a document that had been read before flipped the status and
+      // created no job. Nothing failed, so the exhausted-retry hook never fired,
+      // and the engagement sat at "extracting data" until job retention
+      // eventually freed the key.
+      const queued = await context.queue.enqueueRerunnable({
         jobType: 'EXTRACT_DOCUMENT_TEXT',
         idempotencyKey: `extract_${engagementId}_${outcome.selected.documentId}`,
         payload: { engagementId, karbonDocumentId: outcome.selected.documentId },
@@ -500,7 +512,16 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         correlationId: job.correlationId,
       });
 
-      return { selected: outcome.selected.documentId, score: outcome.selected.score };
+      if (queued.willRun) {
+        await context.workflow.transition({
+          engagementId,
+          to: 'EXTRACTING_DATA',
+          reason: outcome.reason,
+          correlationId: job.correlationId,
+        });
+      }
+
+      return { selected: outcome.selected.documentId, score: outcome.selected.score, extracting: queued.willRun };
     },
 
     // ------------------------------------------------------------ Extraction
@@ -707,7 +728,12 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       await context.queue.enqueue({
         jobType: 'PREPARE_ENGAGEMENT',
         idempotencyKey: `prepare_${engagementId}_${source?.fileHash ?? karbonDocumentId ?? sourceDocumentId}`,
-        payload: { engagementId, actorId: job.payload.actorId ?? systemActorId },
+        // `afterExtraction` is what entitles the handler to move the engagement
+        // out of `EXTRACTING_DATA`. Preparation is now also enqueued at creation
+        // and after a scan, and one of those arriving while a document is still
+        // queued for reading would otherwise announce that extraction had
+        // finished when it had not started.
+        payload: { engagementId, actorId: job.payload.actorId ?? systemActorId, afterExtraction: true },
         engagementId,
         correlationId: job.correlationId,
       });
@@ -747,8 +773,9 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       // answer or a fee awaiting approval still refuses; and the draft it
       // produces is still reviewed, approved by a second person, and sent only
       // by a partner.
+      const afterExtraction = job.payload.afterExtraction === true;
       const current = await context.workflow.currentStatus(engagementId);
-      if (current === 'EXTRACTING_DATA') {
+      if (afterExtraction && current === 'EXTRACTING_DATA') {
         await context.workflow.transition({
           engagementId,
           to: 'SOURCE_DOCUMENT_REVIEW_REQUIRED',
@@ -1330,6 +1357,85 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         correlationId: job.correlationId,
       });
       return { queued: !result.deduplicated, deduplicated: result.deduplicated };
+    },
+
+    /**
+     * Engagements parked mid-flight with nothing behind them.
+     *
+     * `reclaimStuckJobs` rescues a stuck *job*. Nothing watched an engagement
+     * left in a transient status with no job at all — which is exactly what a
+     * de-duplicated enqueue produced: the status said work was happening, no
+     * job existed, nothing failed, and so nothing ever said otherwise. The
+     * de-dup hole is fixed; this is here because "a status nothing can clear"
+     * is a shape, not one instance.
+     *
+     * It never invents progress. Either it reports what killed the run, or it
+     * puts the engagement back where a person can act on it.
+     */
+    SWEEP_STUCK_ENGAGEMENTS: async ({ job }) => {
+      const stallMinutes = 30;
+      const staleBefore = new Date(Date.now() - stallMinutes * 60_000);
+
+      const parked = await context.prisma.engagement.findMany({
+        where: {
+          status: { in: ['LOCATING_SOURCE_DOCUMENTS', 'EXTRACTING_DATA'] },
+          updatedAt: { lt: staleBefore },
+        },
+        select: { id: true, status: true },
+        take: 50,
+      });
+
+      const swept: { engagementId: string; from: string; to: string }[] = [];
+
+      for (const engagement of parked) {
+        // Anything still queued or running means this is patience, not a stall.
+        const live = await context.prisma.backgroundJob.count({
+          where: { engagementId: engagement.id, status: { in: ['PENDING', 'RUNNING'] } },
+        });
+        if (live > 0) continue;
+
+        const lastFailure = await context.prisma.backgroundJob.findFirst({
+          where: { engagementId: engagement.id, status: { in: ['DEAD_LETTER', 'FAILED'] } },
+          orderBy: { updatedAt: 'desc' },
+          select: { jobType: true, failureReason: true, userMessage: true },
+        });
+
+        if (lastFailure) {
+          // Something did fail; the engagement simply never heard about it.
+          await context.workflow.needsAttention(
+            engagement.id,
+            `A background job (${lastFailure.jobType}) stopped without completing. ${
+              lastFailure.userMessage ?? lastFailure.failureReason ?? 'No reason was recorded.'
+            }`,
+            { correlationId: job.correlationId },
+          );
+          swept.push({ engagementId: engagement.id, from: engagement.status, to: 'NEEDS_ATTENTION' });
+          continue;
+        }
+
+        // No job, no failure — the work was never started. Back to the screen
+        // where a person can attach a document or start the search again.
+        await context.workflow.transition({
+          engagementId: engagement.id,
+          to: 'SOURCE_DOCUMENT_REVIEW_REQUIRED',
+          reason: `No background job has been running for ${stallMinutes} minutes and none reported a failure, so this engagement was not being worked on.`,
+          correlationId: job.correlationId,
+        });
+        swept.push({ engagementId: engagement.id, from: engagement.status, to: 'SOURCE_DOCUMENT_REVIEW_REQUIRED' });
+      }
+
+      if (swept.length > 0) {
+        context.logger.warn('Swept engagements that were parked with no job behind them', { swept });
+      }
+
+      return {
+        considered: parked.length,
+        swept: swept.length,
+        userMessage:
+          swept.length === 0
+            ? 'No engagement was stalled.'
+            : `Moved ${swept.length} stalled engagement(s) somewhere a person can act.`,
+      };
     },
 
     PURGE_TEMPORARY_FILES: async () => {

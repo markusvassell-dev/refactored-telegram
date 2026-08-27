@@ -19,6 +19,7 @@ import {
 import {
   SETTING_KEYS,
   describeDifferences,
+  enqueuePreparation,
   enqueuePriorYearSearch,
   karbonStatusTriggerSchema,
   maybeStartCoverLetter,
@@ -26,6 +27,7 @@ import {
   factToken,
   type ClientImportSource,
   type IntegrationProviderKey,
+  type PreparationEnqueueOutcome,
   type PriorYearSearchOutcome,
   type SettingKey,
 } from '@element/services';
@@ -786,6 +788,20 @@ function priorYearSearch(
   );
 }
 
+/** Preparing from the client record, with no document involved. */
+function prepareInBackground(
+  engagementId: string,
+  correlationId: string,
+  reason: string,
+): Promise<PreparationEnqueueOutcome> {
+  return enqueuePreparation(
+    { prisma: container.prisma, queue: container.queue },
+    engagementId,
+    correlationId,
+    { reason },
+  );
+}
+
 /**
  * Searches Karbon again for the prior-year letter, on request.
  *
@@ -1099,7 +1115,17 @@ export async function createEngagement(formData: FormData): Promise<ActionResult
     // It also makes the two ways of creating an engagement agree. A rollover
     // started by Karbon already searches immediately, so until now one created
     // by hand behaved *less* automatically than one nobody asked for.
-    const search = await priorYearSearch(result.engagementId, newCorrelationId());
+    const correlationId = newCorrelationId();
+    const search = await priorYearSearch(result.engagementId, correlationId);
+
+    // And prepare, which does not wait for the search to find anything.
+    // Preparation records the client's own details, proposes the signers,
+    // computes every deadline and prices the fee, and reads no source document
+    // at all — but it used to be enqueued from one place only: the last line of
+    // extraction. So an engagement whose prior-year letter never turned up sat
+    // with its corporation name blank, while the name was on the client record
+    // the whole time.
+    await prepareInBackground(result.engagementId, correlationId, 'Preparing a newly created engagement.');
 
     revalidatePath('/engagements');
 
@@ -2197,14 +2223,12 @@ export async function useSourceDocumentCandidate(formData: FormData): Promise<Ac
       ipAddress: context.ipAddress,
     });
 
-    await container.workflow.transition({
-      engagementId: document.engagementId,
-      to: 'EXTRACTING_DATA',
-      reason: `${document.fileName} was chosen from the candidates by ${actor.displayName}`,
-      correlationId,
-    });
-
-    await container.queue.enqueue({
+    // Enqueue before saying the engagement is extracting, and only say it when
+    // a job will actually run. Choosing the same document twice used to flip the
+    // status and create nothing — dedup matches a succeeded job too — leaving
+    // the engagement reading "extracting data" with nothing behind it and no
+    // failure to notice.
+    const queued = await container.queue.enqueueRerunnable({
       jobType: 'EXTRACT_DOCUMENT_TEXT',
       idempotencyKey: `extract_${document.id}`,
       payload: {
@@ -2215,6 +2239,15 @@ export async function useSourceDocumentCandidate(formData: FormData): Promise<Ac
       engagementId: document.engagementId,
       correlationId,
     });
+
+    if (queued.willRun) {
+      await container.workflow.transition({
+        engagementId: document.engagementId,
+        to: 'EXTRACTING_DATA',
+        reason: `${document.fileName} was chosen from the candidates by ${actor.displayName}`,
+        correlationId,
+      });
+    }
 
     const started = await maybeStartCoverLetter(container.coverLetterAutostart, document.engagementId);
 

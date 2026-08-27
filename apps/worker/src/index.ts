@@ -168,6 +168,15 @@ async function maintenance(): Promise<void> {
         idempotencyKey: `adobe_sync_${new Date().toISOString().slice(0, 13)}`,
         payload: {},
       });
+
+      // A status nothing can clear is the shape of bug this exists for, not one
+      // instance of it. `reclaimStuckJobs` above rescues a stuck *job*; nothing
+      // watched an engagement parked mid-flight with no job behind it at all.
+      await context.queue.enqueue({
+        jobType: 'SWEEP_STUCK_ENGAGEMENTS',
+        idempotencyKey: `sweep_engagements_${new Date().toISOString().slice(0, 13)}`,
+        payload: {},
+      });
     } catch (error) {
       logger.error('Maintenance pass failed', {
         message: error instanceof Error ? error.message : String(error),
