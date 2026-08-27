@@ -1,10 +1,4 @@
-import {
-  IntegrationError,
-  describeVendorFailure,
-  looksLikeBusinessNumber,
-  type Logger,
-  createLogger,
-} from '@element/shared';
+import { IntegrationError, describeVendorFailure, looksLikeBusinessNumber, type Logger, createLogger } from '@element/shared';
 import { KARBON_CAPABILITY_MATRIX } from './capabilities.js';
 import { KARBON_DOCUMENTED_REQUESTS_PER_MINUTE, RateLimiter, retryAfterMs } from '../http/throttle.js';
 import type {
@@ -115,9 +109,7 @@ export class KarbonRestClient implements KarbonProvider {
   readonly name = 'karbon';
   readonly isMock = false;
 
-  private readonly config: Required<
-    Omit<KarbonClientConfig, 'logger' | 'fetchImpl' | 'rateLimiter' | 'noteAuthorEmail'>
-  > & {
+  private readonly config: Required<Omit<KarbonClientConfig, 'logger' | 'fetchImpl' | 'rateLimiter' | 'noteAuthorEmail'>> & {
     logger: Logger;
     fetchImpl: typeof fetch;
     noteAuthorEmail?: string;
@@ -138,8 +130,7 @@ export class KarbonRestClient implements KarbonProvider {
       fetchImpl: config.fetchImpl ?? fetch,
     };
 
-    this.limiter =
-      config.rateLimiter ?? new RateLimiter({ requestsPerMinute: this.config.requestsPerMinute });
+    this.limiter = config.rateLimiter ?? new RateLimiter({ requestsPerMinute: this.config.requestsPerMinute });
   }
 
   capabilities(): CapabilityReport[] {
@@ -172,9 +163,7 @@ export class KarbonRestClient implements KarbonProvider {
             Authorization: `Bearer ${this.config.bearerToken}`,
             AccessKey: this.config.accessKey,
             Accept: 'application/json',
-            ...(options.body !== undefined && !(options.body instanceof FormData)
-              ? { 'Content-Type': 'application/json' }
-              : {}),
+            ...(options.body !== undefined && !(options.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
             ...options.headers,
           },
           body:
@@ -244,15 +233,11 @@ export class KarbonRestClient implements KarbonProvider {
     // case that presented as "it worked once and then stopped working".
     //
     // The last failure's own words, where it gave any, are what say which it is.
-    throw new IntegrationError(
-      'Karbon',
-      `Request to ${options.path} failed after ${this.config.maxRetries} attempts`,
-      {
-        retryable: true,
-        cause: lastError,
-        userMessage: `Karbon did not accept the request to ${options.path} after ${this.config.maxRetries} attempts: ${describeVendorFailure(lastError)}`,
-      },
-    );
+    throw new IntegrationError('Karbon', `Request to ${options.path} failed after ${this.config.maxRetries} attempts`, {
+      retryable: true,
+      cause: lastError,
+      userMessage: `Karbon did not accept the request to ${options.path} after ${this.config.maxRetries} attempts: ${describeVendorFailure(lastError)}`,
+    });
   }
 
   /**
@@ -309,12 +294,9 @@ export class KarbonRestClient implements KarbonProvider {
     // n + 1 on an odd limit — asking for 25 produced 26 — which is small, and
     // still a limit that does not mean what it says. The second share takes the
     // remainder so the two always sum to exactly the total.
-    const organizationShare =
-      options.limit === undefined ? undefined : Math.max(1, Math.ceil(options.limit / 2));
+    const organizationShare = options.limit === undefined ? undefined : Math.max(1, Math.ceil(options.limit / 2));
     const contactShare =
-      options.limit === undefined || organizationShare === undefined
-        ? undefined
-        : Math.max(1, options.limit - organizationShare);
+      options.limit === undefined || organizationShare === undefined ? undefined : Math.max(1, options.limit - organizationShare);
 
     const [organizations, contacts] = await Promise.all([
       this.pageClientList('/Organizations', 'Organization', 'OrganizationKey', organizationShare),
@@ -528,19 +510,21 @@ export class KarbonRestClient implements KarbonProvider {
       // a real answer while a null is not.
       if (!response) continue;
 
-      return (response.Attachments ?? []).map((raw): KarbonDocument => ({
-        documentId: String(raw.FileContextKey ?? ''),
-        fileName: String(raw.FileName ?? ''),
-        workItemKey: scope.workItemKey ?? null,
-        entityKey: scope.entityKey ?? null,
-        byteSize: typeof raw.FileSize === 'number' ? raw.FileSize : null,
-        mimeType: typeof raw.MimeType === 'string' ? raw.MimeType : null,
-        uploadedAt: typeof raw.DateCreated === 'string' ? raw.DateCreated : null,
-        uploadedBy: null,
-        sourceEntityType: entityType,
-        // Short-lived: the token carries its own expiry, so it is never stored.
-        downloadUrl: typeof raw.DownloadUrl === 'string' ? raw.DownloadUrl : null,
-      }));
+      return (response.Attachments ?? []).map(
+        (raw): KarbonDocument => ({
+          documentId: String(raw.FileContextKey ?? ''),
+          fileName: String(raw.FileName ?? ''),
+          workItemKey: scope.workItemKey ?? null,
+          entityKey: scope.entityKey ?? null,
+          byteSize: typeof raw.FileSize === 'number' ? raw.FileSize : null,
+          mimeType: typeof raw.MimeType === 'string' ? raw.MimeType : null,
+          uploadedAt: typeof raw.DateCreated === 'string' ? raw.DateCreated : null,
+          uploadedBy: null,
+          sourceEntityType: entityType,
+          // Short-lived: the token carries its own expiry, so it is never stored.
+          downloadUrl: typeof raw.DownloadUrl === 'string' ? raw.DownloadUrl : null,
+        }),
+      );
     }
 
     return [];
@@ -561,10 +545,7 @@ export class KarbonRestClient implements KarbonProvider {
    * organization scope alone — years of returns, working papers and signed
    * letters are filed against the work item they belong to.
    */
-  async listClientLibrary(
-    entityKey: string,
-    options: { maxWorkItems?: number } = {},
-  ): Promise<KarbonDocumentLibrary> {
+  async listClientLibrary(entityKey: string, options: { maxWorkItems?: number } = {}): Promise<KarbonDocumentLibrary> {
     const scopes: KarbonLibraryScope[] = [];
     const failures: KarbonLibraryFailure[] = [];
     // Keyed by Karbon's file key: the same file appears in more than one list.
@@ -599,7 +580,31 @@ export class KarbonRestClient implements KarbonProvider {
       }
     };
 
-    const client = await this.getClient(entityKey).catch(() => null);
+    // Read once, and record a failure the same way `collect` does.
+    //
+    // This used to be `.catch(() => null)`, which broke the rule the comment
+    // above states. A transient failure here does not skip one scope, it skips
+    // an unknown number of them: `client.contacts` is where every contact's
+    // document area comes from, so `?? []` below silently reads none of them —
+    // and `entityType` falls back to `Organization`, which is wrong whenever
+    // the client is a Contact. `complete` is `failures.length === 0`, so the
+    // sync then reported a partial read as a complete one and the screen's
+    // "this list may be missing documents" warning never fired.
+    //
+    // That is the exact difference this function exists to preserve: "the
+    // client has no 2019 letter" versus "we could not look".
+    let client: KarbonClient | null = null;
+    try {
+      client = await this.getClient(entityKey);
+    } catch (error) {
+      failures.push({
+        entityType: 'Organization',
+        entityKey,
+        label: 'The client record itself',
+        reason: `${error instanceof Error ? error.message : String(error)} — so no contact's document area could be read either.`,
+      });
+    }
+
     const clientName = client?.legalName ?? 'this client';
     const entityType: KarbonEntityType = client?.entityType === 'Contact' ? 'Contact' : 'Organization';
 
@@ -689,9 +694,7 @@ export class KarbonRestClient implements KarbonProvider {
     // collision that matters.
     if (request.neverOverwrite) {
       const scope =
-        'workItemKey' in request.target
-          ? { workItemKey: request.target.workItemKey }
-          : { entityKey: request.target.entityKey };
+        'workItemKey' in request.target ? { workItemKey: request.target.workItemKey } : { entityKey: request.target.entityKey };
       const existing = await this.listDocuments(scope);
       const collision = existing.find((document) => document.fileName === request.fileName);
       if (collision) {
@@ -704,11 +707,7 @@ export class KarbonRestClient implements KarbonProvider {
     }
 
     const form = new FormData();
-    form.append(
-      'file',
-      new Blob([Buffer.from(request.content)], { type: request.mimeType }),
-      request.fileName,
-    );
+    form.append('file', new Blob([Buffer.from(request.content)], { type: request.mimeType }), request.fileName);
 
     // `POST /WorkItems/{key}/Documents` does not exist — it answered 404. Karbon
     // uploads through `POST /Files` as multipart, carrying the entity key as a
@@ -840,10 +839,9 @@ export class KarbonRestClient implements KarbonProvider {
    * The authoritative task lives in this application's Review Queue regardless.
    */
   async createTask(request: KarbonTaskRequest): Promise<KarbonWriteResult> {
-    this.config.logger.debug(
-      'Karbon publishes no task-creation operation; the review note carries the assignment instead',
-      { workItemKey: request.workItemKey },
-    );
+    this.config.logger.debug('Karbon publishes no task-creation operation; the review note carries the assignment instead', {
+      workItemKey: request.workItemKey,
+    });
 
     return {
       outcome: 'SKIPPED_UNSUPPORTED',

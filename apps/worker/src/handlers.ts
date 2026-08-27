@@ -9,12 +9,7 @@ import {
   type JobHandler,
   type JobType,
 } from '@element/services';
-import {
-  extractPdfText,
-  deriveTaxYear,
-  DeterministicExtractor,
-  selectPriorYearDocument,
-} from '@element/integrations';
+import { extractPdfText, deriveTaxYear, DeterministicExtractor, selectPriorYearDocument } from '@element/integrations';
 import { detectCheckboxStates, extractParagraphs, isPdf, parseManifest } from '@element/documents';
 import {
   newCorrelationId,
@@ -75,7 +70,13 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       valueDecimal: string | null;
       valueDate: Date | null;
       valueBoolean?: boolean | null;
-      extractionMethod: 'STRUCTURED_EXPORT' | 'PDF_TEXT' | 'DETERMINISTIC_PATTERN' | 'AI_ASSISTED' | 'OCR_VISION' | 'MANUAL_ENTRY';
+      extractionMethod:
+        | 'STRUCTURED_EXPORT'
+        | 'PDF_TEXT'
+        | 'DETERMINISTIC_PATTERN'
+        | 'AI_ASSISTED'
+        | 'OCR_VISION'
+        | 'MANUAL_ENTRY';
       confidence: number;
     },
   ) {
@@ -135,7 +136,10 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
    * separately queued sync having run first would make the outcome depend on
    * job ordering the queue does not promise.
    */
-  async function syncWorkItem(workItemKey: string, logger: { warn: (message: string, context?: Record<string, unknown>) => void }) {
+  async function syncWorkItem(
+    workItemKey: string,
+    logger: { warn: (message: string, context?: Record<string, unknown>) => void },
+  ) {
     const { karbon } = await context.providers();
 
     const item = await karbon.getWorkItem(workItemKey);
@@ -450,7 +454,7 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
 
           // File names are a hint only; the text is what actually verifies it.
           const text = /\.pdf$/i.test(document.fileName)
-            ? (await extractPdfText(downloaded.content).catch(() => null))?.fullText ?? ''
+            ? ((await extractPdfText(downloaded.content).catch(() => null))?.fullText ?? '')
             : (await extractParagraphs(downloaded.content).catch(() => [])).join('\n');
 
           hashByDocumentId.set(document.documentId, sha256Hex(downloaded.content));
@@ -568,10 +572,8 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       // Two ways a document gets here: Karbon located it, or a person attached
       // it. Both produce the same bytes, and everything below this point is
       // identical — the only difference is where they are read from.
-      const sourceDocumentId =
-        typeof job.payload.sourceDocumentId === 'string' ? job.payload.sourceDocumentId : null;
-      const karbonDocumentId =
-        typeof job.payload.karbonDocumentId === 'string' ? job.payload.karbonDocumentId : null;
+      const sourceDocumentId = typeof job.payload.sourceDocumentId === 'string' ? job.payload.sourceDocumentId : null;
+      const karbonDocumentId = typeof job.payload.karbonDocumentId === 'string' ? job.payload.karbonDocumentId : null;
 
       if (!sourceDocumentId && !karbonDocumentId) {
         throw new ValidationError('Extraction needs either an attached document or a Karbon document id.');
@@ -776,9 +778,7 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       const engagementId = requireString(job.payload, 'engagementId');
       const actorId = typeof job.payload.actorId === 'string' ? job.payload.actorId : systemActorId;
 
-      const threshold = await context.settings.highIncreaseThresholdPercent(
-        context.env.HIGH_FEE_INCREASE_THRESHOLD_PERCENT,
-      );
+      const threshold = await context.settings.highIncreaseThresholdPercent(context.env.HIGH_FEE_INCREASE_THRESHOLD_PERCENT);
 
       const result = await context.preparation.prepare({
         engagementId,
@@ -1157,11 +1157,7 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
 
       // Same as the Adobe path: the engagement letter being done is one of the
       // two things a cover letter waits for.
-      const started = await maybeStartCoverLetter(
-        context.coverLetterAutostart,
-        record.engagementId,
-        job.correlationId,
-      );
+      const started = await maybeStartCoverLetter(context.coverLetterAutostart, record.engagementId, job.correlationId);
 
       return { ...result, coverLetterStarted: started.started };
     },
@@ -1195,11 +1191,7 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       // One of the two things a cover letter waits for. The other is the final
       // documents being uploaded, and they arrive in either order — so this is
       // called from both sides and does nothing until the last one lands.
-      const started = await maybeStartCoverLetter(
-        context.coverLetterAutostart,
-        record.engagementId,
-        job.correlationId,
-      );
+      const started = await maybeStartCoverLetter(context.coverLetterAutostart, record.engagementId, job.correlationId);
 
       return { ...result, coverLetterStarted: started.started };
     },
@@ -1356,9 +1348,7 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
 
       return {
         ...result,
-        userMessage:
-          result.skippedReason ??
-          `Pushed ${result.pushed} work status change(s); ${result.skipped} already correct.`,
+        userMessage: result.skippedReason ?? `Pushed ${result.pushed} work status change(s); ${result.skipped} already correct.`,
       };
     },
 
@@ -1390,8 +1380,21 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       const retentionHours = context.env.DOCUMENT_RETENTION_HOURS;
       const cutoff = new Date(Date.now() - retentionHours * 3_600_000);
 
+      // `storagePath: { not: null }` is what makes this sweep finish.
+      //
+      // `purgeAfter` is stamped once when the document is stored and never
+      // cleared, so the time filter alone selects every source document that
+      // has *ever* expired — and re-selects them on every run, for ever. The
+      // file delete was skipped the second time round, but the UPDATE was not:
+      // each pass rewrote every historical row, bumping `updatedAt` on all of
+      // them. A year in, the nightly purge was writing the whole table to
+      // accomplish nothing.
+      //
+      // A row whose working copy is already gone has nothing left to purge, so
+      // excluding it makes the working set "what expired since the last run",
+      // which is what the job is for.
       const expired = await context.prisma.sourceDocument.findMany({
-        where: { purgeAfter: { lt: new Date() } },
+        where: { purgeAfter: { lt: new Date() }, storagePath: { not: null } },
         select: { id: true, storagePath: true },
       });
 
@@ -1409,8 +1412,24 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
 
       // Superseded document versions past retention lose their working copies.
       // Karbon keeps the authoritative record.
+      // Same shape of fault as above, with a consequence beyond wasted work.
+      //
+      // The references were never cleared after the bytes were deleted, so
+      // every run re-selected the same versions, re-issued the same deletes and
+      // counted them into `purged` again — the number this job reports grew on
+      // every pass while nothing was actually being purged.
+      //
+      // Worse, the row went on saying a working copy existed. `linksFor` offers
+      // a download whenever the reference is non-null, so Version History
+      // showed a link for every purged version and following it found nothing.
+      // Clearing the reference is what makes "no working copy" a state the
+      // application can see, rather than one it discovers on a 404.
       const superseded = await context.prisma.documentVersion.findMany({
-        where: { status: 'SUPERSEDED', supersededAt: { lt: cutoff } },
+        where: {
+          status: 'SUPERSEDED',
+          supersededAt: { lt: cutoff },
+          OR: [{ generatedDocxReference: { not: null } }, { generatedPdfReference: { not: null } }],
+        },
         select: { id: true, generatedDocxReference: true, generatedPdfReference: true },
       });
 
@@ -1421,6 +1440,11 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
             purged += 1;
           }
         }
+
+        await context.prisma.documentVersion.update({
+          where: { id: version.id },
+          data: { generatedDocxReference: null, generatedPdfReference: null },
+        });
       }
 
       // A backstop, now that the bytes are rows rather than files. The passes

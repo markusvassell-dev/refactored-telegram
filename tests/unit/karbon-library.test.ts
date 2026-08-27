@@ -246,3 +246,55 @@ describe('reading a tax year off a work item title', () => {
     expect(inferTaxYear('2099 Projection', now)).toBeNull();
   });
 });
+
+describe('when the client record itself cannot be read', () => {
+  /**
+   * The failure that used to be invisible.
+   *
+   * `getClient` supplies two things this aggregate depends on: the entity type
+   * of the client, and its list of contacts. It was called with
+   * `.catch(() => null)`, so a transient refusal meant the contact loop
+   * iterated nothing — every contact's document area skipped — while
+   * `failures` stayed empty and `complete` therefore stayed true.
+   *
+   * That is the one distinction this whole function exists to preserve: "the
+   * client has no 2019 letter" is not the same finding as "we could not look",
+   * and the screen's "this list may be missing documents" warning is driven by
+   * exactly this flag.
+   */
+  function clientReadRefused() {
+    return buildClient((url) => {
+      // The client record is refused; everything else answers normally.
+      if (url.pathname.includes('/Organizations/ORG1') || url.pathname.includes('/Contacts/ORG1')) {
+        return new Response(JSON.stringify({ message: 'Rate limit exceeded' }), { status: 429 });
+      }
+      if (url.pathname.includes('/FileList/')) {
+        return jsonResponse(fileList('Organization', 'ORG1', [{ key: 'F1', name: 'Something.pdf' }]));
+      }
+      if (url.pathname.includes('/WorkItems')) return jsonResponse({ value: [] });
+      return null;
+    });
+  }
+
+  it('does not report a partial read as complete', async () => {
+    const { client } = clientReadRefused();
+
+    const library = await client.listClientLibrary('ORG1');
+
+    expect(library.complete).toBe(false);
+  });
+
+  it('names the client read among the failures, so the reason is readable', async () => {
+    const { client } = clientReadRefused();
+
+    const library = await client.listClientLibrary('ORG1');
+
+    const reasons = library.failures.map((failure) => `${failure.label}: ${failure.reason}`).join(' ');
+    expect(reasons).toMatch(/client record itself/i);
+
+    // The consequence stated, not just the cause. A reader seeing one failed
+    // scope would otherwise assume one scope's worth of documents is missing,
+    // when in fact no contact was read at all.
+    expect(reasons).toMatch(/no contact/i);
+  });
+});

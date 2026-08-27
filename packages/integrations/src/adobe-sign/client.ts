@@ -773,14 +773,18 @@ export class AdobeSignRestClient implements AdobeSignProvider {
 
     // Adobe sends the client id for verification handshakes and an HMAC of the
     // payload for delivered events. Both are checked in constant time.
+    //
+    // The client-id branch was a plain `===`, under this same comment claiming
+    // otherwise. A comparison that returns on the first differing byte leaks
+    // the secret's prefix through timing, and a comment asserting a protection
+    // that is not there is worse than no comment: it stops the next reader
+    // looking.
     const provided = headers['x-adobesign-clientid'] ?? headers['X-AdobeSign-ClientId'] ?? headers['x-adobe-signature'] ?? '';
 
-    if (provided === this.config.clientId) return true;
+    if (constantTimeEquals(provided, this.config.clientId)) return true;
 
     const expected = createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64');
-    const a = Buffer.from(expected, 'utf8');
-    const b = Buffer.from(provided, 'utf8');
-    return a.length === b.length && timingSafeEqual(a, b);
+    return constantTimeEquals(provided, expected);
   }
 
   parseWebhook(rawBody: string): AdobeWebhookEvent | null {
@@ -860,6 +864,19 @@ export class AdobeSignRestClient implements AdobeSignProvider {
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * Compares two secrets without leaking where they first differ.
+ *
+ * `timingSafeEqual` throws on a length mismatch, so the lengths are compared
+ * first — which does leak the length, and is unavoidable and harmless: an
+ * Adobe client id and a base64 HMAC are both fixed-width.
+ */
+function constantTimeEquals(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 /**
  * An error with the part that actually names the problem.
