@@ -21,7 +21,6 @@ import {
   describeDifferences,
   enqueueClientDocumentScan,
   enqueuePreparation,
-  enqueuePriorYearSearch,
   karbonStatusTriggerSchema,
   maybeStartCoverLetter,
   summariseClientImport,
@@ -769,32 +768,17 @@ export async function setProductionSending(formData: FormData): Promise<ActionRe
 }
 
 /**
- * Queues the Karbon search for last year's engagement letter.
- *
- * The helper and its guards live in `@element/services` because the worker's
- * rollover needs exactly the same ones, and a private second copy is how two
- * callers quietly stop agreeing. This wrapper supplies the container and
- * nothing else.
- */
-function priorYearSearch(
-  engagementId: string,
-  correlationId: string,
-  options: { force?: boolean } = {},
-): Promise<PriorYearSearchOutcome> {
-  return enqueuePriorYearSearch(
-    { prisma: container.prisma, queue: container.queue },
-    engagementId,
-    correlationId,
-    options,
-  );
-}
-
-/**
  * Reading everything Karbon holds for this client.
  *
- * Subsumes the targeted prior-year search — it scores the same candidates and
- * hands them to the same chooser — so the two are not run together. The search
- * stays available on its own for a narrower, cheaper re-check.
+ * Subsumes the targeted prior-year search: it reads the same three scopes,
+ * scores the same candidates and hands them to the same chooser, and keeps what
+ * it read rather than throwing the text away. So there is one button, not two —
+ * a screen offering both would be asking a reviewer to know which of two
+ * searches of the same places they wanted.
+ *
+ * The guards live in `@element/services` because the worker's rollover needs
+ * exactly the same ones, and a private second copy is how two callers quietly
+ * stop agreeing. This wrapper supplies the container and nothing else.
  */
 function scanClientDocumentsInBackground(
   engagementId: string,
@@ -824,26 +808,35 @@ function prepareInBackground(
 }
 
 /**
- * Searches Karbon again for the prior-year letter, on request.
+ * Reading every document Karbon holds for this client, on request.
  *
- * Preparation starts this automatically; this is the button for after the
- * missing Karbon link has been fixed, or after last year's letter has been
- * filed where the first search could not see it.
+ * This runs by itself when an engagement is created and again on Prepare, so
+ * the button is for a second look: after a missing Karbon link is fixed, after
+ * last year's letter is filed somewhere the first read could not see, or after
+ * a read that reported a scope it could not open.
+ *
+ * `force` gives the re-run its own idempotency key. Without it a second press
+ * would match the day's existing job — including a succeeded one — and create
+ * nothing, which is the failure this whole change exists to remove.
  */
-export async function locatePriorYearDocuments(formData: FormData): Promise<ActionResult> {
+export async function scanClientDocuments(formData: FormData): Promise<ActionResult> {
   return run(async () => {
-    await requirePermission('source_document:select');
+    const actor = await requirePermission('source_document:select');
     await assertCsrf(formData.get('csrf')?.toString());
 
     const engagementId = formData.get('engagementId')?.toString();
     if (!engagementId) throw new ValidationError('An engagement is required.');
 
-    const outcome = await priorYearSearch(engagementId, newCorrelationId(), { force: true });
+    const outcome = await scanClientDocumentsInBackground(engagementId, newCorrelationId(), {
+      force: true,
+      actorId: actor.id,
+    });
+
     revalidatePath(`/engagements/${engagementId}`);
 
-    if (!outcome.enqueued) throw new PreconditionError(outcome.reason ?? 'The search could not be started.');
+    if (!outcome.enqueued) throw new PreconditionError(outcome.reason ?? 'The scan could not be started.');
 
-    return 'Searching Karbon for last year’s letter. Candidates appear below with the score each one earned.';
+    return 'Reading this client’s documents in Karbon. Every document appears below with its score and, where it was passed over, the reason.';
   });
 }
 

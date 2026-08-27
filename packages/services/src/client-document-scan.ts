@@ -95,8 +95,15 @@ export interface ScanResult {
  */
 export const SCAN_DOCUMENT_LIMIT = 60;
 
-/** Which pattern set can read a document of this kind. */
-function extractorFor(kind: SourceDocumentKind): ExtractorKind | null {
+/**
+ * Which pattern set can read a document of this kind.
+ *
+ * Exported because `EXTRACT_DOCUMENT_TEXT` needs the same answer: a reviewer
+ * can accept any kind by hand from the scan's table, and reading a CRA form
+ * with engagement-letter patterns finds nothing at best and the wrong label at
+ * worst. Two copies of this mapping is how the two paths quietly stop agreeing.
+ */
+export function extractorFor(kind: SourceDocumentKind): ExtractorKind | null {
   switch (kind) {
     case 'PRIOR_YEAR_ENGAGEMENT_LETTER':
     case 'PRIOR_YEAR_SIGNED_LETTER':

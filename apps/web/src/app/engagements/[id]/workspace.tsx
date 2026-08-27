@@ -17,7 +17,6 @@ import {
   deleteEngagement,
   generateCoverLetter,
   importKarbonDocument,
-  locatePriorYearDocuments,
   markReadyToSend,
   overrideFee,
   prepareEngagement,
@@ -27,6 +26,7 @@ import {
   resolveConflict,
   saveFieldGroup,
   saveSigner,
+  scanClientDocuments,
   recordExternalSignature,
   sendForSignature,
   startGeneration,
@@ -549,18 +549,64 @@ function KarbonCatalogue({ csrfToken, engagement }: { csrfToken: string; engagem
   );
 }
 
+/**
+ * What the last read of the client's Karbon file actually covered.
+ *
+ * The counts are the point, not decoration. Forty-eight documents from a
+ * complete read and forty-eight from a read that lost a scope are not the same
+ * answer, and only the second one makes "this client has no prior-year letter"
+ * a claim nobody should act on — so an incomplete read says so in amber, and
+ * says which part it could not see.
+ */
+function ScanSummary({ scan }: { scan: any }): ReactNode {
+  if (!scan) return null;
+
+  if (!scan.finishedAt) {
+    return (
+      <p className="mb-3 rounded border border-slate-300 bg-slate-50 p-3 text-sm text-slate-700">
+        A read of this client&rsquo;s Karbon file is running. This page shows what it has recorded so far.
+      </p>
+    );
+  }
+
+  const parts: string[] = [
+    `${scan.documentsRead} of ${scan.documentsConsidered} document(s) read`,
+    `${scan.documentsAccepted} accepted`,
+  ];
+  if (scan.tokensFilled > 0) parts.push(`${scan.tokensFilled} value(s) taken`);
+  if (scan.documentsUnreadable > 0) parts.push(`${scan.documentsUnreadable} could not be opened`);
+
+  if (scan.complete) {
+    return <p className="mb-3 rounded border border-slate-300 bg-slate-50 p-3 text-sm text-slate-700">{parts.join('. ')}.</p>;
+  }
+
+  return (
+    <p className="mb-3 rounded border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+      {parts.join('. ')}. This read was incomplete
+      {scan.scopesFailed > 0 ? `: ${scan.scopesFailed} place(s) in Karbon could not be read` : ''}
+      {scan.cappedAt ? `${scan.scopesFailed > 0 ? ', and it' : ': it'} stopped at the ${scan.cappedAt}-document limit` : ''}. A
+      document missing here has not been shown to be missing from Karbon.
+    </p>
+  );
+}
+
 function SourceDocuments({ csrfToken, engagement }: { csrfToken: string; engagement: any }): ReactNode {
+  const scan = engagement.sourceDocumentScans?.[0] ?? null;
+
   return (
     <>
     <Card
-      title="Search Karbon for last year’s letter"
-      description="This starts by itself the moment an engagement is created, and again on Prepare. Run it here after fixing a missing Karbon link, or once last year’s letter has been filed where the first search could not see it. The current work item is searched first, then the prior year’s work items, then the client’s own documents."
+      title="Scan every document in this client’s Karbon file"
+      description="This starts by itself the moment an engagement is created, and again on Prepare. Run it here for a second look — after fixing a missing Karbon link, once last year’s letter has been filed where the first read could not see it, or after a read that reported a place it could not open. The current work item is read first, then the prior year’s work items, then the client’s own documents."
     >
-      <ActionForm action={locatePriorYearDocuments} csrfToken={csrfToken} submitLabel="Search Karbon">
+      <ScanSummary scan={scan} />
+      <ActionForm action={scanClientDocuments} csrfToken={csrfToken} submitLabel="Read every document">
         <input type="hidden" name="engagementId" value={engagement.id} />
         <p className="text-sm text-slate-600">
-          Every candidate is read and scored on its text. Nothing is selected on the strength of its filename, and a
-          close call is handed to you rather than guessed.
+          Every document is read and scored on its text, never on its filename. Anything at 90% or above that also
+          matches this client&rsquo;s business number — or matches both their legal name and the year-end — is accepted
+          automatically. Everything else is listed below with its score and the reason it was passed over, for you to
+          accept by hand.
         </p>
       </ActionForm>
     </Card>
@@ -612,7 +658,7 @@ function SourceDocuments({ csrfToken, engagement }: { csrfToken: string; engagem
 
     <Card
       title="Source documents"
-      description="A document is never trusted because of its filename. Each candidate is scored against the client, engagement type and year."
+      description="A document is never trusted because of its filename. Each one is scored against the client, engagement type and year, and what it is called here is what its own text says it is."
     >
       {engagement.sourceDocuments.length === 0 ? (
         <Empty message="No source documents have been located yet." />
@@ -622,61 +668,90 @@ function SourceDocuments({ csrfToken, engagement }: { csrfToken: string; engagem
             <tr>
               <th scope="col">File</th>
               <th scope="col">Kind</th>
-              <th scope="col">Verification</th>
-              <th scope="col">Confirmed</th>
+              <th scope="col">Score</th>
+              <th scope="col">Accepted</th>
+              <th scope="col">Why not</th>
+              <th scope="col">Fields found</th>
               <th scope="col">In package</th>
               <th scope="col">Choose</th>
             </tr>
           </thead>
           <tbody>
-            {engagement.sourceDocuments.map((document: any) => (
-              <tr key={document.id}>
-                <td>{document.fileName}</td>
-                <td>{document.kind.replace(/_/g, ' ').toLowerCase()}</td>
-                <td>
-                  {document.verificationScore === null
-                    ? '—'
-                    : `${Math.round(document.verificationScore * 100)}%`}
-                  {document.verificationDetail?.disqualifiers?.length ? (
-                    <ul className="mt-1 list-disc pl-4 text-xs text-red-700">
-                      {document.verificationDetail.disqualifiers.map((reason: string) => (
-                        <li key={reason}>{reason}</li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </td>
-                <td>{document.confirmedAt ? 'Yes' : 'No'}</td>
-                <td>{document.includedInPackage ? 'Yes' : 'No'}</td>
-                {/*
-                  Taking the answer the search asked for.
+            {engagement.sourceDocuments.map((document: any) => {
+              const detail = document.verificationDetail ?? {};
+              // A refusal explains a judgement; a disqualifier is a fact about
+              // the document. Both belong here, and neither substitutes for the
+              // other.
+              const reasons: string[] = [...(detail.disqualifiers ?? []), ...(detail.refusals ?? [])];
+              // One value can be cited by several documents, so the count is of
+              // distinct fields rather than of evidence rows.
+              const fieldsFound = new Set(
+                (document.evidence ?? []).map((row: any) => row.extractedFieldId),
+              ).size;
 
-                  When the search cannot separate two candidates it ranks them,
-                  says so, and waits — and until now there was nothing here to
-                  wait with. The column read "No" on every row with no way to
-                  change it, so the only route on was re-attaching a document
-                  already listed, which produced a second row for the same file.
+              return (
+                <tr key={document.id}>
+                  <td>{document.fileName}</td>
+                  <td>{document.kind.replace(/_/g, ' ').toLowerCase()}</td>
+                  <td>{document.verificationScore === null ? '—' : `${Math.round(document.verificationScore * 100)}%`}</td>
+                  <td>
+                    {document.confirmedAt ? (
+                      // Automatic acceptance leaves no user on the row, which is
+                      // the honest record: the application accepted it and
+                      // nobody has read it.
+                      <span>{document.confirmedByUserId ? 'By hand' : 'Automatically'}</span>
+                    ) : (
+                      <span className="text-slate-500">No</span>
+                    )}
+                  </td>
+                  <td>
+                    {document.confirmedAt || reasons.length === 0 ? (
+                      <span className="text-slate-500">—</span>
+                    ) : (
+                      <ul className="list-disc pl-4 text-xs text-slate-700">
+                        {reasons.map((reason: string) => (
+                          <li key={reason}>{reason}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </td>
+                  <td>{fieldsFound > 0 ? fieldsFound : <span className="text-slate-500">—</span>}</td>
+                  <td>{document.includedInPackage ? 'Yes' : 'No'}</td>
+                  {/*
+                    Taking the answer the read asked for.
 
-                  Only offered on a Karbon-located candidate: an attached file
-                  is already the confirmed one, and there is nothing to choose
-                  between.
-                */}
-                <td>
-                  {!document.confirmedAt && document.karbonDocumentId ? (
-                    <ActionForm
-                      action={useSourceDocumentCandidate}
-                      csrfToken={csrfToken}
-                      submitLabel="Use this one"
-                      variant="secondary"
-                      confirm={`Use ${document.fileName} as last year's letter for this engagement? Its values are read and offered as suggestions; nothing is carried forward without a reviewer confirming it.`}
-                    >
-                      <input type="hidden" name="sourceDocumentId" value={document.id} />
-                    </ActionForm>
-                  ) : (
-                    <span className="text-slate-500">—</span>
-                  )}
-                </td>
-              </tr>
-            ))}
+                    When the scan cannot identify a document it records why and
+                    waits — and until now there was nothing here to wait with.
+                    The column read "No" on every row with no way to change it,
+                    so the only route on was re-attaching a document already
+                    listed, which produced a second row for the same file.
+
+                    Offered for any kind, not only last year's letter: a scan
+                    lists notices of assessment and financial statements too, and
+                    refusing to accept one of those by hand would leave a
+                    reviewer looking at a document they can see is right.
+
+                    Only on a Karbon-located candidate: an attached file is
+                    already the confirmed one, and there is nothing to choose.
+                  */}
+                  <td>
+                    {!document.confirmedAt && document.karbonDocumentId ? (
+                      <ActionForm
+                        action={useSourceDocumentCandidate}
+                        csrfToken={csrfToken}
+                        submitLabel="Accept this one"
+                        variant="secondary"
+                        confirm={`Accept ${document.fileName} for this engagement? Its values are read and offered as suggestions; nothing is carried forward without a reviewer confirming it.`}
+                      >
+                        <input type="hidden" name="sourceDocumentId" value={document.id} />
+                      </ActionForm>
+                    ) : (
+                      <span className="text-slate-500">—</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}

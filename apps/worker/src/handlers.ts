@@ -2,6 +2,7 @@ import {
   NotificationEmailService,
   enqueueClientDocumentScan,
   enqueuePreparation,
+  extractorFor,
   maybeStartCoverLetter,
   maybeStartGeneration,
   putExtractedField,
@@ -11,7 +12,7 @@ import {
   type JobHandler,
   type JobType,
 } from '@element/services';
-import { extractPdfText, deriveTaxYear, DeterministicExtractor, selectPriorYearDocument } from '@element/integrations';
+import { extractPdfText, deriveTaxYear, DeterministicExtractor } from '@element/integrations';
 import { detectCheckboxStates, extractParagraphs, isPdf, parseManifest } from '@element/documents';
 import {
   newCorrelationId,
@@ -339,189 +340,35 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
     },
 
     // -------------------------------------------------- Prior-year documents
+    /**
+     * Kept only to drain rows already queued when the scan replaced this.
+     *
+     * This used to be a second, narrower reader of the same three Karbon scopes
+     * — and it threw away every document it had downloaded and scored except the
+     * one it picked. `SCAN_CLIENT_DOCUMENTS` reads the same places, scores the
+     * same candidates and hands them to the same chooser, and keeps what it
+     * read; two implementations of that would be two things to keep agreeing.
+     *
+     * Deleting the handler outright would dead-letter whatever is mid-flight in
+     * the live queue at deploy, so it forwards instead. Nothing enqueues it any
+     * more, and it goes a release later.
+     */
     LOCATE_PRIOR_YEAR_DOCUMENTS: async ({ job, logger }) => {
       const engagementId = requireString(job.payload, 'engagementId');
-      const { karbon } = await context.providers();
 
-      const engagement = await context.prisma.engagement.findUniqueOrThrow({
-        where: { id: engagementId },
-        include: { client: true, karbonWorkItem: true, participants: true },
-      });
-
-      await context.workflow.transition({
+      const outcome = await enqueueClientDocumentScan(
+        { prisma: context.prisma, queue: context.queue },
         engagementId,
-        to: 'LOCATING_SOURCE_DOCUMENTS',
-        reason: 'Searching Karbon for the prior-year letter',
-        correlationId: job.correlationId,
-      });
+        job.correlationId,
+      );
 
-      // Search order: current work item, then prior-year work items, then the
-      // client-level document area.
-      const scopes: { workItemKey?: string; entityKey?: string }[] = [];
-      if (engagement.karbonWorkItem?.karbonKey) scopes.push({ workItemKey: engagement.karbonWorkItem.karbonKey });
-
-      if (engagement.client.karbonEntityKey) {
-        const priorItems = await karbon.searchWorkItems({
-          clientKey: engagement.client.karbonEntityKey,
-          year: engagement.taxYear - 1,
-          limit: 25,
-        });
-        for (const item of priorItems) scopes.push({ workItemKey: item.workItemKey });
-        scopes.push({ entityKey: engagement.client.karbonEntityKey });
-      }
-
-      const documentTypeByEngagement: Record<string, DocumentType> = {
-        T1_JOINT: 'T1_JOINT_ENGAGEMENT_LETTER',
-        T1_SINGLE: 'T1_SINGLE_ENGAGEMENT_LETTER',
-        T2: 'T2_ENGAGEMENT_LETTER',
-        T3: 'T3_ENGAGEMENT_LETTER',
-      };
-
-      const candidates: Parameters<typeof selectPriorYearDocument>[0][number][] = [];
-
-      // The hash of each candidate's *bytes*, kept beside the candidates.
-      //
-      // `source_document.file_hash` is documented as "SHA-256 of the retrieved
-      // file", and the upload path hashes the stored bytes. This handler hashed
-      // the extracted *text* instead, which had two consequences. A document
-      // located in Karbon and the same file attached by hand never compared
-      // equal, defeating the duplicate check they share. And every candidate
-      // whose text could not be read hashed to `sha256Hex('')` — so they
-      // collided on the unique key of engagement, hash and kind, and all but one
-      // vanished. An encrypted signed PDF, which pdf.js refuses to open at all,
-      // is the commonest document that reads as empty, and last year's *signed*
-      // letter is the commonest thing anybody is looking for.
-      const hashByDocumentId = new Map<string, string>();
-
-      for (const scope of scopes) {
-        const documents = await karbon.listDocuments(scope);
-        for (const document of documents) {
-          if (!/\.(docx|pdf)$/i.test(document.fileName)) continue;
-
-          const downloaded = await karbon.downloadDocument(document.documentId, scope).catch(() => null);
-          if (!downloaded) continue;
-
-          // File names are a hint only; the text is what actually verifies it.
-          const text = /\.pdf$/i.test(document.fileName)
-            ? ((await extractPdfText(downloaded.content).catch(() => null))?.fullText ?? '')
-            : (await extractParagraphs(downloaded.content).catch(() => [])).join('\n');
-
-          hashByDocumentId.set(document.documentId, sha256Hex(downloaded.content));
-
-          candidates.push({
-            documentId: document.documentId,
-            fileName: document.fileName,
-            karbonWorkItemKey: scope.workItemKey ?? null,
-            text,
-          });
-        }
-      }
-
-      const outcome = selectPriorYearDocument(candidates, {
-        clientLegalName: engagement.client.legalName,
-        engagementType: engagement.engagementType,
-        documentType: documentTypeByEngagement[engagement.engagementType] as DocumentType,
-        priorTaxYear: engagement.taxYear - 1,
-        corporationName: engagement.engagementType === 'T2' ? engagement.client.legalName : null,
-        trustName: engagement.engagementType === 'T3' ? engagement.client.legalName : null,
-        taxpayerNames: engagement.participants
-          .filter((p) => p.role === 'TAXPAYER_1' || p.role === 'TAXPAYER_2')
-          .map((p) => p.fullLegalName),
-        businessNumber: engagement.client.businessNumber,
-        t3AccountNumber: engagement.client.trustAccountNumber,
-        yearEndIso: engagement.yearEnd?.toISOString().slice(0, 10) ?? null,
-        karbonWorkItemKey: engagement.karbonWorkItem?.karbonKey ?? null,
-      });
-
-      // Record every candidate so the reviewer can see what was considered.
-      for (const ranked of outcome.ranked) {
-        const candidate = candidates.find((entry) => entry.documentId === ranked.documentId);
-        if (!candidate) continue;
-
-        const fileHash = hashByDocumentId.get(candidate.documentId) ?? sha256Hex(candidate.text);
-
-        await context.prisma.sourceDocument.upsert({
-          where: {
-            engagementId_fileHash_kind: {
-              engagementId,
-              fileHash,
-              kind: 'PRIOR_YEAR_ENGAGEMENT_LETTER',
-            },
-          },
-          create: {
-            engagementId,
-            kind: 'PRIOR_YEAR_ENGAGEMENT_LETTER',
-            fileName: candidate.fileName,
-            karbonDocumentId: candidate.documentId,
-            karbonWorkItemKey: candidate.karbonWorkItemKey,
-            fileHash,
-            verificationScore: ranked.score,
-            verificationDetail: { signals: ranked.signals, disqualifiers: ranked.disqualifiers } as never,
-            confirmedAt: outcome.selected?.documentId === ranked.documentId ? new Date() : null,
-          },
-          update: { verificationScore: ranked.score },
-        });
-      }
-
-      if (outcome.requiresUserChoice || !outcome.selected) {
-        // Fill the picker for the person who now has to choose.
-        //
-        // This is the moment the whole-library catalogue earns its cost. The
-        // targeted search usually settles it alone and the catalogue is never
-        // needed; when it cannot, somebody picks from what Karbon holds — and
-        // that picker reads `KarbonClientDocument`, which nothing populates
-        // until a sync runs. So the reviewer arrived at a chooser with nothing
-        // in it, and a link telling them to go and run the sync themselves.
-        //
-        // Both outcomes reach here — several plausible candidates, or none
-        // confident — and both end the same way, with a person deciding. Keyed
-        // per client, so several engagements for one client do not each re-read
-        // a library that takes tens of requests to assemble.
-        if (engagement.client.karbonEntityKey) {
-          await context.queue.enqueue({
-            jobType: 'SYNC_CLIENT_DOCUMENTS',
-            idempotencyKey: `library_for_choice_${engagement.client.id}`,
-            payload: { clientId: engagement.client.id },
-            correlationId: job.correlationId,
-          });
-        }
-
-        await context.workflow.transition({
-          engagementId,
-          to: 'SOURCE_DOCUMENT_REVIEW_REQUIRED',
-          reason: outcome.reason,
-          correlationId: job.correlationId,
-        });
-        logger.info('Prior-year document needs a human decision', { engagementId, reason: outcome.reason });
-        return { requiresUserChoice: true, candidates: outcome.ranked.length };
-      }
-
-      // Enqueue first, and only then say the engagement is extracting.
-      //
-      // The order used to be the other way round, and the enqueue's answer was
-      // not read. Dedup is by key across every state including `SUCCEEDED`, so
-      // re-selecting a document that had been read before flipped the status and
-      // created no job. Nothing failed, so the exhausted-retry hook never fired,
-      // and the engagement sat at "extracting data" until job retention
-      // eventually freed the key.
-      const queued = await context.queue.enqueueRerunnable({
-        jobType: 'EXTRACT_DOCUMENT_TEXT',
-        idempotencyKey: `extract_${engagementId}_${outcome.selected.documentId}`,
-        payload: { engagementId, karbonDocumentId: outcome.selected.documentId },
+      logger.info('Forwarded a prior-year search to the full document scan', {
         engagementId,
-        correlationId: job.correlationId,
+        enqueued: outcome.enqueued,
+        reason: outcome.reason,
       });
 
-      if (queued.willRun) {
-        await context.workflow.transition({
-          engagementId,
-          to: 'EXTRACTING_DATA',
-          reason: outcome.reason,
-          correlationId: job.correlationId,
-        });
-      }
-
-      return { selected: outcome.selected.documentId, score: outcome.selected.score, extracting: queued.willRun };
+      return { forwardedToScan: outcome.enqueued, reason: outcome.reason };
     },
 
     /**
@@ -649,7 +496,25 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
             requiresOcr: false,
           };
 
-      const extractor = new DeterministicExtractor('ENGAGEMENT_LETTER');
+      // Which patterns to read this with follows from what the document is.
+      // The scan's table lets a reviewer accept any kind by hand — a notice of
+      // assessment, last year's statements — and until this looked at the kind,
+      // every one of them was read with engagement-letter patterns.
+      //
+      // A null kind is a document carrying nothing this letter needs, such as a
+      // trial balance. Saying so beats pattern-matching for the sake of it and
+      // reporting that twenty-two tokens were missing from it.
+      const extractorKind = source ? extractorFor(source.kind) : 'ENGAGEMENT_LETTER';
+      if (!extractorKind) {
+        return {
+          extracted: 0,
+          userMessage: `${source?.fileName ?? 'That document'} is filed as ${(source?.kind ?? '')
+            .replace(/_/g, ' ')
+            .toLowerCase()}, which carries none of the values this letter needs. Nothing was read from it.`,
+        };
+      }
+
+      const extractor = new DeterministicExtractor(extractorKind);
       const wanted = [
         'corporation.legal_name',
         'corporation.business_number',

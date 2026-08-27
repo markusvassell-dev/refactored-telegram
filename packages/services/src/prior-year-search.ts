@@ -44,58 +44,24 @@ export interface PriorYearSearchDeps {
   queue: JobQueue;
 }
 
-export async function enqueuePriorYearSearch(
-  deps: PriorYearSearchDeps,
-  engagementId: string,
-  correlationId: string,
-  options: { force?: boolean } = {},
-): Promise<PriorYearSearchOutcome> {
-  const engagement = await deps.prisma.engagement.findUnique({
-    where: { id: engagementId },
-    select: {
-      status: true,
-      client: { select: { karbonEntityKey: true } },
-      karbonWorkItem: { select: { karbonKey: true } },
-    },
-  });
-
-  if (!engagement) return { enqueued: false, deduplicated: false, reason: 'The engagement no longer exists.' };
-
-  // Nothing to search. Saying which link is missing is the difference between
-  // a fixable message and "no documents found".
-  if (!engagement.client.karbonEntityKey && !engagement.karbonWorkItem?.karbonKey) {
-    return {
-      enqueued: false,
-      deduplicated: false,
-      reason:
-        'This engagement is not linked to Karbon — neither the client nor a work item carries a Karbon key — so there is nowhere to search. Attach last year’s letter below.',
-    };
-  }
-
-  if (!PRIOR_YEAR_SEARCH_STATES.has(engagement.status)) {
-    return {
-      enqueued: false,
-      deduplicated: false,
-      reason: `Searching would move this engagement back to locating source documents, which is not allowed from ${engagement.status
-        .replace(/_/g, ' ')
-        .toLowerCase()}.`,
-    };
-  }
-
-  const result = await deps.queue.enqueue({
-    jobType: 'LOCATE_PRIOR_YEAR_DOCUMENTS',
-    // Stable per engagement so re-running preparation does not search twice;
-    // an explicit re-run asks for a fresh look and gets its own key.
-    idempotencyKey: options.force
-      ? `locate_prior_year_${engagementId}_${Date.now()}`
-      : `locate_prior_year_${engagementId}`,
-    payload: { engagementId },
-    engagementId,
-    correlationId,
-  });
-
-  return { enqueued: true, deduplicated: result.deduplicated };
-}
+/*
+ * `enqueuePriorYearSearch` was here, and is deliberately gone.
+ *
+ * The scan below reads the same three scopes, scores the same candidates and
+ * hands them to the same chooser — so keeping a second button that searched the
+ * same places more narrowly would have asked a reviewer to know which of two
+ * searches they wanted. Every caller now enqueues the scan.
+ *
+ * It could not simply stay unused: the reachability guard reads these files for
+ * `jobType:` strings, so an enqueue helper nothing calls would have gone on
+ * reporting `LOCATE_PRIOR_YEAR_DOCUMENTS` as reachable. A guard satisfied by a
+ * dead reference is worse than the dead code, because it is the one thing that
+ * was supposed to notice.
+ *
+ * Its handler survives as a shim that enqueues the scan, for rows already in
+ * flight in the live database when this ships; that is what the guard's
+ * unreachable-by-design list now records, and it can be deleted a release later.
+ */
 
 
 /**

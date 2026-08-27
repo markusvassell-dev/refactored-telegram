@@ -48,7 +48,17 @@ export default async function EngagementDetailPage({ params }: { params: Promise
       reviewer: true,
       finalApprover: true,
       participants: { orderBy: { signingOrder: 'asc' } },
-      sourceDocuments: { orderBy: { verificationScore: 'desc' } },
+      // `evidence` is what lets the table say how many values a document
+      // actually supplied. A score says how well it was identified; that is a
+      // different question from whether it was any use.
+      sourceDocuments: {
+        orderBy: [{ verificationScore: 'desc' }, { fileName: 'asc' }, { id: 'desc' }],
+        include: { evidence: { select: { extractedFieldId: true } } },
+      },
+      // Newest first, and only the last one: the panel reports the most recent
+      // read, and an older scan's counts would describe a library that has since
+      // been read again.
+      sourceDocumentScans: { orderBy: [{ startedAt: 'desc' }, { id: 'desc' }], take: 1 },
       documentVersions: {
         orderBy: { versionNumber: 'desc' },
         include: { approver: true, creator: true, templateVersion: true },

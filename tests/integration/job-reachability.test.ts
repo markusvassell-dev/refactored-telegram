@@ -49,6 +49,14 @@ const UNREACHABLE_BY_DESIGN: Partial<Record<JobType, string>> = {
   // has no caller until cover-letter sources are pulled from Karbon.
   EXTRACT_COVER_LETTER_DATA: 'No caller until cover-letter sources are pulled from Karbon rather than uploaded.',
 
+  // Superseded by SCAN_CLIENT_DOCUMENTS, which reads the same three scopes,
+  // scores the same candidates and hands them to the same chooser — and keeps
+  // what it read. Its handler is now a shim that enqueues the scan, kept only so
+  // rows already queued when that shipped do not dead-letter. Nothing enqueues
+  // it any more, and the handler goes a release later.
+  LOCATE_PRIOR_YEAR_DOCUMENTS:
+    'Superseded by SCAN_CLIENT_DOCUMENTS. The handler is a shim draining in-flight rows; delete it a release later.',
+
   // Superseded deliberately: `CoverLetterService.approve` now calls
   // `detectStaleSources` directly, before it reads the staleness flag the
   // delivery gate depends on. A background job could not have been the answer
@@ -136,6 +144,31 @@ describe('background job reachability', () => {
     const missing = JOB_TYPES.filter((jobType) => !handled.has(jobType));
 
     expect(missing, `Declared in JOB_TYPES with no handler: ${missing.join(', ')}`).toEqual([]);
+  });
+
+  /**
+   * A shim exempted for forwarding has to actually forward.
+   *
+   * `LOCATE_PRIOR_YEAR_DOCUMENTS` is exempted above on the strength of one
+   * claim: that it hands its work to the scan, so rows already queued when the
+   * scan replaced it still get done. A shim that quietly returned instead would
+   * satisfy every check here — it has a handler, and its exemption explains why
+   * nothing enqueues it — while silently dropping those jobs. That is the same
+   * shape as the defect this file was written for, one layer in.
+   */
+  it('forwards the superseded search to the scan rather than dropping it', async () => {
+    const source = await readFile(join(process.cwd(), 'apps/worker/src/handlers.ts'), 'utf8');
+
+    const handler = source.slice(
+      source.indexOf('    LOCATE_PRIOR_YEAR_DOCUMENTS: async ('),
+      source.indexOf('    SCAN_CLIENT_DOCUMENTS: async ('),
+    );
+
+    expect(handler, 'The LOCATE_PRIOR_YEAR_DOCUMENTS handler was not found before SCAN_CLIENT_DOCUMENTS.').not.toBe('');
+    expect(
+      handler.includes('enqueueClientDocumentScan'),
+      'LOCATE_PRIOR_YEAR_DOCUMENTS is exempted from the reachability check because it forwards to the scan. It no longer does, so in-flight jobs are being dropped.',
+    ).toBe(true);
   });
 
   it('keeps the exemption list honest', async () => {
