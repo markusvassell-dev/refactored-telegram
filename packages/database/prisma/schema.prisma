@@ -166,6 +166,9 @@ enum SourceDocumentKind {
   TRIAL_BALANCE
   INSTALMENT_SCHEDULE
   PAYMENT_SUMMARY
+  /// The single most useful CRA source for a business number, year-end and
+  /// balance owing. Previously buried in OTHER_SUPPORTING_SCHEDULE.
+  NOTICE_OF_ASSESSMENT
   T1_RETURN
   T183
   OTHER_SUPPORTING_SCHEDULE

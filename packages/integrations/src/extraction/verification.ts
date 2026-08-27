@@ -53,6 +53,19 @@ export interface VerificationOutcome {
   confident: boolean;
   /** Reasons the document cannot be used at all. */
   disqualifiers: string[];
+  /**
+   * The weight actually in play, and how much of it matched.
+   *
+   * The score is a ratio, and a ratio hides how much was being asked. A client
+   * whose record carries no business number and no year-end has those signals
+   * excluded from the denominator entirely, so a document matching only the name
+   * and the document-type marker scores 1.00 — a perfect mark out of very
+   * little. Anything acting on the score needs to see the denominator too.
+   */
+  applicableWeight: number;
+  matchedWeight: number;
+  /** The keys that positively matched, so a caller can require a specific one. */
+  matchedKeys: string[];
 }
 
 const AUTO_ACCEPT_THRESHOLD = 0.7;
@@ -176,7 +189,7 @@ export function verifyCandidate(
     'year_end',
     'Year-end matches',
     2,
-    Boolean(expectation.yearEndIso) && text.includes(normalize(formatYearEnd(expectation.yearEndIso as string))),
+    Boolean(expectation.yearEndIso) && matchesYearEnd(text, expectation.yearEndIso as string),
   );
 
   // Karbon linkage.
@@ -226,6 +239,9 @@ export function verifyCandidate(
     signals,
     confident: disqualifiers.length === 0 && score >= AUTO_ACCEPT_THRESHOLD,
     disqualifiers,
+    applicableWeight: totalWeight,
+    matchedWeight,
+    matchedKeys: signals.filter((signal) => signal.matched).map((signal) => signal.key),
   };
 }
 
@@ -243,24 +259,164 @@ function isApplicable(key: string, expectation: VerificationExpectation): boolea
       return Boolean(expectation.t3AccountNumber);
     case 'year_end':
       return Boolean(expectation.yearEndIso);
-    case 'work_item':
-      return Boolean(expectation.karbonWorkItemKey);
     case 'signed':
     case 'adobe_agreement':
       return false; // Bonus signals; they never penalise a candidate.
+    case 'filename_hint':
+    case 'work_item':
+      // Also bonuses, for the same reason, and this file already says so about
+      // the filename: "a weak, supporting signal only — never sufficient on its
+      // own". A hint that can *deny* acceptance is not a hint. Leaving them in
+      // the denominator meant a genuine prior-year letter with an unhelpful
+      // filename scored 0.909 instead of 1.000, and one filed on an unexpected
+      // work item lost a further point — enough to put a real letter under a
+      // 90% bar while proving nothing about whose document it is.
+      return false;
     default:
       return true;
   }
 }
 
-function formatYearEnd(iso: string): string {
+const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+] as const;
+
+/**
+ * Every way the same year-end is legitimately written down.
+ *
+ * This used to be one rendering — "March 31, 2025" and nothing else — which
+ * made a signal worth two points turn on a typographical choice the firm does
+ * not control. A prior-year letter printing "31 March 2025" scored 0.818 rather
+ * than 1.000 and would be refused by a 90% gate, for being correct in the wrong
+ * house style.
+ *
+ * Deterministic and exhaustive rather than fuzzy: each of these is the same
+ * date, and nothing here matches a date that is not.
+ */
+export function yearEndRenderings(iso: string): string[] {
   const date = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(date.getTime())) return iso;
-  const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
+  if (Number.isNaN(date.getTime())) return [iso];
+
+  const year = date.getUTCFullYear();
+  const monthIndex = date.getUTCMonth();
+  const day = date.getUTCDate();
+  const month = MONTH_NAMES[monthIndex] as string;
+  const abbreviated = month.slice(0, 3);
+  const mm = String(monthIndex + 1).padStart(2, '0');
+  const dd = String(day).padStart(2, '0');
+
+  return [
+    `${year}-${mm}-${dd}`,
+    `${year}${mm}${dd}`,
+    `${month} ${day}, ${year}`,
+    `${month} ${day} ${year}`,
+    `${day} ${month} ${year}`,
+    `${day} ${month}, ${year}`,
+    `${abbreviated} ${day}, ${year}`,
+    `${abbreviated}. ${day}, ${year}`,
+    `${day} ${abbreviated} ${year}`,
+    `${dd}/${mm}/${year}`,
+    `${mm}/${dd}/${year}`,
+    `${dd}-${mm}-${year}`,
+    `${mm}-${dd}-${year}`,
   ];
-  return `${months[date.getUTCMonth()]} ${date.getUTCDate()}, ${date.getUTCFullYear()}`;
+}
+
+function matchesYearEnd(normalizedText: string, iso: string): boolean {
+  return yearEndRenderings(iso).some((rendering) => normalizedText.includes(normalize(rendering)));
+}
+
+/**
+ * Whether a document may be read automatically during a bulk scan.
+ *
+ * A scan reads everything a client has and takes values out of whatever clears
+ * this bar, so the bar decides what ends up on a letter somebody signs. Ninety
+ * per cent was asked for and is here — but the ratio alone will not do the job,
+ * for a reason that runs backwards.
+ *
+ * `isApplicable` drops a signal from the denominator when the client record
+ * lacks the thing it checks. A client with a business number and a year-end on
+ * file is scored out of sixteen and a half points; a client with only a legal
+ * name is scored out of ten and a half. So the *less* is known about a client,
+ * the easier a high score becomes: a document carrying the name, the
+ * document-type marker and the year scores a flat 1.00 while proving almost
+ * nothing about whose document it is. It could be the firm's blank template, or
+ * another client's letter with a similar name.
+ *
+ * Hence the floor. A strong identifier must have *positively matched* — not
+ * merely have been inapplicable. A signal that is absent can never be evidence,
+ * so absence removes it from the numerator and from the set of things that can
+ * establish identity: it stops being able to help at all.
+ *
+ * Additive by design. `AUTO_ACCEPT_THRESHOLD` and `confident` are untouched:
+ * those govern *identifying the prior-year letter*, which is a different
+ * question from *may I read values out of this*, and raising them would quietly
+ * change what "confirmed" means for a file somebody attached by hand.
+ */
+export const BULK_ACCEPT_SCORE = 0.9;
+
+/** For a message, not for money — the repo's decimal helpers are for the latter. */
+function asPercentage(ratio: number): string {
+  return `${(ratio * 100).toFixed(0)}%`;
+}
+
+/** The identifiers that can establish whose document this is. */
+const STRONG_IDENTIFIERS = ['business_number', 't3_account_number'] as const;
+
+export type IdentityBasis = 'STRONG_IDENTIFIER' | 'NAME_AND_PERIOD' | 'NONE';
+
+export interface AcceptanceDecision {
+  accepted: boolean;
+  score: number;
+  identityBasis: IdentityBasis;
+  /** Why not, in words a reviewer can act on. Empty when accepted. */
+  refusals: string[];
+}
+
+export interface BulkAcceptInput {
+  /** False when the file had no readable text layer, or none was extracted. */
+  readable: boolean;
+  minimumScore?: number;
+}
+
+export function decideBulkAccept(outcome: VerificationOutcome, input: BulkAcceptInput): AcceptanceDecision {
+  const minimumScore = input.minimumScore ?? BULK_ACCEPT_SCORE;
+  const matched = new Set(outcome.matchedKeys);
+  const refusals: string[] = [];
+
+  const identityBasis: IdentityBasis = STRONG_IDENTIFIERS.some((key) => matched.has(key))
+    ? 'STRONG_IDENTIFIER'
+    : matched.has('client_legal_name') && matched.has('year_end')
+      ? 'NAME_AND_PERIOD'
+      : 'NONE';
+
+  if (outcome.disqualifiers.length > 0) refusals.push(...outcome.disqualifiers);
+
+  // An unreadable file is unreadable, never "below the bar". Reporting a scanned
+  // PDF as a low score sends somebody looking for a better document when what
+  // they need is to know it has no text in it.
+  if (!input.readable) {
+    refusals.push('No text could be read from this document, so nothing was checked against it.');
+  }
+
+  if (input.readable && outcome.score < minimumScore) {
+    refusals.push(
+      `Scored ${asPercentage(outcome.score)} against this client, below the ${asPercentage(
+        minimumScore,
+      )} needed to read it automatically.`,
+    );
+  }
+
+  if (input.readable && identityBasis === 'NONE') {
+    refusals.push(
+      outcome.applicableWeight < 8
+        ? 'There is too little on this client’s record to check a document against — no business number and no year-end — so nothing here identifies it as theirs.'
+        : 'Nothing identifies this document as this client’s: neither a matching business number nor both the client name and the year-end.',
+    );
+  }
+
+  return { accepted: refusals.length === 0, score: outcome.score, identityBasis, refusals };
 }
 
 export interface SelectionOutcome {
