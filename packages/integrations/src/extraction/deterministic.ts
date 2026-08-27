@@ -138,6 +138,68 @@ const COVER_LETTER_PATTERNS: Pattern[] = [
   },
 ];
 
+/**
+ * CRA forms and accounting statements.
+ *
+ * The engagement-letter patterns are anchored on this firm's own wording — "To:",
+ * "Attention:", "Preferred email" — so pointing them at a T2 return finds
+ * nothing. These are anchored on CRA's form labels and the standard headings of
+ * a compiled statement instead, which are not this firm's choices to make and so
+ * are stable across every client.
+ *
+ * Deliberately narrow. It reads identity and period and nothing else: no dates
+ * and no fees. A deadline here is computed from a rule, and last year's is
+ * simply wrong for this year; a fee comes from the pricing engine. A pattern
+ * that could supply either would be a way for a stale value to reach a letter
+ * past the thing that is supposed to decide it.
+ */
+const CRA_SOURCE_PATTERNS: Pattern[] = [
+  {
+    token: 'corporation.legal_name',
+    kind: 'STRING',
+    regexes: [
+      // The T2 jacket's own label.
+      /Corporation'?s? name\s*:?\s*(.+?)(?:\n|$)/i,
+      // Statements name the entity on the line above the statement title.
+      /^\s*(.+?)\s*\n\s*(?:Balance Sheet|Statement of Financial Position|Trial Balance)/im,
+      // A notice of assessment addresses the corporation directly.
+      /(?:Notice of (?:Re)?[Aa]ssessment)[\s\S]{0,120}?\n\s*([A-Z][^\n]{3,80}(?:Ltd\.?|Inc\.?|Corp\.?|Limited|Incorporated))/,
+    ],
+  },
+  {
+    token: 'corporation.business_number',
+    kind: 'STRING',
+    regexes: [
+      // The highest-value pattern in the set: this is the identifier the
+      // acceptance gate wants, and the one a client record most often lacks.
+      /Business Number\s*\(?BN\)?\s*:?\s*([0-9]{5}\s?[0-9]{4}\s?[A-Z]{2}\s?[0-9]{4})/i,
+      /\b([0-9]{9}\s?RC\s?[0-9]{4})\b/,
+      /\bBN\s*\/?\s*(?:RC)?\s*:?\s*([0-9]{5}\s?[0-9]{4}\s?RC\s?[0-9]{4})\b/i,
+    ],
+  },
+  {
+    token: 'corporation.year_end',
+    kind: 'DATE',
+    regexes: [
+      new RegExp(`Tax(?:ation)? year[- ]end\\s*:?\\s*${DATE}`, 'i'),
+      new RegExp(`(?:Year ended|For the year ended|As at)\\s*:?\\s*${DATE}`, 'i'),
+    ],
+  },
+  {
+    token: 'signer.officer_name',
+    kind: 'STRING',
+    regexes: [
+      /Name of (?:the )?(?:authorized )?signing officer\s*:?\s*(.+?)(?:\n|$)/i,
+      /I,\s*(.+?),\s*(?:am|certify)/i,
+    ],
+  },
+  {
+    token: 'signer.officer_title',
+    kind: 'STRING',
+    regexes: [/Position, office or rank\s*:?\s*(.+?)(?:\n|$)/i],
+  },
+];
+
 function parseValue(raw: string, kind: Pattern['kind']): Partial<ExtractedValue> {
   const trimmed = raw.replace(/\s+/g, ' ').trim();
 
@@ -159,6 +221,15 @@ function parseValue(raw: string, kind: Pattern['kind']): Partial<ExtractedValue>
   return { value: trimmed };
 }
 
+/** Which pattern set to run. The default keeps every existing caller unchanged. */
+export type ExtractorKind = 'ENGAGEMENT_LETTER' | 'COVER_LETTER_SOURCE' | 'CRA_SOURCE';
+
+const PATTERNS_BY_KIND: Record<ExtractorKind, Pattern[]> = {
+  ENGAGEMENT_LETTER: ENGAGEMENT_LETTER_PATTERNS,
+  COVER_LETTER_SOURCE: COVER_LETTER_PATTERNS,
+  CRA_SOURCE: CRA_SOURCE_PATTERNS,
+};
+
 export class DeterministicExtractor implements FieldExtractor {
   readonly name = 'deterministic-patterns';
   readonly method = 'DETERMINISTIC_PATTERN' as const;
@@ -166,8 +237,8 @@ export class DeterministicExtractor implements FieldExtractor {
 
   private readonly patterns: Pattern[];
 
-  constructor(kind: 'ENGAGEMENT_LETTER' | 'COVER_LETTER_SOURCE' = 'ENGAGEMENT_LETTER') {
-    this.patterns = kind === 'ENGAGEMENT_LETTER' ? ENGAGEMENT_LETTER_PATTERNS : COVER_LETTER_PATTERNS;
+  constructor(kind: ExtractorKind = 'ENGAGEMENT_LETTER') {
+    this.patterns = PATTERNS_BY_KIND[kind];
   }
 
   supports(token: string): boolean {

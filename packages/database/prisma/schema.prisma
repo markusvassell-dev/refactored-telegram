@@ -254,6 +254,20 @@ enum IntegrationProvider {
   AI_EXTRACTION
 }
 
+/// Where a disagreement came from.
+///
+/// Reconciliation compares the sources it can see — Karbon against the prior
+/// year — and clears an unresolved conflict once they agree. A scan reading a
+/// whole library produces a *different* disagreement: two documents saying
+/// different things under the same source. Without telling them apart,
+/// reconciliation deletes the scan's question the moment Karbon happens to
+/// agree with whichever document won, and a decision a person still needed to
+/// make disappears silently.
+enum ConflictOrigin {
+  CROSS_SOURCE
+  CROSS_DOCUMENT
+}
+
 enum ConflictStatus {
   UNRESOLVED
   RESOLVED
@@ -869,6 +883,8 @@ model FieldConflict {
   recommendedValue  String?
   recommendedSource ValueSource?
   status            ConflictStatus @default(UNRESOLVED)
+  /// Which kind of disagreement this is, and therefore who may clear it.
+  origin            ConflictOrigin @default(CROSS_SOURCE)
   resolvedValue     String?
   resolvedSource    ValueSource?
   resolvedByUserId  String?

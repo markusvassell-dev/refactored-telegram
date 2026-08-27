@@ -11,6 +11,7 @@ import {
   type ExtractionMethod,
   type FeeKind,
   type Logger,
+  valuesAgree,
   type ValueSource,
 } from '@element/shared';
 import type { PricingService } from './pricing-service.js';
@@ -130,19 +131,8 @@ export function factToken(key: string): string {
   return `${FACT_TOKEN_PREFIX}${key}`;
 }
 
-/** Compares two values the way a reviewer would, ignoring cosmetic differences. */
-export function valuesAgree(left: string | null, right: string | null): boolean {
-  const normalize = (value: string | null): string =>
-    (value ?? '')
-      .replace(/[‘’]/g, "'")
-      .replace(/[“”]/g, '"')
-      .replace(/[–—]/g, '-')
-      .replace(/[\s,.]+/g, ' ')
-      .trim()
-      .toLowerCase();
-
-  return normalize(left) === normalize(right);
-}
+/** Re-exported so existing importers of this module keep working. */
+export { valuesAgree };
 
 export class PreparationService {
   constructor(private readonly deps: PreparationDeps) {}
@@ -612,7 +602,15 @@ export class PreparationService {
       const agree = [...distinct].every((value) => valuesAgree(value, [...distinct][0] as string));
       if (distinct.size < 2 || agree) {
         // They agree; clear any stale unresolved conflict for this token.
-        await this.deps.prisma.fieldConflict.deleteMany({ where: { engagementId, token, status: 'UNRESOLVED' } });
+        //
+        // Scoped to the disagreements *this* function raises. A scan reading a
+        // whole library raises a different kind — two documents disagreeing
+        // under one source — which this comparison cannot see and must not
+        // clear. Unscoped, Karbon agreeing with whichever document won would
+        // delete a question somebody still had to answer, silently.
+        await this.deps.prisma.fieldConflict.deleteMany({
+          where: { engagementId, token, status: 'UNRESOLVED', origin: 'CROSS_SOURCE' },
+        });
         continue;
       }
 
