@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PrismaClient } from '@element/database';
 import { createAuditLogger } from '@element/audit';
-import { FieldFormService } from '@element/services';
+import { libreOfficeConverter, parseManifest } from '@element/documents';
+import { createLogger } from '@element/shared';
+import { DocumentStore, FieldFormService, GenerationService, WorkflowService } from '@element/services';
 
 /**
  * The structured field editor, against the real seeded templates.
@@ -16,6 +18,25 @@ import { FieldFormService } from '@element/services';
 const prisma = new PrismaClient();
 const audit = createAuditLogger(prisma);
 const fields = new FieldFormService({ prisma, audit });
+
+// Generation is built here for one reason: to assert it and the form agree
+// about what a token's value is. Sharing a resolver is only worth anything if
+// something fails when they drift apart.
+const generation = new GenerationService({
+  prisma,
+  audit,
+  store: new DocumentStore({
+    prisma,
+    rootDirectory: '/tmp/element-engagements-tests/storage',
+    retentionHours: 72,
+    maxBytes: 25 * 1024 * 1024,
+    signingSecret: 'test-signing-secret-test-signing-secret',
+  }),
+  pdfConverter: libreOfficeConverter({ tempDirectory: '/tmp' }),
+  workflow: new WorkflowService(prisma, audit),
+  logger: createLogger({ level: 'error' }),
+  templateDirectory: `${process.cwd()}/templates/normalized`,
+});
 
 let clientId: string;
 let actorId: string;
@@ -229,6 +250,183 @@ describe('values decided elsewhere', () => {
     });
 
     expect(result.errors[0]?.message).toMatch(/Pricing tab/);
+  });
+
+  /**
+   * The bug this pins: read-only is not the same as absent.
+   *
+   * A deadline and a fee are decided elsewhere, so this form must not accept
+   * one typed into it — which it always got right. But it also read values from
+   * `extracted_field` alone, and fetched `calculated_date` selecting the token
+   * and deliberately *not* the result. So the five T2 deadlines and the fee
+   * were computed, stored, and printed on the letter while this screen reported
+   * every one of them outstanding, and marked them read-only, so nobody could
+   * supply what it claimed to be waiting for.
+   */
+  it('shows a calculated deadline’s value rather than reporting it outstanding', async () => {
+    const engagement = await newT2();
+
+    await prisma.calculatedDate.create({
+      data: {
+        engagementId: engagement.id,
+        token: 'dates.filing_due',
+        result: new Date(Date.UTC(nextTaxYear, 8, 30)),
+        ruleCode: 't2.filing_deadline',
+      },
+    });
+
+    const form = await fields.formFor(engagement.id);
+    const field = findField(form, 'dates.filing_due');
+
+    expect(field?.value).toBe(`${nextTaxYear}-09-30`);
+    expect(field?.ownership).toBe('CALCULATED_DATE');
+    expect(form.outstandingRequired).not.toContain('dates.filing_due');
+  });
+
+  it('prefers a reviewer’s override of a calculated deadline', async () => {
+    const engagement = await newT2();
+
+    await prisma.calculatedDate.create({
+      data: {
+        engagementId: engagement.id,
+        token: 'dates.filing_due',
+        result: new Date(Date.UTC(nextTaxYear, 8, 30)),
+        manualOverride: new Date(Date.UTC(nextTaxYear, 9, 15)),
+        overrideReason: 'Extension agreed with the client.',
+        ruleCode: 't2.filing_deadline',
+      },
+    });
+
+    const form = await fields.formFor(engagement.id);
+    expect(findField(form, 'dates.filing_due')?.value).toBe(`${nextTaxYear}-10-15`);
+  });
+
+  it('shows a calculated fee’s value rather than reporting it outstanding', async () => {
+    const engagement = await newT2();
+
+    await prisma.feeCalculation.create({
+      data: {
+        engagementId: engagement.id,
+        feeKind: 'T2_PREPARATION',
+        method: 'PERCENTAGE',
+        roundedFee: '1855.00',
+      },
+    });
+
+    const form = await fields.formFor(engagement.id);
+    const field = findField(form, 'pricing.t2_fee');
+
+    expect(field?.value).toBe('1855');
+    expect(field?.ownership).toBe('CALCULATED_FEE');
+    expect(form.outstandingRequired).not.toContain('pricing.t2_fee');
+  });
+
+  it('still reports a deadline outstanding when the rule could not work one out', async () => {
+    const engagement = await newT2();
+
+    await prisma.calculatedDate.create({
+      data: {
+        engagementId: engagement.id,
+        token: 'dates.filing_due',
+        result: null,
+        isBlocked: true,
+        blockedReason: 'The year-end is not known yet.',
+        ruleCode: 't2.filing_deadline',
+      },
+    });
+
+    const form = await fields.formFor(engagement.id);
+    expect(findField(form, 'dates.filing_due')?.value).toBeNull();
+    expect(form.outstandingRequired).toContain('dates.filing_due');
+  });
+
+  /**
+   * The guard against this happening again.
+   *
+   * Two readers of the same facts disagreeing is not a defect that gets fixed
+   * once — it is a shape. The form and the document now resolve through one
+   * function, and this fails the moment they stop.
+   */
+  it('agrees with generation about which tokens have a value', async () => {
+    const engagement = await newT2(true);
+
+    await prisma.calculatedDate.create({
+      data: {
+        engagementId: engagement.id,
+        token: 'dates.filing_due',
+        result: new Date(Date.UTC(nextTaxYear, 8, 30)),
+        ruleCode: 't2.filing_deadline',
+      },
+    });
+    await prisma.calculatedDate.create({
+      data: {
+        engagementId: engagement.id,
+        token: 'dates.target_completion',
+        result: new Date(Date.UTC(nextTaxYear, 7, 15)),
+        ruleCode: 't2.target_completion_date',
+      },
+    });
+    await prisma.feeCalculation.create({
+      data: {
+        engagementId: engagement.id,
+        feeKind: 'T2_PREPARATION',
+        method: 'PERCENTAGE',
+        roundedFee: '1855.00',
+      },
+    });
+    await fields.save({
+      engagementId: engagement.id,
+      actorId,
+      values: { 'corporation.legal_name': 'Parity Holdings Ltd.' },
+    });
+
+    const form = await fields.formFor(engagement.id);
+    const version = await prisma.templateVersion.findFirstOrThrow({
+      where: { id: form.templateVersionId as string },
+    });
+    const built = await generation.buildValues(engagement.id, parseManifest(version.manifest));
+
+    const populatedInForm = form.groups
+      .flatMap((group) => group.fields)
+      .filter((field) => field.value !== null && field.value !== '')
+      .map((field) => field.token)
+      .sort();
+
+    const populatedInDocument = Object.entries(built.values)
+      .filter(([, value]) => value !== '')
+      .map(([token]) => token)
+      .sort();
+
+    expect(populatedInForm).toEqual(populatedInDocument);
+  });
+
+  /**
+   * The one place they are allowed to differ, asserted so it stays the one
+   * place. With compilation not selected the letter prints "Not applicable" in
+   * the fee table rather than leaving a gap — a rendering decision, which is
+   * why it lives in generation and not in the shared resolver.
+   */
+  it('differs from generation only over the unselected compilation fee', async () => {
+    const engagement = await newT2(false);
+
+    const form = await fields.formFor(engagement.id);
+    const version = await prisma.templateVersion.findFirstOrThrow({
+      where: { id: form.templateVersionId as string },
+    });
+    const built = await generation.buildValues(engagement.id, parseManifest(version.manifest));
+
+    const inForm = new Set(
+      form.groups
+        .flatMap((group) => group.fields)
+        .filter((field) => field.value !== null && field.value !== '')
+        .map((field) => field.token),
+    );
+    const onlyInDocument = Object.entries(built.values)
+      .filter(([token, value]) => value !== '' && !inForm.has(token))
+      .map(([token]) => token);
+
+    expect(onlyInDocument).toEqual(['pricing.compilation_fee']);
+    expect(built.values['pricing.compilation_fee']).toBe('Not applicable');
   });
 
   it('refuses a token the approved template does not declare', async () => {

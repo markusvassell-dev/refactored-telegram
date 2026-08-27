@@ -49,6 +49,14 @@ const UNREACHABLE_BY_DESIGN: Partial<Record<JobType, string>> = {
   // has no caller until cover-letter sources are pulled from Karbon.
   EXTRACT_COVER_LETTER_DATA: 'No caller until cover-letter sources are pulled from Karbon rather than uploaded.',
 
+  // Superseded by SCAN_CLIENT_DOCUMENTS, which reads the same three scopes,
+  // scores the same candidates and hands them to the same chooser — and keeps
+  // what it read. Its handler is now a shim that enqueues the scan, kept only so
+  // rows already queued when that shipped do not dead-letter. Nothing enqueues
+  // it any more, and the handler goes a release later.
+  LOCATE_PRIOR_YEAR_DOCUMENTS:
+    'Superseded by SCAN_CLIENT_DOCUMENTS. The handler is a shim draining in-flight rows; delete it a release later.',
+
   // Superseded deliberately: `CoverLetterService.approve` now calls
   // `detectStaleSources` directly, before it reads the staleness flag the
   // delivery gate depends on. A background job could not have been the answer
@@ -138,6 +146,31 @@ describe('background job reachability', () => {
     expect(missing, `Declared in JOB_TYPES with no handler: ${missing.join(', ')}`).toEqual([]);
   });
 
+  /**
+   * A shim exempted for forwarding has to actually forward.
+   *
+   * `LOCATE_PRIOR_YEAR_DOCUMENTS` is exempted above on the strength of one
+   * claim: that it hands its work to the scan, so rows already queued when the
+   * scan replaced it still get done. A shim that quietly returned instead would
+   * satisfy every check here — it has a handler, and its exemption explains why
+   * nothing enqueues it — while silently dropping those jobs. That is the same
+   * shape as the defect this file was written for, one layer in.
+   */
+  it('forwards the superseded search to the scan rather than dropping it', async () => {
+    const source = await readFile(join(process.cwd(), 'apps/worker/src/handlers.ts'), 'utf8');
+
+    const handler = source.slice(
+      source.indexOf('    LOCATE_PRIOR_YEAR_DOCUMENTS: async ('),
+      source.indexOf('    SCAN_CLIENT_DOCUMENTS: async ('),
+    );
+
+    expect(handler, 'The LOCATE_PRIOR_YEAR_DOCUMENTS handler was not found before SCAN_CLIENT_DOCUMENTS.').not.toBe('');
+    expect(
+      handler.includes('enqueueClientDocumentScan'),
+      'LOCATE_PRIOR_YEAR_DOCUMENTS is exempted from the reachability check because it forwards to the scan. It no longer does, so in-flight jobs are being dropped.',
+    ).toBe(true);
+  });
+
   it('keeps the exemption list honest', async () => {
     const enqueued = await enqueuedJobTypes();
 
@@ -190,27 +223,47 @@ describe('background job reachability', () => {
     ).toEqual([]);
   });
 
-  it('starts the prior-year search from preparation, not only from a webhook', async () => {
+  it('reads the client’s documents from preparation, not only from a webhook', async () => {
     // The specific regression. The webhook alone is not enough: no tenant had
     // ever configured a Karbon status trigger, and `karbon_status_triggers` is
-    // seeded empty, so a webhook-only caller means the search never runs.
+    // seeded empty, so a webhook-only caller means nothing ever reads a document.
     //
-    // The literal `jobType` moved out of `actions.ts` when the helper moved to
-    // `@element/services` for the worker's rollover to share. Following the
-    // call rather than deleting the assertion: preparation must still reach the
-    // enqueue, and the enqueue must still exist — just one file further away.
+    // Followed twice now rather than deleted. The literal `jobType` first moved
+    // out of `actions.ts` into `@element/services` so the worker's rollover
+    // could share it; then the targeted prior-year search was replaced here by
+    // the whole-library scan, which scores the same candidates and hands them to
+    // the same chooser. What has to stay true is the property, not the name: a
+    // person pressing Prepare must reach an enqueue that reads documents.
     const actions = await readFile(join(process.cwd(), 'apps/web/src/app/actions.ts'), 'utf8');
     const helper = await readFile(
       join(process.cwd(), 'packages/services/src/prior-year-search.ts'),
       'utf8',
     );
 
-    expect(helper).toContain("jobType: 'LOCATE_PRIOR_YEAR_DOCUMENTS'");
-    expect(actions).toContain('enqueuePriorYearSearch');
+    expect(helper).toContain("jobType: 'SCAN_CLIENT_DOCUMENTS'");
+    expect(actions).toContain('enqueueClientDocumentScan');
 
     // Preparation must call it, not merely import it.
     const prepareBody = actions.slice(actions.indexOf('export async function prepareEngagement'));
-    expect(prepareBody.slice(0, 2_000)).toContain('priorYearSearch(engagementId');
+    expect(prepareBody.slice(0, 2_000)).toContain('scanClientDocumentsInBackground(engagementId');
+  });
+
+  it('prepares an engagement whether or not any document is found', async () => {
+    // The other half, and the reason the Matador engagement sat with its
+    // corporation name blank: `PREPARE_ENGAGEMENT` used to be enqueued from
+    // exactly one place, the last line of extraction. No document meant no
+    // preparation, and preparation is what records the client's own details.
+    const actions = await readFile(join(process.cwd(), 'apps/web/src/app/actions.ts'), 'utf8');
+    const handlers = await readFile(join(process.cwd(), 'apps/worker/src/handlers.ts'), 'utf8');
+    const helper = await readFile(
+      join(process.cwd(), 'packages/services/src/preparation-enqueue.ts'),
+      'utf8',
+    );
+
+    expect(helper).toContain("jobType: 'PREPARE_ENGAGEMENT'");
+    // Creating an engagement, and finishing a scan that found nothing.
+    expect(actions).toContain('prepareInBackground');
+    expect(handlers).toContain('enqueuePreparation');
   });
 
   it('reaches the rollover from both the webhook and the poll', async () => {

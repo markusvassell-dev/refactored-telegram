@@ -175,3 +175,25 @@ export const ENGAGEMENT_LETTER_BY_TYPE: Record<EngagementType, DocumentType> = {
 export function documentTypeForEngagement(engagementType: EngagementType): DocumentType {
   return ENGAGEMENT_LETTER_BY_TYPE[engagementType];
 }
+
+/**
+ * Compares two values the way a reviewer would, ignoring cosmetic differences.
+ *
+ * "ACME Holdings Ltd." and "ACME Holdings Ltd" are the same company, and asking
+ * a person to adjudicate a full stop teaches them to click through the ones that
+ * matter. Lives here rather than in a service because both the conflict
+ * reconciler and the cross-document merge need it, and two copies of a rule
+ * about when two values are the value would eventually disagree.
+ */
+export function valuesAgree(left: string | null, right: string | null): boolean {
+  const normalize = (value: string | null): string =>
+    (value ?? '')
+      .replace(/[‘’]/g, "'")
+      .replace(/[“”]/g, '"')
+      .replace(/[–—]/g, '-')
+      .replace(/[\s,.]+/g, ' ')
+      .trim()
+      .toLowerCase();
+
+  return normalize(left) === normalize(right);
+}

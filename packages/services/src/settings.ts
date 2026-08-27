@@ -55,6 +55,20 @@ export const SETTING_KEYS = {
    * engagement will say so rather than sending a letter nobody countersigned.
    */
   firmSignerUserId: 'firm_signer_user_id',
+  /**
+   * The firm's standard letter wording.
+   *
+   * Four required T2 fields are neither client data nor anything a document
+   * carries: they are what this firm always says about billing and terms. With
+   * no home they were retyped on every engagement, or left outstanding for
+   * ever. Set once here, and still overridable per engagement in the field
+   * editor. Empty means unset, and the engagement reports the field
+   * outstanding — which is the honest answer, not a guess.
+   */
+  letterBillingBasis: 'letter_default_billing_basis',
+  letterPaymentTerms: 'letter_default_payment_terms',
+  letterPaymentTermsShort: 'letter_default_payment_terms_short',
+  letterSpecialTerms: 'letter_default_special_terms',
 } as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[keyof typeof SETTING_KEYS];

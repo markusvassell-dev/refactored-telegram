@@ -234,6 +234,29 @@ async function seedSettings(): Promise<void> {
     { key: 'product_name', value: 'Element Engagements', description: 'Displayed product name.' },
     { key: 'ai_extraction_enabled', value: false, description: 'AI-assisted extraction is opt-in.' },
     { key: 'document_retention_hours', value: 72, description: 'Retention period for temporary working copies.' },
+    // The firm's standard letter wording. Seeded empty on purpose: an invented
+    // billing basis would print on a signed engagement letter, and a blank
+    // field is reported outstanding, which is the honest answer.
+    {
+      key: 'letter_default_billing_basis',
+      value: '',
+      description: 'Default billing basis printed on an engagement letter. Empty means each engagement supplies it.',
+    },
+    {
+      key: 'letter_default_payment_terms',
+      value: '',
+      description: 'Default payment terms for the letter body. Empty means each engagement supplies them.',
+    },
+    {
+      key: 'letter_default_payment_terms_short',
+      value: '',
+      description: 'Default payment terms for the fee schedule. Empty means each engagement supplies them.',
+    },
+    {
+      key: 'letter_default_special_terms',
+      value: '',
+      description: 'Default special terms or assumptions. Empty means each engagement supplies them.',
+    },
   ];
 
   for (const setting of settings) {

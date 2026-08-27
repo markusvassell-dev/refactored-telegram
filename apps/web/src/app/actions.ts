@@ -17,15 +17,19 @@ import {
   type Role,
 } from '@element/shared';
 import {
+  SETTING_KEYS,
   describeDifferences,
-  enqueuePriorYearSearch,
+  enqueueClientDocumentScan,
+  enqueuePreparation,
   karbonStatusTriggerSchema,
   maybeStartCoverLetter,
   summariseClientImport,
   factToken,
   type ClientImportSource,
   type IntegrationProviderKey,
+  type PreparationEnqueueOutcome,
   type PriorYearSearchOutcome,
+  type SettingKey,
 } from '@element/services';
 import type { FeeRuleLevel, ParticipantRole } from '@element/database';
 import { container } from '@/lib/container';
@@ -764,19 +768,24 @@ export async function setProductionSending(formData: FormData): Promise<ActionRe
 }
 
 /**
- * Queues the Karbon search for last year's engagement letter.
+ * Reading everything Karbon holds for this client.
  *
- * The helper and its guards live in `@element/services` because the worker's
- * rollover needs exactly the same ones, and a private second copy is how two
- * callers quietly stop agreeing. This wrapper supplies the container and
- * nothing else.
+ * Subsumes the targeted prior-year search: it reads the same three scopes,
+ * scores the same candidates and hands them to the same chooser, and keeps what
+ * it read rather than throwing the text away. So there is one button, not two —
+ * a screen offering both would be asking a reviewer to know which of two
+ * searches of the same places they wanted.
+ *
+ * The guards live in `@element/services` because the worker's rollover needs
+ * exactly the same ones, and a private second copy is how two callers quietly
+ * stop agreeing. This wrapper supplies the container and nothing else.
  */
-function priorYearSearch(
+function scanClientDocumentsInBackground(
   engagementId: string,
   correlationId: string,
-  options: { force?: boolean } = {},
+  options: { force?: boolean; actorId?: string | null } = {},
 ): Promise<PriorYearSearchOutcome> {
-  return enqueuePriorYearSearch(
+  return enqueueClientDocumentScan(
     { prisma: container.prisma, queue: container.queue },
     engagementId,
     correlationId,
@@ -784,27 +793,50 @@ function priorYearSearch(
   );
 }
 
+/** Preparing from the client record, with no document involved. */
+function prepareInBackground(
+  engagementId: string,
+  correlationId: string,
+  reason: string,
+): Promise<PreparationEnqueueOutcome> {
+  return enqueuePreparation(
+    { prisma: container.prisma, queue: container.queue },
+    engagementId,
+    correlationId,
+    { reason },
+  );
+}
+
 /**
- * Searches Karbon again for the prior-year letter, on request.
+ * Reading every document Karbon holds for this client, on request.
  *
- * Preparation starts this automatically; this is the button for after the
- * missing Karbon link has been fixed, or after last year's letter has been
- * filed where the first search could not see it.
+ * This runs by itself when an engagement is created and again on Prepare, so
+ * the button is for a second look: after a missing Karbon link is fixed, after
+ * last year's letter is filed somewhere the first read could not see, or after
+ * a read that reported a scope it could not open.
+ *
+ * `force` gives the re-run its own idempotency key. Without it a second press
+ * would match the day's existing job — including a succeeded one — and create
+ * nothing, which is the failure this whole change exists to remove.
  */
-export async function locatePriorYearDocuments(formData: FormData): Promise<ActionResult> {
+export async function scanClientDocuments(formData: FormData): Promise<ActionResult> {
   return run(async () => {
-    await requirePermission('source_document:select');
+    const actor = await requirePermission('source_document:select');
     await assertCsrf(formData.get('csrf')?.toString());
 
     const engagementId = formData.get('engagementId')?.toString();
     if (!engagementId) throw new ValidationError('An engagement is required.');
 
-    const outcome = await priorYearSearch(engagementId, newCorrelationId(), { force: true });
+    const outcome = await scanClientDocumentsInBackground(engagementId, newCorrelationId(), {
+      force: true,
+      actorId: actor.id,
+    });
+
     revalidatePath(`/engagements/${engagementId}`);
 
-    if (!outcome.enqueued) throw new PreconditionError(outcome.reason ?? 'The search could not be started.');
+    if (!outcome.enqueued) throw new PreconditionError(outcome.reason ?? 'The scan could not be started.');
 
-    return 'Searching Karbon for last year’s letter. Candidates appear below with the score each one earned.';
+    return 'Reading this client’s documents in Karbon. Every document appears below with its score and, where it was passed over, the reason.';
   });
 }
 
@@ -841,7 +873,7 @@ export async function prepareEngagement(formData: FormData): Promise<ActionResul
     // the largest single source of what it reconciles against, so the search
     // starts here. It runs in the background: preparation's own result must
     // not depend on Karbon being reachable this second.
-    const search = await priorYearSearch(engagementId, correlationId);
+    const search = await scanClientDocumentsInBackground(engagementId, correlationId, { actorId: actor.id });
 
     revalidatePath(`/engagements/${engagementId}`);
 
@@ -1097,7 +1129,19 @@ export async function createEngagement(formData: FormData): Promise<ActionResult
     // It also makes the two ways of creating an engagement agree. A rollover
     // started by Karbon already searches immediately, so until now one created
     // by hand behaved *less* automatically than one nobody asked for.
-    const search = await priorYearSearch(result.engagementId, newCorrelationId());
+    const correlationId = newCorrelationId();
+    const search = await scanClientDocumentsInBackground(result.engagementId, correlationId, {
+      actorId: actor.id,
+    });
+
+    // And prepare, which does not wait for the search to find anything.
+    // Preparation records the client's own details, proposes the signers,
+    // computes every deadline and prices the fee, and reads no source document
+    // at all — but it used to be enqueued from one place only: the last line of
+    // extraction. So an engagement whose prior-year letter never turned up sat
+    // with its corporation name blank, while the name was on the client record
+    // the whole time.
+    await prepareInBackground(result.engagementId, correlationId, 'Preparing a newly created engagement.');
 
     revalidatePath('/engagements');
 
@@ -2195,14 +2239,12 @@ export async function useSourceDocumentCandidate(formData: FormData): Promise<Ac
       ipAddress: context.ipAddress,
     });
 
-    await container.workflow.transition({
-      engagementId: document.engagementId,
-      to: 'EXTRACTING_DATA',
-      reason: `${document.fileName} was chosen from the candidates by ${actor.displayName}`,
-      correlationId,
-    });
-
-    await container.queue.enqueue({
+    // Enqueue before saying the engagement is extracting, and only say it when
+    // a job will actually run. Choosing the same document twice used to flip the
+    // status and create nothing — dedup matches a succeeded job too — leaving
+    // the engagement reading "extracting data" with nothing behind it and no
+    // failure to notice.
+    const queued = await container.queue.enqueueRerunnable({
       jobType: 'EXTRACT_DOCUMENT_TEXT',
       idempotencyKey: `extract_${document.id}`,
       payload: {
@@ -2213,6 +2255,15 @@ export async function useSourceDocumentCandidate(formData: FormData): Promise<Ac
       engagementId: document.engagementId,
       correlationId,
     });
+
+    if (queued.willRun) {
+      await container.workflow.transition({
+        engagementId: document.engagementId,
+        to: 'EXTRACTING_DATA',
+        reason: `${document.fileName} was chosen from the candidates by ${actor.displayName}`,
+        correlationId,
+      });
+    }
 
     const started = await maybeStartCoverLetter(container.coverLetterAutostart, document.engagementId);
 
@@ -2435,5 +2486,69 @@ export async function setFirmSigner(formData: FormData): Promise<ActionResult> {
     // been confirmed by a reviewer already, and a settings change must not
     // quietly re-point a letter somebody has approved.
     return `${signer.displayName} will be proposed as the firm signer on new engagements. Engagements already prepared keep the signer they have.`;
+  });
+}
+
+/**
+ * The firm's standard letter wording.
+ *
+ * Four required fields on a T2 letter are neither client data nor anything a
+ * document carries — they are what this firm always says about billing and
+ * terms. Having nowhere to live, they were retyped on every engagement or left
+ * outstanding for ever. Set once here, still overridable per engagement.
+ *
+ * Blank clears, and a cleared default is reported outstanding rather than
+ * printed empty: wording nobody chose has no business on a signed letter.
+ */
+export async function setLetterDefaults(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('system:manage_test_mode');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const context = await requestContext();
+
+    const entries: { key: SettingKey; field: string; label: string }[] = [
+      { key: SETTING_KEYS.letterBillingBasis, field: 'billingBasis', label: 'Billing basis' },
+      { key: SETTING_KEYS.letterPaymentTerms, field: 'paymentTerms', label: 'Payment terms (letter body)' },
+      { key: SETTING_KEYS.letterPaymentTermsShort, field: 'paymentTermsShort', label: 'Payment terms (Schedule A)' },
+      { key: SETTING_KEYS.letterSpecialTerms, field: 'specialTerms', label: 'Special terms or assumptions' },
+    ];
+
+    const changed: string[] = [];
+
+    for (const entry of entries) {
+      const raw = formData.get(entry.field)?.toString() ?? '';
+      const value = raw.replace(/\r\n/g, '\n').trim();
+
+      const existing = await container.prisma.systemSetting.findUnique({
+        where: { key: entry.key },
+        select: { value: true },
+      });
+      const before = typeof existing?.value === 'string' ? existing.value : '';
+      if (before === value) continue;
+
+      await container.settings.set(entry.key, value, actor);
+      changed.push(entry.label);
+
+      await container.audit.record({
+        eventType: 'CONFIGURATION_CHANGED',
+        objectType: 'SystemSetting',
+        objectId: entry.key,
+        userId: actor.id,
+        // The wording itself is recorded: it prints on a document a client
+        // signs, so who changed it to what is exactly what an audit is for.
+        beforeValue: { value: before },
+        afterValue: { value },
+        ipAddress: context.ipAddress,
+      });
+    }
+
+    revalidatePath('/settings');
+
+    if (changed.length === 0) return 'Nothing changed.';
+
+    // Engagements already prepared keep what they have, for the same reason the
+    // firm signer does: a reviewer may have confirmed the wording already.
+    return `Updated ${changed.join(', ')}. Engagements prepared from now on will use the new wording; ones already prepared keep theirs.`;
   });
 }

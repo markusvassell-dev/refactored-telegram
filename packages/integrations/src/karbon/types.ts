@@ -291,6 +291,12 @@ export interface KarbonClientList {
   more: boolean;
 }
 
+export interface KarbonBatchDownload {
+  files: { documentId: string; content: Buffer; fileName: string; mimeType: string }[];
+  /** Never silently dropped: a file that could not be read is named and why. */
+  failures: { documentId: string; reason: string }[];
+}
+
 export interface KarbonProvider {
   readonly name: string;
   /** True when this adapter is a mock and performs no real network calls. */
@@ -344,6 +350,28 @@ export interface KarbonProvider {
     documentId: string,
     scope?: { workItemKey?: string; entityKey?: string },
   ): Promise<{ content: Buffer; fileName: string; mimeType: string }>;
+
+  /**
+   * Several files from one scope, on one listing.
+   *
+   * `downloadDocument` re-lists the whole scope for every single file, because
+   * a token comes with a listing. Reading a client's entire library that way is
+   * two requests per document against a shared 120-a-minute limit — a throttled
+   * account rather than a slow job.
+   *
+   * Karbon publishes that a download token is "valid for 15 minutes from the
+   * moment of issue", so one listing's tokens serve every file in it. That is
+   * read from the specification rather than inferred from behaviour: if it were
+   * single-use, this would silently degrade to the same cost.
+   *
+   * Returns failures instead of throwing, so a scope that partly failed is
+   * distinguishable from one that was empty — the same contract
+   * `listClientLibrary` keeps, and for the same reason.
+   */
+  downloadDocuments(
+    scope: { workItemKey?: string; entityKey?: string },
+    documentIds: readonly string[],
+  ): Promise<KarbonBatchDownload>;
 
   /**
    * What a client key is, when `getClient` returned null.

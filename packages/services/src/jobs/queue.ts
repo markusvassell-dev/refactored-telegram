@@ -22,6 +22,7 @@ export const JOB_TYPES = [
   'ROLL_OVER_ENGAGEMENT',
   'SYNC_CLIENT_DOCUMENTS',
   'LOCATE_PRIOR_YEAR_DOCUMENTS',
+  'SCAN_CLIENT_DOCUMENTS',
   'EXTRACT_DOCUMENT_TEXT',
   'PREPARE_ENGAGEMENT',
   'GENERATE_ENGAGEMENT_LETTER',
@@ -37,6 +38,7 @@ export const JOB_TYPES = [
   'DETECT_STALE_SOURCES',
   'BULK_ROLLOUT_ITEM',
   'PURGE_TEMPORARY_FILES',
+  'SWEEP_STUCK_ENGAGEMENTS',
   'SEND_NOTIFICATION_EMAILS',
   'IMPORT_CLIENTS_FROM_KARBON',
 ] as const;
@@ -59,6 +61,16 @@ export interface EnqueueResult {
   jobId: string;
   /** True when an identical job already existed and nothing new was created. */
   deduplicated: boolean;
+  /**
+   * The state of the job that already held the key, when deduplicated.
+   *
+   * Dedup is by key across *every* state, `SUCCEEDED` included, which is right —
+   * it is what stops a client being sent a second signature request. But it
+   * makes "the work is already queued" and "the work ran to completion an hour
+   * ago" arrive as the same answer, and a caller that flips a status to say
+   * something is happening needs to tell those apart.
+   */
+  existingStatus?: 'PENDING' | 'RUNNING' | 'SUCCEEDED' | 'FAILED' | 'DEAD_LETTER' | 'CANCELLED';
 }
 
 export interface JobRecord {
@@ -94,15 +106,16 @@ export class JobQueue {
   async enqueue(options: EnqueueOptions): Promise<EnqueueResult> {
     const existing = await this.prisma.backgroundJob.findUnique({
       where: { idempotencyKey: options.idempotencyKey },
-      select: { id: true },
+      select: { id: true, status: true },
     });
 
     if (existing) {
       this.logger.debug('Job already enqueued; skipping duplicate', {
         jobId: existing.id,
         jobType: options.jobType,
+        existingStatus: existing.status,
       });
-      return { jobId: existing.id, deduplicated: true };
+      return { jobId: existing.id, deduplicated: true, existingStatus: existing.status };
     }
 
     try {
@@ -125,12 +138,48 @@ export class JobQueue {
       if (isUniqueConstraintError(error)) {
         const raced = await this.prisma.backgroundJob.findUnique({
           where: { idempotencyKey: options.idempotencyKey },
-          select: { id: true },
+          select: { id: true, status: true },
         });
-        if (raced) return { jobId: raced.id, deduplicated: true };
+        if (raced) return { jobId: raced.id, deduplicated: true, existingStatus: raced.status };
       }
       throw error;
     }
+  }
+
+  /**
+   * Enqueues work that is safe to repeat, treating a key held by a *finished*
+   * job as a request to run it again.
+   *
+   * Plain `enqueue` dedupes against every state, `SUCCEEDED` included, which is
+   * what stops a retried job sending a client a second signature request. The
+   * cost is that asking for the same read twice — re-reading a document, or
+   * re-scanning a client's library — silently does nothing the second time.
+   *
+   * That is how an engagement came to sit at "extracting data" for ever: the
+   * status was flipped, the enqueue deduped against a job that had already
+   * succeeded, no job was created, nothing failed, and so nothing ever said so.
+   *
+   * Only for reads and recomputations. Anything that writes to a vendor or
+   * reaches a client must keep the stricter guarantee.
+   */
+  async enqueueRerunnable(options: EnqueueOptions): Promise<EnqueueResult & { willRun: boolean }> {
+    const first = await this.enqueue(options);
+    if (!first.deduplicated) return { ...first, willRun: true };
+
+    if (first.existingStatus === 'PENDING' || first.existingStatus === 'RUNNING') {
+      // Genuinely already queued. Doing it twice would be the duplicate work
+      // dedup exists to prevent.
+      return { ...first, willRun: true };
+    }
+
+    // The key is held by a job that has finished, one way or another. The
+    // caller is asking for the work again, so give it its own key.
+    const retried = await this.enqueue({
+      ...options,
+      idempotencyKey: `${options.idempotencyKey}_again_${Date.now()}`,
+    });
+
+    return { ...retried, willRun: !retried.deduplicated };
   }
 
   /**
