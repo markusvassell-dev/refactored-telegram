@@ -50,8 +50,14 @@ describe('the scopes this application asks for', () => {
       'agreement_write:self',
       'agreement_send:self',
       'webhook_write:self',
-      'user_read:self',
     ]);
+
+    // Asking for a scope nothing calls is the opposite of least privilege.
+    // `user_read:self` was requested for a connection test that read
+    // `/users/me` — a check that was green whenever the token could read a
+    // user profile, which is not something this application ever does. The
+    // test now reads agreements, and the scope has no caller left.
+    expect([...ADOBE_OAUTH_SCOPES]).not.toContain('user_read:self');
 
     for (const scope of ADOBE_OAUTH_SCOPES) {
       expect(scope, scope).toMatch(/:self$/);

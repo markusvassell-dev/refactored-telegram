@@ -99,7 +99,12 @@ export const ADOBE_OAUTH_SCOPES = [
   'agreement_write:self',
   'agreement_send:self',
   'webhook_write:self',
-  'user_read:self',
+  // `user_read:self` was here for one caller: a connection test that read
+  // `/users/me`. That test proved the wrong thing — it was green whenever the
+  // token could read a user profile, which is not a capability this
+  // application uses — so it now reads one page of agreements instead, and the
+  // scope has no caller left. Asking for a permission nothing exercises is the
+  // opposite of the principle stated above.
 ] as const;
 
 /**
@@ -248,9 +253,7 @@ export class IntegrationConnectionService {
       objectType: 'IntegrationConnection',
       objectId: input.provider,
       userId: input.actor.id,
-      beforeValue: existing
-        ? { isEnabled: existing.isEnabled, isSandbox: existing.isSandbox, baseUrl: existing.baseUrl }
-        : null,
+      beforeValue: existing ? { isEnabled: existing.isEnabled, isSandbox: existing.isSandbox, baseUrl: existing.baseUrl } : null,
       afterValue: {
         isEnabled: input.isEnabled,
         isSandbox: input.isSandbox,
@@ -258,9 +261,7 @@ export class IntegrationConnectionService {
         // Names and fingerprints only. The values are never written anywhere
         // but the encrypted blob.
         rotated,
-        fingerprints: Object.fromEntries(
-          Object.entries(next).map(([key, value]) => [key, sha256Hex(value).slice(0, 6)]),
-        ),
+        fingerprints: Object.fromEntries(Object.entries(next).map(([key, value]) => [key, sha256Hex(value).slice(0, 6)])),
       },
       reason: rotated.length > 0 ? `Rotated: ${rotated.join(', ')}.` : null,
     });
@@ -342,11 +343,7 @@ export class IntegrationConnectionService {
   }
 
   /** Removes the stored credentials, keeping the connection row and its history. */
-  async clearCredentials(input: {
-    provider: IntegrationProviderKey;
-    reason: string;
-    actor: Principal;
-  }): Promise<void> {
+  async clearCredentials(input: { provider: IntegrationProviderKey; reason: string; actor: Principal }): Promise<void> {
     assertCan(input.actor, 'integration:manage');
 
     const reason = input.reason.trim();
@@ -459,9 +456,7 @@ export class IntegrationConnectionService {
       // Adobe's body can name the actual problem — a redirect_uri that does not
       // match the registered one is the commonest — and it is worth showing.
       const detail = await response.text().catch(() => '');
-      throw new ValidationError(
-        `Adobe refused the authorisation (HTTP ${response.status}). ${detail.slice(0, 300)}`.trim(),
-      );
+      throw new ValidationError(`Adobe refused the authorisation (HTTP ${response.status}). ${detail.slice(0, 300)}`.trim());
     }
 
     const payload = (await response.json()) as { refresh_token?: string };
