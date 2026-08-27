@@ -59,9 +59,29 @@ function paletteAfter(marker: string): Map<string, [number, number, number]> {
   if (start === -1) throw new Error(`No block matching ${marker} in globals.css`);
 
   const palette = new Map<string, [number, number, number]>();
-  // Read forward to the end of the block. Every declaration is one line.
-  const slice = CSS.slice(start, start + 6000);
-  for (const [, name, r, g, b] of slice.matchAll(/--([a-z]+-\d+|surface):\s*(\d+)\s+(\d+)\s+(\d+);/g)) {
+
+  // Read to this block's own closing brace, by counting braces, rather than a
+  // fixed number of characters. A fixed window silently overran into the next
+  // block the moment the stylesheet grew — and because `set` lets the last
+  // match win, the light palette quietly filled up with dark values and the
+  // contrast assertions started measuring the wrong pair. A test that measures
+  // the wrong thing is worse than no test.
+  let depth = 0;
+  let end = start;
+  for (let i = CSS.indexOf('{', start); i < CSS.length; i += 1) {
+    if (CSS[i] === '{') depth += 1;
+    else if (CSS[i] === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  if (end === start) throw new Error(`Unbalanced braces after ${marker} in globals.css`);
+
+  const slice = CSS.slice(start, end);
+  for (const [, name, r, g, b] of slice.matchAll(/--([a-z]+-\d+|surface|brand-hover):\s*(\d+)\s+(\d+)\s+(\d+);/g)) {
     palette.set(name as string, [Number(r), Number(g), Number(b)]);
   }
   return palette;
@@ -135,6 +155,21 @@ describe.each([
   });
 });
 
+describe('the two palettes are actually two palettes', () => {
+  it('reads different values for light and dark', () => {
+    // The guard against the parser silently reading one block twice. When it
+    // did, every contrast assertion still ran and still passed — against the
+    // wrong colours. This is the cheapest thing that would have caught it.
+    expect(LIGHT.get('surface')).not.toEqual(DARK.get('surface'));
+    expect(LIGHT.get('slate-900')).not.toEqual(DARK.get('slate-900'));
+    expect(LIGHT.get('blue-100')).not.toEqual(DARK.get('blue-100'));
+
+    // Light surface is white; dark surface is not. Stated concretely so a
+    // parser that returned two copies of the *dark* block fails too.
+    expect(LIGHT.get('surface')).toEqual([255, 255, 255]);
+  });
+});
+
 describe('the dark surface ordering', () => {
   it('puts the page behind the card, and the hover fill in front of it', () => {
     // A strict inversion of the light scale gets this backwards: the card ends
@@ -154,6 +189,39 @@ describe('the dark surface ordering', () => {
     const surface = luminance(LIGHT.get('surface') as [number, number, number]);
 
     expect(page).toBeLessThan(surface);
+  });
+});
+
+describe('interactive states, which are easy to check only at rest', () => {
+  /**
+   * The pair that was missed the first time.
+   *
+   * `.btn-primary` was `bg-brand-600 text-white hover:bg-brand-700`, and the
+   * dark ramp makes `brand-700` a light green because it is also used as ink
+   * (`text-brand-700`). White on that is 2.18:1 — the label all but vanished
+   * at the moment somebody was about to click it, and the resting state, which
+   * is what a contrast check naturally looks at, was fine.
+   */
+  it.each([
+    ['light', LIGHT],
+    ['dark', DARK],
+  ])('keeps the primary button label legible on hover in %s', (_name, palette) => {
+    const white: [number, number, number] = [255, 255, 255];
+    const hover = palette.get('brand-hover') as [number, number, number];
+    expect(hover, 'brand-hover must be defined in both themes').toBeDefined();
+
+    const [lighter, darker] = [luminance(white), luminance(hover)].sort((x, y) => y - x) as [number, number];
+    expect((lighter + 0.05) / (darker + 0.05)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it.each([
+    ['light', LIGHT],
+    ['dark', DARK],
+  ])('keeps brand ink legible where it is used as ink in %s', (_name, palette) => {
+    // `text-brand-700` is the product name in the header and the selected
+    // theme button. It sits on `surface`, which is the demand that pulls
+    // `brand-700` in the opposite direction from the button hover.
+    expect(contrast(palette, 'brand-700', 'surface')).toBeGreaterThanOrEqual(4.5);
   });
 });
 

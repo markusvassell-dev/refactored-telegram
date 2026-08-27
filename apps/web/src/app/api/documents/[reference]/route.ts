@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { container } from '@/lib/container';
 import { decodeReference } from '@/lib/document-reference';
-import { requireUser } from '@/lib/session';
+import { currentUser, requirePermission } from '@/lib/session';
 
 export const dynamic = 'force-dynamic';
 
@@ -11,15 +11,38 @@ export const dynamic = 'force-dynamic';
  * Two independent checks: the caller must be signed in with permission to view
  * documents, and the link itself must carry a valid, unexpired signature. A
  * link cannot be forwarded to an outsider and cannot outlive its expiry.
+ *
+ * The first of those was only `requireUser` — the comment described a
+ * permission check that was not made. Users here are created on first Entra
+ * sign-in, so anyone in the firm's tenant gets an account, and until they are
+ * granted a role that account holds nothing: "a signed-in user holding no roles
+ * can do almost nothing" is a state this application models deliberately. It
+ * could nonetheless download any signed engagement letter it had a link for.
+ *
+ * `document:view` sits in READ_ONLY and every role extends READ_ONLY, so this
+ * refuses exactly one person: the account with no roles yet. That is the
+ * intent, and the signature remains the independent second check rather than
+ * the only one.
+ *
+ * The sibling route for templates is deliberately different, and says so: a
+ * template is the firm's own approved wording, not a client's document.
  */
-export async function GET(
-  request: Request,
-  context: { params: Promise<{ reference: string }> },
-): Promise<Response> {
-  try {
-    await requireUser();
-  } catch {
+export async function GET(request: Request, context: { params: Promise<{ reference: string }> }): Promise<Response> {
+  // Two different refusals, kept apart. `requireUser` and `requirePermission`
+  // both throw `PermissionError`, so catching one and answering 403 would tell
+  // somebody whose session had merely expired that their account lacks a role,
+  // and send them to an administrator instead of the sign-in page.
+  if (!(await currentUser())) {
     return NextResponse.json({ error: 'Sign in to download documents.' }, { status: 401 });
+  }
+
+  try {
+    await requirePermission('document:view');
+  } catch {
+    return NextResponse.json(
+      { error: 'Your account cannot read documents. Ask an administrator to grant you a role.' },
+      { status: 403 },
+    );
   }
 
   const { reference: encoded } = await context.params;
@@ -39,9 +62,7 @@ export async function GET(
 
     return new NextResponse(new Uint8Array(content), {
       headers: {
-        'content-type': isPdf
-          ? 'application/pdf'
-          : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'content-type': isPdf ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
         'content-disposition': `${isPdf ? 'inline' : 'attachment'}; filename="${reference.split('/').pop() ?? 'document'}"`,
         'cache-control': 'private, no-store',
         'x-content-type-options': 'nosniff',

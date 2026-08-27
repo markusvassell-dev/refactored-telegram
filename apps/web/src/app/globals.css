@@ -26,6 +26,12 @@
     color-scheme: light;
 
     --surface: 255 255 255;
+    /* The primary button's hover fill. A separate token because `brand-700`
+       is also ink (`text-brand-700`), and the two demands conflict: ink on a
+       dark surface must be light, while a fill under white text must be dark.
+       Darkening on hover reads correctly in both themes, so this value does
+       not flip. */
+    --brand-hover: 47 80 63;
 
     --slate-50: 248 250 252;
     --slate-100: 241 245 249;
@@ -146,6 +152,7 @@
       color-scheme: dark;
 
       --surface: 21 28 42;
+      --brand-hover: 47 80 63;
 
       --slate-50: 9 13 22;
       --slate-100: 31 41 59;
@@ -257,6 +264,7 @@
     color-scheme: dark;
 
     --surface: 21 28 42;
+    --brand-hover: 47 80 63;
 
     --slate-50: 9 13 22;
     --slate-100: 31 41 59;
@@ -384,9 +392,20 @@
   }
 
   /* `text-white` is literal, not themed. This is a green button in both themes
-     and its label has to stay readable on that green. */
+     and its label has to stay readable on that green.
+   *
+   * The hover was `hover:bg-brand-700`, which broke in dark: `brand-700` is
+   * also used as ink (`text-brand-700`), so the dark ramp makes it a light
+   * green — and white on light green is 2.18:1. The label all but disappeared
+   * at the moment somebody was about to click it. One step cannot be both ink
+   * on a dark surface and a fill under white text, so the button gets its own
+   * token. */
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700;
+    @apply btn bg-brand-600 text-white;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background-color: rgb(var(--brand-hover));
   }
 
   .btn-secondary {
