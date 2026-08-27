@@ -19,6 +19,8 @@ export * from './karbon-notification.js';
 export * from './bulk-rollout.js';
 export * from './jobs/queue.js';
 export * from './field-values.js';
+export * from './effective-values.js';
+export * from './extracted-fields.js';
 export * from './field-form-service.js';
 export * from './user-admin-service.js';
 export * from './template-publish-service.js';

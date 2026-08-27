@@ -3,6 +3,7 @@ import {
   enqueuePriorYearSearch,
   maybeStartCoverLetter,
   maybeStartGeneration,
+  putExtractedField,
   summariseClientImport,
   SYSTEM_ACTOR_ID,
   SYSTEM_PRINCIPAL,
@@ -53,69 +54,6 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
   // Named in `@element/services` alongside `resolveUserActor`, which explains
   // why an audit column may hold it and a foreign key may not.
   const systemActorId = SYSTEM_ACTOR_ID;
-
-  /**
-   * Upserts an engagement-level extracted field.
-   *
-   * `coverLetterPackageId` is null for engagement-level values. The uniqueness
-   * guarantee comes from a NULLS NOT DISTINCT index created in the migration,
-   * which Prisma's generated compound-key type cannot express, so the lookup is
-   * done explicitly.
-   */
-  async function upsertEngagementField(
-    engagementId: string,
-    input: {
-      token: string;
-      value: string | null;
-      valueDecimal: string | null;
-      valueDate: Date | null;
-      valueBoolean?: boolean | null;
-      extractionMethod:
-        | 'STRUCTURED_EXPORT'
-        | 'PDF_TEXT'
-        | 'DETERMINISTIC_PATTERN'
-        | 'AI_ASSISTED'
-        | 'OCR_VISION'
-        | 'MANUAL_ENTRY';
-      confidence: number;
-    },
-  ) {
-    const existing = await context.prisma.extractedField.findFirst({
-      where: {
-        engagementId,
-        coverLetterPackageId: null,
-        token: input.token,
-        source: 'PRIOR_YEAR_DOCUMENT',
-      },
-      select: { id: true },
-    });
-
-    if (existing) {
-      return context.prisma.extractedField.update({
-        where: { id: existing.id },
-        data: {
-          value: input.value,
-          valueDecimal: input.valueDecimal,
-          valueBoolean: input.valueBoolean ?? null,
-          confidence: input.confidence,
-        },
-      });
-    }
-
-    return context.prisma.extractedField.create({
-      data: {
-        engagementId,
-        token: input.token,
-        value: input.value,
-        valueDecimal: input.valueDecimal,
-        valueDate: input.valueDate,
-        valueBoolean: input.valueBoolean ?? null,
-        source: 'PRIOR_YEAR_DOCUMENT',
-        extractionMethod: input.extractionMethod,
-        confidence: input.confidence,
-      },
-    });
-  }
 
   /** The active manifest for a document type, or null when none is published. */
   async function activeManifest(documentType: DocumentType) {
@@ -686,14 +624,20 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       }
 
       for (const value of result.values) {
-        const field = await upsertEngagementField(engagementId, {
+        const { field, written } = await putExtractedField(context.prisma, {
+          engagementId,
           token: value.token,
+          source: 'PRIOR_YEAR_DOCUMENT',
+          method: value.method,
           value: value.value,
           valueDecimal: value.numericValue ?? null,
           valueDate: value.dateValue ? new Date(`${value.dateValue}T00:00:00Z`) : null,
-          extractionMethod: value.method,
           confidence: value.confidence,
         });
+
+        // A reviewer had confirmed this value, so the document did not supply
+        // it. Recording evidence against it would claim support it never gave.
+        if (!written) continue;
 
         for (const evidence of value.evidence) {
           await context.prisma.fieldEvidence.create({
@@ -717,15 +661,17 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
         for (const detection of detectCheckboxStates(text.fullText, manifest.checkboxes)) {
           if (detection.selected === null) continue;
 
-          const field = await upsertEngagementField(engagementId, {
+          const { field, written } = await putExtractedField(context.prisma, {
+            engagementId,
             token: `service.${detection.code}`,
+            source: 'PRIOR_YEAR_DOCUMENT',
+            method: 'DETERMINISTIC_PATTERN',
             value: detection.selected ? 'selected' : 'not selected',
-            valueDecimal: null,
-            valueDate: null,
             valueBoolean: detection.selected,
-            extractionMethod: 'DETERMINISTIC_PATTERN',
             confidence: 1,
           });
+
+          if (!written) continue;
 
           if (detection.evidence) {
             await context.prisma.fieldEvidence.create({
@@ -1241,14 +1187,24 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       }
 
       for (const value of result.values) {
-        const field = await upsertEngagementField(engagementId, {
+        // The source is stated at the call site rather than assumed by the
+        // writer. It is imprecise — these come from the *final* documents, not
+        // a prior-year letter — but `ValueSource` has no better member and this
+        // handler has no caller yet, so the label is left rather than a column
+        // migrated for dead code. `valueDate` was previously dropped outright,
+        // which lost the typed year-end this extractor does find.
+        const { field, written } = await putExtractedField(context.prisma, {
+          engagementId,
           token: value.token,
+          source: 'PRIOR_YEAR_DOCUMENT',
+          method: value.method,
           value: value.value,
           valueDecimal: value.numericValue ?? null,
-          valueDate: null,
-          extractionMethod: value.method,
+          valueDate: value.dateValue ? new Date(`${value.dateValue}T00:00:00Z`) : null,
           confidence: value.confidence,
         });
+
+        if (!written) continue;
 
         for (const evidence of value.evidence) {
           await context.prisma.fieldEvidence.create({

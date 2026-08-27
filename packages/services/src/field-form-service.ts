@@ -8,7 +8,8 @@ import {
   type DocumentType,
   type ValueSource,
 } from '@element/shared';
-import { resolveFieldValue, type FieldValueBasis } from './field-values.js';
+import { type FieldValueBasis } from './field-values.js';
+import { FEE_TOKEN_BY_KIND, resolveEffectiveValues } from './effective-values.js';
 
 /**
  * The structured field editor.
@@ -94,13 +95,12 @@ export interface SaveFieldsResult {
 }
 
 
-/** Fee tokens are written by the pricing engine, never typed here. */
-export const FEE_TOKENS: readonly string[] = [
-  'pricing.t1_fee',
-  'pricing.t2_fee',
-  'pricing.t3_fee',
-  'pricing.compilation_fee',
-];
+/**
+ * Fee tokens are written by the pricing engine, never typed here. Derived from
+ * the one kind-to-token map rather than listed again, because the second copy is
+ * how this form came to mark fee tokens read-only without ever reading a fee.
+ */
+export const FEE_TOKENS: readonly string[] = Object.values(FEE_TOKEN_BY_KIND);
 
 const GROUP_LABELS: Record<string, string> = {
   CLIENT: 'Client',
@@ -122,7 +122,7 @@ export class FieldFormService {
   async formFor(engagementId: string): Promise<FieldForm> {
     const engagement = await this.deps.prisma.engagement.findUniqueOrThrow({
       where: { id: engagementId },
-      select: { id: true, engagementType: true, compilationSelected: true },
+      select: { id: true, engagementType: true, compilationSelected: true, taxYear: true },
     });
 
     const documentType = ENGAGEMENT_LETTER_BY_TYPE[engagement.engagementType];
@@ -148,7 +148,11 @@ export class FieldFormService {
     const includedSections = await this.includedSections(engagement.id, manifest, engagement.compilationSelected);
     const required = new Set(requiredFieldTokens(manifest, includedSections));
 
-    const [fields, conflicts, dates] = await Promise.all([
+    // The fee and date tables are read for their *values*, not merely for which
+    // tokens they own. Reading only the token is what made this form report
+    // every calculated deadline and fee outstanding while the letter printed
+    // them — and mark them read-only, so nobody could supply what it asked for.
+    const [fields, conflicts, dates, fees] = await Promise.all([
       this.deps.prisma.extractedField.findMany({
         where: { engagementId: engagement.id, coverLetterPackageId: null },
         include: { evidence: { take: 3 } },
@@ -156,7 +160,11 @@ export class FieldFormService {
       this.deps.prisma.fieldConflict.findMany({ where: { engagementId: engagement.id } }),
       this.deps.prisma.calculatedDate.findMany({
         where: { engagementId: engagement.id },
-        select: { token: true },
+        select: { token: true, result: true, manualOverride: true },
+      }),
+      this.deps.prisma.feeCalculation.findMany({
+        where: { engagementId: engagement.id },
+        select: { feeKind: true, roundedFee: true },
       }),
     ]);
 
@@ -170,25 +178,24 @@ export class FieldFormService {
     const conflictByToken = new Map(conflicts.map((conflict) => [conflict.token, conflict]));
     const dateTokens = new Set(dates.map((date) => date.token));
 
+    // The same resolver generation uses, so what this screen calls outstanding
+    // and what the document actually carries cannot disagree.
+    const effective = resolveEffectiveValues({
+      tokens: version.fieldDefinitions.map((definition) => definition.token),
+      fields,
+      conflicts,
+      dates,
+      fees,
+      taxYear: engagement.taxYear,
+    });
+
     const groups = new Map<string, FormField[]>();
     const outstandingRequired: string[] = [];
 
     for (const definition of version.fieldDefinitions) {
       const rows = rowsByToken.get(definition.token) ?? [];
       const conflict = conflictByToken.get(definition.token) ?? null;
-
-      const resolved = resolveFieldValue(
-        rows.map((row) => ({
-          value:
-            (row.valueDecimal ? row.valueDecimal.toString() : null) ??
-            (row.valueDate ? row.valueDate.toISOString().slice(0, 10) : null) ??
-            row.value,
-          source: row.source,
-          manualOverrideValue: row.manualOverrideValue,
-          manuallyConfirmed: row.manuallyConfirmed,
-        })),
-        conflict,
-      );
+      const resolved = effective.get(definition.token) ?? null;
 
       const isRequired = required.has(definition.token);
       const ownership = this.ownershipOf(definition.token, dateTokens);
@@ -214,7 +221,12 @@ export class FieldFormService {
         value: resolved?.value ?? null,
         valueSource: resolved?.source ?? null,
         valueBasis: resolved?.basis ?? null,
-        confidence: rows.find((row) => row.source === resolved?.source)?.confidence ?? null,
+        // Only a value that came from an extracted row has a confidence; a date
+        // the rules computed is not a match that might have been wrong.
+        confidence:
+          resolved?.origin === 'FIELD'
+            ? (rows.find((row) => row.source === resolved.source)?.confidence ?? null)
+            : null,
         confirmed: rows.some((row) => row.manuallyConfirmed),
         evidence,
         conflictUnresolved: conflict?.status === 'UNRESOLVED',

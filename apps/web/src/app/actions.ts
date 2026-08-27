@@ -17,6 +17,7 @@ import {
   type Role,
 } from '@element/shared';
 import {
+  SETTING_KEYS,
   describeDifferences,
   enqueuePriorYearSearch,
   karbonStatusTriggerSchema,
@@ -26,6 +27,7 @@ import {
   type ClientImportSource,
   type IntegrationProviderKey,
   type PriorYearSearchOutcome,
+  type SettingKey,
 } from '@element/services';
 import type { FeeRuleLevel, ParticipantRole } from '@element/database';
 import { container } from '@/lib/container';
@@ -2435,5 +2437,69 @@ export async function setFirmSigner(formData: FormData): Promise<ActionResult> {
     // been confirmed by a reviewer already, and a settings change must not
     // quietly re-point a letter somebody has approved.
     return `${signer.displayName} will be proposed as the firm signer on new engagements. Engagements already prepared keep the signer they have.`;
+  });
+}
+
+/**
+ * The firm's standard letter wording.
+ *
+ * Four required fields on a T2 letter are neither client data nor anything a
+ * document carries — they are what this firm always says about billing and
+ * terms. Having nowhere to live, they were retyped on every engagement or left
+ * outstanding for ever. Set once here, still overridable per engagement.
+ *
+ * Blank clears, and a cleared default is reported outstanding rather than
+ * printed empty: wording nobody chose has no business on a signed letter.
+ */
+export async function setLetterDefaults(formData: FormData): Promise<ActionResult> {
+  return run(async () => {
+    const actor = await requirePermission('system:manage_test_mode');
+    await assertCsrf(formData.get('csrf')?.toString());
+
+    const context = await requestContext();
+
+    const entries: { key: SettingKey; field: string; label: string }[] = [
+      { key: SETTING_KEYS.letterBillingBasis, field: 'billingBasis', label: 'Billing basis' },
+      { key: SETTING_KEYS.letterPaymentTerms, field: 'paymentTerms', label: 'Payment terms (letter body)' },
+      { key: SETTING_KEYS.letterPaymentTermsShort, field: 'paymentTermsShort', label: 'Payment terms (Schedule A)' },
+      { key: SETTING_KEYS.letterSpecialTerms, field: 'specialTerms', label: 'Special terms or assumptions' },
+    ];
+
+    const changed: string[] = [];
+
+    for (const entry of entries) {
+      const raw = formData.get(entry.field)?.toString() ?? '';
+      const value = raw.replace(/\r\n/g, '\n').trim();
+
+      const existing = await container.prisma.systemSetting.findUnique({
+        where: { key: entry.key },
+        select: { value: true },
+      });
+      const before = typeof existing?.value === 'string' ? existing.value : '';
+      if (before === value) continue;
+
+      await container.settings.set(entry.key, value, actor);
+      changed.push(entry.label);
+
+      await container.audit.record({
+        eventType: 'CONFIGURATION_CHANGED',
+        objectType: 'SystemSetting',
+        objectId: entry.key,
+        userId: actor.id,
+        // The wording itself is recorded: it prints on a document a client
+        // signs, so who changed it to what is exactly what an audit is for.
+        beforeValue: { value: before },
+        afterValue: { value },
+        ipAddress: context.ipAddress,
+      });
+    }
+
+    revalidatePath('/settings');
+
+    if (changed.length === 0) return 'Nothing changed.';
+
+    // Engagements already prepared keep what they have, for the same reason the
+    // firm signer does: a reviewer may have confirmed the wording already.
+    return `Updated ${changed.join(', ')}. Engagements prepared from now on will use the new wording; ones already prepared keep theirs.`;
   });
 }

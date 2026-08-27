@@ -540,3 +540,145 @@ describe('running it more than once', () => {
     expect(prepared?.userId).toBe(actorId);
   });
 });
+
+/**
+ * The firm's own answers.
+ *
+ * Four required T2 fields plus the two firm names had no writer anywhere: not
+ * Karbon, not a pattern, not a default. They were reported outstanding on every
+ * engagement for ever, and `firm.signer_name` was the pointed one — the
+ * application resolved the firm signer, wrote them to the participant list, and
+ * then asked who the firm signer was.
+ */
+describe('recording what the firm itself supplies', () => {
+  async function withFirmSigner<T>(run: () => Promise<T>): Promise<T> {
+    const signer = await prisma.user.upsert({
+      where: { email: 'firm-signer-test@example.test' },
+      create: { email: 'firm-signer-test@example.test', displayName: 'Robin Partner' },
+      update: { displayName: 'Robin Partner' },
+    });
+
+    const previous = await prisma.systemSetting.findUnique({ where: { key: 'firm_signer_user_id' } });
+    await prisma.systemSetting.upsert({
+      where: { key: 'firm_signer_user_id' },
+      create: { key: 'firm_signer_user_id', value: signer.id },
+      update: { value: signer.id },
+    });
+
+    try {
+      return await run();
+    } finally {
+      await prisma.systemSetting.upsert({
+        where: { key: 'firm_signer_user_id' },
+        create: { key: 'firm_signer_user_id', value: previous?.value ?? '' },
+        update: { value: previous?.value ?? '' },
+      });
+    }
+  }
+
+  async function withLetterDefault<T>(key: string, value: string, run: () => Promise<T>): Promise<T> {
+    const previous = await prisma.systemSetting.findUnique({ where: { key } });
+    await prisma.systemSetting.upsert({
+      where: { key },
+      create: { key, value },
+      update: { value },
+    });
+    try {
+      return await run();
+    } finally {
+      await prisma.systemSetting.upsert({
+        where: { key },
+        create: { key, value: previous?.value ?? '' },
+        update: { value: previous?.value ?? '' },
+      });
+    }
+  }
+
+  it('names the firm signer on the letter, not only in the participant list', async () => {
+    await withFirmSigner(async () => {
+      const engagement = await newT2();
+      await prepare(engagement.id);
+
+      const stored = await prisma.extractedField.findFirst({
+        where: { engagementId: engagement.id, token: 'firm.signer_name' },
+      });
+
+      expect(stored?.value).toBe('Robin Partner');
+      expect(stored?.source).toBe('TEMPLATE_DEFAULT');
+    });
+  });
+
+  it('writes the firm’s standard wording when one is configured', async () => {
+    await withLetterDefault('letter_default_billing_basis', 'Fixed fee, billed on completion', async () => {
+      const engagement = await newT2();
+      await prepare(engagement.id);
+
+      const stored = await prisma.extractedField.findFirst({
+        where: { engagementId: engagement.id, token: 'pricing.billing_basis' },
+      });
+      expect(stored?.value).toBe('Fixed fee, billed on completion');
+    });
+  });
+
+  it('leaves the field outstanding rather than inventing wording when none is set', async () => {
+    await withLetterDefault('letter_default_special_terms', '', async () => {
+      const engagement = await newT2();
+      await prepare(engagement.id);
+
+      const stored = await prisma.extractedField.findFirst({
+        where: { engagementId: engagement.id, token: 'special_terms.line_1' },
+      });
+      expect(stored).toBeNull();
+    });
+  });
+
+  it('gives the engagement lead a name and somewhere to reply to', async () => {
+    const lead = await prisma.user.upsert({
+      where: { email: 'lead-test@example.test' },
+      create: { email: 'lead-test@example.test', displayName: 'Sam Lead' },
+      update: { displayName: 'Sam Lead' },
+    });
+
+    const engagement = await newT2();
+    await prisma.engagement.update({
+      where: { id: engagement.id },
+      data: { assignedPreparerId: lead.id },
+    });
+
+    await prepare(engagement.id);
+
+    const stored = await prisma.extractedField.findFirst({
+      where: { engagementId: engagement.id, token: 'firm.engagement_lead' },
+    });
+
+    // The placeholder asks for name *and* contact information; a bare name
+    // leaves the client nobody to reply to.
+    expect(stored?.value).toBe('Sam Lead, lead-test@example.test');
+  });
+
+  it('does not overwrite wording a reviewer has confirmed', async () => {
+    await withLetterDefault('letter_default_billing_basis', 'Fixed fee, billed on completion', async () => {
+      const engagement = await newT2();
+
+      await prisma.extractedField.create({
+        data: {
+          engagementId: engagement.id,
+          token: 'pricing.billing_basis',
+          value: 'Time and materials, billed monthly',
+          source: 'TEMPLATE_DEFAULT',
+          extractionMethod: 'MANUAL_ENTRY',
+          manuallyConfirmed: true,
+          confirmedAt: new Date(),
+          confidence: 1,
+        },
+      });
+
+      await prepare(engagement.id);
+
+      const stored = await prisma.extractedField.findFirstOrThrow({
+        where: { engagementId: engagement.id, token: 'pricing.billing_basis', source: 'TEMPLATE_DEFAULT' },
+      });
+      expect(stored.value).toBe('Time and materials, billed monthly');
+    });
+  });
+});

@@ -3,7 +3,7 @@ import { container } from '@/lib/container';
 import { requireUser, sessionCsrfToken } from '@/lib/session';
 import { PageHeader } from '@/components/shell';
 import { ActionForm } from '@/components/action-form';
-import { setFirmSigner, setProductionSending, setTestMode } from '@/app/actions';
+import { setFirmSigner, setLetterDefaults, setProductionSending, setTestMode } from '@/app/actions';
 
 export const dynamic = 'force-dynamic';
 
@@ -32,6 +32,11 @@ export default async function SettingsPage() {
 
   const firmSignerId = settings.find((setting) => setting.key === 'firm_signer_user_id')?.value;
   const currentFirmSigner = typeof firmSignerId === 'string' ? firmSignerId : '';
+
+  const letterDefault = (key: string): string => {
+    const value = settings.find((setting) => setting.key === key)?.value;
+    return typeof value === 'string' ? value : '';
+  };
 
   const isAdministrator = user.roles.includes('ADMINISTRATOR');
 
@@ -207,6 +212,76 @@ export default async function SettingsPage() {
                 : 'Not set.'}{' '}
               Only an administrator can change this.
             </p>
+          )}
+        </div>
+      </section>
+
+      <section className="card">
+        <div className="card-header"><h2 className="text-base font-semibold">Letter defaults</h2></div>
+        <div className="card-body space-y-4">
+          <p className="text-sm text-slate-600">
+            What this firm always says about billing and terms. These four fields are required on a T2 engagement
+            letter and are neither client information nor anything a prior letter can be read for, so without a default
+            they are retyped on every engagement. Set once here; a reviewer can still change any of them on an
+            individual engagement.
+          </p>
+          <p className="text-sm text-slate-600">
+            Leave one blank and the engagement reports it outstanding, which is deliberate &mdash; wording nobody chose
+            has no business printing on a document a client signs.
+          </p>
+
+          {isAdministrator ? (
+            <ActionForm action={setLetterDefaults} csrfToken={csrfToken} submitLabel="Save letter defaults">
+              <label className="label" htmlFor="billing-basis">
+                Billing basis
+              </label>
+              <input
+                id="billing-basis"
+                name="billingBasis"
+                className="input"
+                defaultValue={letterDefault('letter_default_billing_basis')}
+                placeholder="e.g. Fixed fee, billed on completion"
+              />
+
+              <label className="label" htmlFor="payment-terms">
+                Payment terms (letter body)
+              </label>
+              <textarea
+                id="payment-terms"
+                name="paymentTerms"
+                className="input"
+                rows={3}
+                defaultValue={letterDefault('letter_default_payment_terms')}
+              />
+
+              <label className="label" htmlFor="payment-terms-short">
+                Payment terms (Schedule A)
+              </label>
+              <input
+                id="payment-terms-short"
+                name="paymentTermsShort"
+                className="input"
+                defaultValue={letterDefault('letter_default_payment_terms_short')}
+                placeholder="The short form printed in the fee schedule"
+              />
+
+              <label className="label" htmlFor="special-terms">
+                Special terms or assumptions
+              </label>
+              <textarea
+                id="special-terms"
+                name="specialTerms"
+                className="input"
+                rows={3}
+                defaultValue={letterDefault('letter_default_special_terms')}
+              />
+              <p className="field-note">
+                Changing these affects engagements prepared from now on. Ones already prepared keep the wording they
+                have, because a reviewer may already have approved it.
+              </p>
+            </ActionForm>
+          ) : (
+            <p className="text-sm text-slate-600">Only an administrator can change these.</p>
           )}
         </div>
       </section>

@@ -18,7 +18,7 @@ import {
   type Logger,
 } from '@element/shared';
 import { evaluateGenerationGate, type GateResult } from '@element/workflows';
-import { resolveFieldValue } from './field-values.js';
+import { resolveEffectiveValues } from './effective-values.js';
 import { readTemplateSource } from './template-source.js';
 import type { DocumentStore } from './storage.js';
 import type { WorkflowService } from './workflow-service.js';
@@ -130,65 +130,36 @@ export class GenerationService {
     const values: Record<string, string> = {};
     const byToken = new Map(manifest.fields.map((field) => [field.token, field]));
 
-    // 1. Field values. A token often has several rows — Karbon's, last year's,
-    //    a reviewer's — so one shared rule decides which is effective, rather
-    //    than whichever row came back last. `resolveFieldValue` is the same
-    //    function the review UI uses, so the document gets what the reviewer saw.
-    const conflictByToken = new Map(conflicts.map((conflict) => [conflict.token, conflict]));
-    const rowsByToken = new Map<string, typeof fields>();
-    for (const field of fields) {
-      if (!byToken.has(field.token)) continue;
-      const bucket = rowsByToken.get(field.token) ?? [];
-      bucket.push(field);
-      rowsByToken.set(field.token, bucket);
-    }
+    // 1-4. Which value is effective for each token, across all four tables that
+    //      can supply one. Shared with the review form so the two cannot drift:
+    //      the form previously read only `extracted_field` and reported every
+    //      calculated deadline and fee as missing while printing them here.
+    const effective = resolveEffectiveValues({
+      tokens: byToken.keys(),
+      fields,
+      conflicts,
+      dates,
+      fees,
+      taxYear: engagement.taxYear,
+    });
 
-    for (const [token, rows] of rowsByToken) {
+    for (const [token, resolved] of effective) {
       const definition = byToken.get(token);
       if (!definition) continue;
 
-      const resolved = resolveFieldValue(
-        rows.map((row) => ({
-          value:
-            (row.valueDecimal ? row.valueDecimal.toString() : null) ??
-            (row.valueDate ? row.valueDate.toISOString().slice(0, 10) : null) ??
-            row.value,
-          source: row.source,
-          manualOverrideValue: row.manualOverrideValue,
-          manuallyConfirmed: row.manuallyConfirmed,
-        })),
-        conflictByToken.get(token) ?? null,
-      );
+      // Formatted by *origin*, not by declared type. A calculated date is
+      // rendered as a long date whatever the manifest calls the field — the T2
+      // manifest declares `dates.target_completion` as STRING, and formatting a
+      // date by that would print a raw JavaScript date onto a signed letter.
+      const dataType =
+        resolved.origin === 'CALCULATED_DATE'
+          ? 'DATE'
+          : resolved.origin === 'CALCULATED_FEE'
+            ? 'MONEY'
+            : definition.dataType;
 
-      if (resolved) values[token] = formatFieldValue(resolved.value, { dataType: definition.dataType });
-    }
-
-    // 2. Calculated dates.
-    for (const date of dates) {
-      const definition = byToken.get(date.token);
-      if (!definition) continue;
-      const effective = date.manualOverride ?? date.result;
-      if (!effective) continue;
-      values[date.token] = formatFieldValue(effective, { dataType: 'DATE' });
-    }
-
-    // 3. Fees.
-    const feeTokenByKind: Record<string, string> = {
-      T1_PREPARATION: 'pricing.t1_fee',
-      T2_PREPARATION: 'pricing.t2_fee',
-      T3_PREPARATION: 'pricing.t3_fee',
-      CSRS_4200_COMPILATION: 'pricing.compilation_fee',
-    };
-
-    for (const fee of fees) {
-      const token = feeTokenByKind[fee.feeKind];
-      if (!token || !byToken.has(token)) continue;
-      if (fee.roundedFee) values[token] = formatFieldValue(fee.roundedFee.toString(), { dataType: 'MONEY' });
-    }
-
-    // 4. Tax year, which several templates print directly.
-    if (byToken.has('engagement.tax_year')) {
-      values['engagement.tax_year'] ??= String(engagement.taxYear);
+      values[token] =
+        resolved.origin === 'ENGAGEMENT' ? resolved.value : formatFieldValue(resolved.value, { dataType });
     }
 
     // 5. Service selections and conditional sections.

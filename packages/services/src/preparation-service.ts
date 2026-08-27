@@ -14,6 +14,8 @@ import {
   type ValueSource,
 } from '@element/shared';
 import type { PricingService } from './pricing-service.js';
+import { putExtractedField } from './extracted-fields.js';
+import { SETTING_KEYS, type SettingKey } from './settings.js';
 import {
   CLIENT_SIGNING_ORDER,
   FIRM_SIGNING_ORDER,
@@ -155,6 +157,7 @@ export class PreparationService {
 
     const karbonFieldsRecorded = await this.recordKarbonValues(engagement);
     const signersProposed = await this.proposeSigners(engagement);
+    const firmDefaultsRecorded = await this.recordFirmDefaults(engagement);
     const conflictsRaised = await this.reconcile(input.engagementId, input.actorId, input.correlationId);
     const serviceSelectionsSeeded = manifest ? await this.seedServiceSelections(input.engagementId, manifest) : 0;
     const dates = await this.calculateDates(engagement);
@@ -170,6 +173,7 @@ export class PreparationService {
       reason: 'Engagement prepared: values reconciled, fees calculated, deadlines evaluated.',
       afterValue: {
         karbonFieldsRecorded,
+        firmDefaultsRecorded,
         conflictsRaised,
         serviceSelectionsSeeded,
         feesCalculated: fees.calculated,
@@ -210,11 +214,7 @@ export class PreparationService {
     return version ? parseManifest(version.manifest) : null;
   }
 
-  /**
-   * Upserts an engagement-level field. `coverLetterPackageId` is null here, and
-   * the uniqueness guarantee comes from a NULLS NOT DISTINCT index that
-   * Prisma's compound-key type cannot express, so the lookup is explicit.
-   */
+  /** Delegates to the one field writer, shared with the extraction worker. */
   private async putField(input: {
     engagementId: string;
     token: string;
@@ -225,40 +225,7 @@ export class PreparationService {
     valueBoolean?: boolean | null;
     confidence?: number;
   }): Promise<void> {
-    const existing = await this.deps.prisma.extractedField.findFirst({
-      where: {
-        engagementId: input.engagementId,
-        coverLetterPackageId: null,
-        token: input.token,
-        source: input.source,
-      },
-      select: { id: true, manuallyConfirmed: true },
-    });
-
-    // A value a person has confirmed is never silently rewritten.
-    if (existing?.manuallyConfirmed) return;
-
-    const data = {
-      value: input.value ?? null,
-      valueDate: input.valueDate ?? null,
-      valueBoolean: input.valueBoolean ?? null,
-      confidence: input.confidence ?? 1,
-    };
-
-    if (existing) {
-      await this.deps.prisma.extractedField.update({ where: { id: existing.id }, data });
-      return;
-    }
-
-    await this.deps.prisma.extractedField.create({
-      data: {
-        engagementId: input.engagementId,
-        token: input.token,
-        source: input.source,
-        extractionMethod: input.method,
-        ...data,
-      },
-    });
+    await putExtractedField(this.deps.prisma, input);
   }
 
   /**
@@ -501,7 +468,91 @@ export class PreparationService {
       });
     }
 
+    // The letter names the same person the participant list does. This was the
+    // odd one out: the application resolved the firm signer, wrote them to the
+    // participants, and then reported `firm.signer_name` outstanding on every
+    // engagement — a required field whose answer it was already holding.
+    await this.putField({
+      engagementId,
+      token: 'firm.signer_name',
+      source: 'TEMPLATE_DEFAULT',
+      method: 'STRUCTURED_EXPORT',
+      value: user.displayName,
+    });
+
     return 1;
+  }
+
+  /**
+   * The firm's own answers: who leads the work, and the standard wording.
+   *
+   * None of this is client data and none of it is in any document, which is why
+   * four required T2 fields had no writer at all. `TEMPLATE_DEFAULT` is the
+   * right source: it is what the firm says absent anything more specific, and a
+   * reviewer typing over it wins through `resolveFieldValue`'s confirmed step.
+   */
+  private async recordFirmDefaults(engagement: { id: string; assignedPreparerId: string | null }): Promise<number> {
+    let written = 0;
+
+    const lead = await this.deps.prisma.engagementParticipant.findFirst({
+      where: { engagementId: engagement.id, role: 'ENGAGEMENT_LEAD' },
+      select: { fullLegalName: true, email: true },
+    });
+
+    const fallback = engagement.assignedPreparerId
+      ? await this.deps.prisma.user.findUnique({
+          where: { id: engagement.assignedPreparerId },
+          select: { displayName: true, email: true },
+        })
+      : null;
+
+    const leadName = lead?.fullLegalName ?? fallback?.displayName ?? null;
+    const leadEmail = lead?.email ?? fallback?.email ?? null;
+
+    if (leadName) {
+      // The placeholder asks for name *and* contact information, so a bare name
+      // would leave the client with nobody to reply to.
+      await this.putField({
+        engagementId: engagement.id,
+        token: 'firm.engagement_lead',
+        source: 'TEMPLATE_DEFAULT',
+        method: 'STRUCTURED_EXPORT',
+        value: leadEmail ? `${leadName}, ${leadEmail}` : leadName,
+      });
+      written += 1;
+    }
+
+    const defaults: { key: SettingKey; token: string }[] = [
+      { key: SETTING_KEYS.letterBillingBasis, token: 'pricing.billing_basis' },
+      { key: SETTING_KEYS.letterPaymentTerms, token: 'pricing.payment_terms' },
+      { key: SETTING_KEYS.letterPaymentTermsShort, token: 'pricing.payment_terms_short' },
+      { key: SETTING_KEYS.letterSpecialTerms, token: 'special_terms.line_1' },
+    ];
+
+    const rows = await this.deps.prisma.systemSetting.findMany({
+      where: { key: { in: defaults.map((entry) => entry.key) } },
+      select: { key: true, value: true },
+    });
+    const byKey = new Map(rows.map((row) => [row.key, row.value]));
+
+    for (const entry of defaults) {
+      const configured = byKey.get(entry.key);
+      const text = typeof configured === 'string' ? configured.trim() : '';
+      // Unset stays unset. A blank required field is reported outstanding,
+      // which is a better answer than wording nobody chose.
+      if (text.length === 0) continue;
+
+      await this.putField({
+        engagementId: engagement.id,
+        token: entry.token,
+        source: 'TEMPLATE_DEFAULT',
+        method: 'STRUCTURED_EXPORT',
+        value: text,
+      });
+      written += 1;
+    }
+
+    return written;
   }
 
   /** Mirrors `ParticipantService.outstanding`, without a circular dependency. */
