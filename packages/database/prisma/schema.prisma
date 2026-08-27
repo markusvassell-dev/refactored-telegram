@@ -577,6 +577,7 @@ model Engagement {
   participants       EngagementParticipant[]
   notifications      Notification[]
   sourceDocuments    SourceDocument[]
+  sourceDocumentScans SourceDocumentScan[]
   documentVersions   DocumentVersion[]
   extractedFields    ExtractedField[]
   fieldConflicts     FieldConflict[]
@@ -723,6 +724,43 @@ model TemplateFieldDefinition {
 // ---------------------------------------------------------------------------
 // Documents
 // ---------------------------------------------------------------------------
+
+/// One run of the client-document scan.
+///
+/// Written before the work starts and finished at the end, so a scan the worker
+/// died in the middle of is an unfinished row rather than nothing at all — the
+/// same reasoning as `KarbonLibrarySync`, which this deliberately does not
+/// reuse: that one is per client, and a scan is per engagement.
+///
+/// `complete` is the load-bearing column. Ninety-one documents from a complete
+/// read and ninety-one from a read that lost two scopes to a timeout are not
+/// the same answer, and the difference decides whether "this client has no
+/// prior-year letter" means anything.
+model SourceDocumentScan {
+  id                  String    @id @default(uuid())
+  engagementId        String
+  startedAt           DateTime  @default(now())
+  finishedAt          DateTime?
+  documentsCatalogued Int       @default(0)
+  documentsConsidered Int       @default(0)
+  documentsRead       Int       @default(0)
+  documentsUnreadable Int       @default(0)
+  documentsAccepted   Int       @default(0)
+  tokensFilled        Int       @default(0)
+  conflictsRaised     Int       @default(0)
+  scopesRead          Int       @default(0)
+  scopesFailed        Int       @default(0)
+  /// False when any scope failed, any download failed, or the cap was reached.
+  complete            Boolean   @default(false)
+  /// Set when the document limit bit, so the screen can say so.
+  cappedAt            Int?
+  failureDetail       Json?
+
+  engagement Engagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId, startedAt])
+  @@map("source_document_scan")
+}
 
 model SourceDocument {
   id                 String             @id @default(uuid())

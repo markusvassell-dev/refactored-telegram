@@ -96,3 +96,64 @@ export async function enqueuePriorYearSearch(
 
   return { enqueued: true, deduplicated: result.deduplicated };
 }
+
+
+/**
+ * Queueing the scan of everything Karbon holds for this client.
+ *
+ * The same guards as the search above, and the same states: a scan begins by
+ * locating documents, so an engagement already past extraction cannot accept
+ * one. Deliberately a sibling rather than a replacement — the search answers a
+ * narrower question and stays available on its own button.
+ */
+export async function enqueueClientDocumentScan(
+  deps: PriorYearSearchDeps,
+  engagementId: string,
+  correlationId: string,
+  options: { force?: boolean; actorId?: string | null } = {},
+): Promise<PriorYearSearchOutcome> {
+  const engagement = await deps.prisma.engagement.findUnique({
+    where: { id: engagementId },
+    select: {
+      status: true,
+      client: { select: { karbonEntityKey: true } },
+      karbonWorkItem: { select: { karbonKey: true } },
+    },
+  });
+
+  if (!engagement) return { enqueued: false, deduplicated: false, reason: 'The engagement no longer exists.' };
+
+  if (!engagement.client.karbonEntityKey && !engagement.karbonWorkItem?.karbonKey) {
+    return {
+      enqueued: false,
+      deduplicated: false,
+      reason:
+        'This engagement is not linked to Karbon — neither the client nor a work item carries a Karbon key — so there is nothing to read. Attach documents by hand below.',
+    };
+  }
+
+  if (!PRIOR_YEAR_SEARCH_STATES.has(engagement.status)) {
+    return {
+      enqueued: false,
+      deduplicated: false,
+      reason: `Reading the client's documents would move this engagement back to locating source documents, which is not allowed from ${engagement.status
+        .replace(/_/g, ' ')
+        .toLowerCase()}.`,
+    };
+  }
+
+  const result = await deps.queue.enqueue({
+    jobType: 'SCAN_CLIENT_DOCUMENTS',
+    // Stable per engagement per day, so the automatic run and a person pressing
+    // Prepare do not read the whole library twice; an explicit re-run asks for
+    // a fresh look and gets its own key.
+    idempotencyKey: options.force
+      ? `scan_documents_${engagementId}_${Date.now()}`
+      : `scan_documents_${engagementId}_${new Date().toISOString().slice(0, 10)}`,
+    payload: { engagementId, actorId: options.actorId ?? null },
+    engagementId,
+    correlationId,
+  });
+
+  return { enqueued: true, deduplicated: result.deduplicated };
+}

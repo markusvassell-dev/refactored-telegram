@@ -19,6 +19,7 @@ import {
 import {
   SETTING_KEYS,
   describeDifferences,
+  enqueueClientDocumentScan,
   enqueuePreparation,
   enqueuePriorYearSearch,
   karbonStatusTriggerSchema,
@@ -788,6 +789,26 @@ function priorYearSearch(
   );
 }
 
+/**
+ * Reading everything Karbon holds for this client.
+ *
+ * Subsumes the targeted prior-year search — it scores the same candidates and
+ * hands them to the same chooser — so the two are not run together. The search
+ * stays available on its own for a narrower, cheaper re-check.
+ */
+function scanClientDocumentsInBackground(
+  engagementId: string,
+  correlationId: string,
+  options: { force?: boolean; actorId?: string | null } = {},
+): Promise<PriorYearSearchOutcome> {
+  return enqueueClientDocumentScan(
+    { prisma: container.prisma, queue: container.queue },
+    engagementId,
+    correlationId,
+    options,
+  );
+}
+
 /** Preparing from the client record, with no document involved. */
 function prepareInBackground(
   engagementId: string,
@@ -859,7 +880,7 @@ export async function prepareEngagement(formData: FormData): Promise<ActionResul
     // the largest single source of what it reconciles against, so the search
     // starts here. It runs in the background: preparation's own result must
     // not depend on Karbon being reachable this second.
-    const search = await priorYearSearch(engagementId, correlationId);
+    const search = await scanClientDocumentsInBackground(engagementId, correlationId, { actorId: actor.id });
 
     revalidatePath(`/engagements/${engagementId}`);
 
@@ -1116,7 +1137,9 @@ export async function createEngagement(formData: FormData): Promise<ActionResult
     // started by Karbon already searches immediately, so until now one created
     // by hand behaved *less* automatically than one nobody asked for.
     const correlationId = newCorrelationId();
-    const search = await priorYearSearch(result.engagementId, correlationId);
+    const search = await scanClientDocumentsInBackground(result.engagementId, correlationId, {
+      actorId: actor.id,
+    });
 
     // And prepare, which does not wait for the search to find anything.
     // Preparation records the client's own details, proposes the signers,

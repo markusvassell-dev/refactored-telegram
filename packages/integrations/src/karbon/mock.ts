@@ -17,6 +17,7 @@ import type {
   KarbonWorkItem,
   KarbonWorkItemQuery,
   KarbonWriteResult,
+  KarbonBatchDownload,
 } from './types.js';
 
 /**
@@ -59,6 +60,10 @@ export class MockKarbonProvider implements KarbonProvider {
   constructor(seed: MockKarbonSeed = {}) {
     for (const client of seed.clients ?? []) this.clients.set(client.entityKey, client);
     for (const item of seed.workItems ?? []) this.workItems.set(item.workItemKey, item);
+    // The file key is the document's identity, here as in Karbon. So a file
+    // that is filed against both a work item and the client is *one* entry
+    // carrying both keys — seeding it twice under the same id silently keeps
+    // only the last, which reads like two scopes and behaves like one.
     for (const document of seed.documents ?? []) {
       this.documents.set(document.documentId, {
         ...document,
@@ -223,6 +228,66 @@ export class MockKarbonProvider implements KarbonProvider {
       fileName: document.fileName,
       mimeType: document.mimeType ?? 'application/octet-stream',
     };
+  }
+
+  /**
+   * The batch, held to the same standard as the single download above.
+   *
+   * It refuses without a scope for the same reason, and it *lists* — once —
+   * rather than serving from the map directly, because one listing for the
+   * whole batch is the entire point of the operation. A double that skipped the
+   * listing would let a caller regress to one listing per file with every test
+   * still green: the same mistake the comment above describes, in the other
+   * direction.
+   */
+  async downloadDocuments(
+    scope: { workItemKey?: string; entityKey?: string },
+    documentIds: readonly string[],
+  ): Promise<KarbonBatchDownload> {
+    this.record('downloadDocuments', { scope, count: documentIds.length });
+
+    // Nothing asked for is nothing requested, matching the real client. A double
+    // that listed anyway would hide a caller making an empty round trip per
+    // scope on a client whose library it had already filtered to nothing.
+    if (documentIds.length === 0) return { files: [], failures: [] };
+
+    if (!scope.workItemKey && !scope.entityKey) {
+      return {
+        files: [],
+        failures: documentIds.map((documentId) => ({
+          documentId,
+          reason:
+            'Karbon issues a download link only with a current file listing, so the file must be listed for the entity that holds it.',
+        })),
+      };
+    }
+
+    const listing = await this.listDocuments(scope);
+    const available = new Set(listing.map((document) => document.documentId));
+
+    const files: KarbonBatchDownload['files'] = [];
+    const failures: KarbonBatchDownload['failures'] = [];
+
+    for (const documentId of documentIds) {
+      const stored = available.has(documentId) ? this.documents.get(documentId) : undefined;
+
+      if (!stored) {
+        failures.push({
+          documentId,
+          reason: 'This file was not in the listing for the scope it was expected under.',
+        });
+        continue;
+      }
+
+      files.push({
+        documentId,
+        content: stored.content,
+        fileName: stored.fileName,
+        mimeType: stored.mimeType ?? 'application/octet-stream',
+      });
+    }
+
+    return { files, failures };
   }
 
   async uploadDocument(request: KarbonUploadRequest): Promise<KarbonWriteResult> {
@@ -419,6 +484,14 @@ export class BlockedKarbonProvider implements KarbonProvider {
   async downloadDocument(): Promise<{ content: Buffer; fileName: string; mimeType: string }> {
     throw new NotFoundError('Karbon document (test mode blocks reads from production)');
   }
+  async downloadDocuments(
+    _scope: { workItemKey?: string; entityKey?: string },
+    documentIds: readonly string[],
+  ): Promise<KarbonBatchDownload> {
+    // Reported as failures rather than thrown, so the caller records that these
+    // were not read — which is the distinction the contract exists for.
+    return { files: [], failures: documentIds.map((documentId) => ({ documentId, reason: this.reason })) };
+  }
   async uploadDocument(): Promise<KarbonWriteResult> {
     return this.blocked();
   }
@@ -509,6 +582,12 @@ export class ReadOnlyKarbonProvider implements KarbonProvider {
     scope?: { workItemKey?: string; entityKey?: string },
   ): Promise<{ content: Buffer; fileName: string; mimeType: string }> {
     return this.inner.downloadDocument(documentId, scope);
+  }
+  downloadDocuments(
+    scope: { workItemKey?: string; entityKey?: string },
+    documentIds: readonly string[],
+  ): Promise<KarbonBatchDownload> {
+    return this.inner.downloadDocuments(scope, documentIds);
   }
   healthCheck(): Promise<{ ok: boolean; detail?: string }> {
     return this.inner.healthCheck();

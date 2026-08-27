@@ -190,27 +190,47 @@ describe('background job reachability', () => {
     ).toEqual([]);
   });
 
-  it('starts the prior-year search from preparation, not only from a webhook', async () => {
+  it('reads the client’s documents from preparation, not only from a webhook', async () => {
     // The specific regression. The webhook alone is not enough: no tenant had
     // ever configured a Karbon status trigger, and `karbon_status_triggers` is
-    // seeded empty, so a webhook-only caller means the search never runs.
+    // seeded empty, so a webhook-only caller means nothing ever reads a document.
     //
-    // The literal `jobType` moved out of `actions.ts` when the helper moved to
-    // `@element/services` for the worker's rollover to share. Following the
-    // call rather than deleting the assertion: preparation must still reach the
-    // enqueue, and the enqueue must still exist — just one file further away.
+    // Followed twice now rather than deleted. The literal `jobType` first moved
+    // out of `actions.ts` into `@element/services` so the worker's rollover
+    // could share it; then the targeted prior-year search was replaced here by
+    // the whole-library scan, which scores the same candidates and hands them to
+    // the same chooser. What has to stay true is the property, not the name: a
+    // person pressing Prepare must reach an enqueue that reads documents.
     const actions = await readFile(join(process.cwd(), 'apps/web/src/app/actions.ts'), 'utf8');
     const helper = await readFile(
       join(process.cwd(), 'packages/services/src/prior-year-search.ts'),
       'utf8',
     );
 
-    expect(helper).toContain("jobType: 'LOCATE_PRIOR_YEAR_DOCUMENTS'");
-    expect(actions).toContain('enqueuePriorYearSearch');
+    expect(helper).toContain("jobType: 'SCAN_CLIENT_DOCUMENTS'");
+    expect(actions).toContain('enqueueClientDocumentScan');
 
     // Preparation must call it, not merely import it.
     const prepareBody = actions.slice(actions.indexOf('export async function prepareEngagement'));
-    expect(prepareBody.slice(0, 2_000)).toContain('priorYearSearch(engagementId');
+    expect(prepareBody.slice(0, 2_000)).toContain('scanClientDocumentsInBackground(engagementId');
+  });
+
+  it('prepares an engagement whether or not any document is found', async () => {
+    // The other half, and the reason the Matador engagement sat with its
+    // corporation name blank: `PREPARE_ENGAGEMENT` used to be enqueued from
+    // exactly one place, the last line of extraction. No document meant no
+    // preparation, and preparation is what records the client's own details.
+    const actions = await readFile(join(process.cwd(), 'apps/web/src/app/actions.ts'), 'utf8');
+    const handlers = await readFile(join(process.cwd(), 'apps/worker/src/handlers.ts'), 'utf8');
+    const helper = await readFile(
+      join(process.cwd(), 'packages/services/src/preparation-enqueue.ts'),
+      'utf8',
+    );
+
+    expect(helper).toContain("jobType: 'PREPARE_ENGAGEMENT'");
+    // Creating an engagement, and finishing a scan that found nothing.
+    expect(actions).toContain('prepareInBackground');
+    expect(handlers).toContain('enqueuePreparation');
   });
 
   it('reaches the rollover from both the webhook and the poll', async () => {

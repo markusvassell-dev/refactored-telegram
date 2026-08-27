@@ -19,6 +19,7 @@ import type {
   KarbonWorkItem,
   KarbonWorkItemQuery,
   KarbonWriteResult,
+  KarbonBatchDownload,
 } from './types.js';
 
 /**
@@ -657,6 +658,21 @@ export class KarbonRestClient implements KarbonProvider {
     // valid for fifteen minutes, so it is fetched fresh rather than stored: a
     // persisted one would pass every test and then fail in production the first
     // time a document was opened a quarter of an hour after it was listed.
+    //
+    // Worth knowing, and not yet acted on: re-listing the whole scope to obtain
+    // one token is inference, and Karbon publishes a direct route —
+    // `GET /v3/FileDetails/{key}/Download` answers 302 with a freshly-tokened
+    // URL for exactly one file, running the same tenant check, so it needs no
+    // scope and no listing at all. That would make this a single request and
+    // would lift the restriction below, where a file whose scope is unknown
+    // cannot be read back at all.
+    //
+    // It is left alone here deliberately. This path is one of the few verified
+    // against the firm's live tenant, and a corrected path is not an observed
+    // one: switching it on the strength of a specification would trade
+    // something known to work for something believed to. `downloadDocuments`
+    // below takes the cheap win — one listing for a whole batch — using only
+    // operations this client has already exercised for real.
     const listing = scope ? await this.listDocuments(scope) : [];
     const match = listing.find((document) => document.documentId === documentId);
 
@@ -683,6 +699,77 @@ export class KarbonRestClient implements KarbonProvider {
       fileName: match.fileName || documentId,
       mimeType: match.mimeType ?? 'application/octet-stream',
     };
+  }
+
+  async downloadDocuments(
+    scope: { workItemKey?: string; entityKey?: string },
+    documentIds: readonly string[],
+  ): Promise<KarbonBatchDownload> {
+    const wanted = new Set(documentIds);
+    if (wanted.size === 0) return { files: [], failures: [] };
+
+    const files: KarbonBatchDownload['files'] = [];
+    const failures: KarbonBatchDownload['failures'] = [];
+
+    // One listing for the whole batch. Karbon publishes that a download token is
+    // "valid for 15 minutes from the moment of issue", so every token this
+    // listing carries serves for the rest of the run. `downloadDocument` lists
+    // again per file, which on a sixty-document scan is sixty listings against
+    // a limit shared with everything else the firm has connected.
+    let listing: KarbonDocument[];
+    try {
+      listing = await this.listDocuments(scope);
+    } catch (error) {
+      // The whole scope failed. Every document in it is reported, so a caller
+      // cannot mistake "we could not look" for "there was nothing there".
+      const reason = error instanceof Error ? error.message : String(error);
+      return {
+        files: [],
+        failures: [...wanted].map((documentId) => ({
+          documentId,
+          reason: `The file list for this scope could not be read: ${reason}`,
+        })),
+      };
+    }
+
+    const byId = new Map(listing.filter((document) => document.documentId).map((d) => [d.documentId, d]));
+
+    for (const documentId of wanted) {
+      const match = byId.get(documentId);
+
+      if (!match?.downloadUrl) {
+        failures.push({
+          documentId,
+          reason:
+            'Karbon issues a download link only with a current file listing, and this file was not in the listing for the scope it was expected under.',
+        });
+        continue;
+      }
+
+      // Only the query is taken from the vendor's URL; the host is always ours.
+      const token = new URL(match.downloadUrl, this.config.baseUrl).searchParams.get('token');
+
+      try {
+        const content = await this.request<Buffer>({
+          path: '/Files',
+          query: { token: token ?? undefined },
+          binary: true,
+          headers: { Accept: 'application/octet-stream' },
+        });
+
+        files.push({
+          documentId,
+          content,
+          fileName: match.fileName || documentId,
+          mimeType: match.mimeType ?? 'application/octet-stream',
+        });
+      } catch (error) {
+        // One unreadable file does not lose the rest of the batch.
+        failures.push({ documentId, reason: error instanceof Error ? error.message : String(error) });
+      }
+    }
+
+    return { files, failures };
   }
 
   async uploadDocument(request: KarbonUploadRequest): Promise<KarbonWriteResult> {

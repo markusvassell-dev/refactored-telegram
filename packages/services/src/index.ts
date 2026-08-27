@@ -22,6 +22,7 @@ export * from './field-values.js';
 export * from './effective-values.js';
 export * from './extracted-fields.js';
 export * from './document-merge.js';
+export * from './client-document-scan.js';
 export * from './field-form-service.js';
 export * from './user-admin-service.js';
 export * from './template-publish-service.js';

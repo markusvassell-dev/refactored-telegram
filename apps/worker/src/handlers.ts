@@ -1,7 +1,7 @@
 import {
   NotificationEmailService,
+  enqueueClientDocumentScan,
   enqueuePreparation,
-  enqueuePriorYearSearch,
   maybeStartCoverLetter,
   maybeStartGeneration,
   putExtractedField,
@@ -282,7 +282,7 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       // Straight into the pipeline that already exists, under the same key the
       // reviewer's own button uses, so a rollover and a person pressing it
       // cannot both queue a search for the same engagement.
-      const search = await enqueuePriorYearSearch(
+      const search = await enqueueClientDocumentScan(
         { prisma: context.prisma, queue: context.queue },
         result.engagementId,
         correlationId ?? newCorrelationId(),
@@ -522,6 +522,52 @@ export function buildHandlers(context: WorkerContext): Record<JobType, JobHandle
       }
 
       return { selected: outcome.selected.documentId, score: outcome.selected.score, extracting: queued.willRun };
+    },
+
+    /**
+     * Reading everything Karbon holds for this client, rather than hunting for
+     * one document.
+     *
+     * The search above answers a narrower question and gives up when it cannot
+     * answer it, which used to take preparation down with it. This reads the
+     * same scopes once, keeps what it read, and reports what it could not read
+     * as unread rather than as absent.
+     */
+    SCAN_CLIENT_DOCUMENTS: async ({ job }) => {
+      const engagementId = requireString(job.payload, 'engagementId');
+      const { karbon } = await context.providers();
+
+      const result = await context.clientDocumentScan.scan({
+        engagementId,
+        karbon,
+        correlationId: job.correlationId,
+        actorId: typeof job.payload.actorId === 'string' ? job.payload.actorId : null,
+      });
+
+      // Preparation follows whatever the scan found, including nothing. That is
+      // the whole point: the client's own details do not depend on a document
+      // turning up, and used to behave as though they did.
+      await enqueuePreparation(
+        { prisma: context.prisma, queue: context.queue },
+        engagementId,
+        job.correlationId,
+        { reason: 'Preparing after reading the client’s documents.', force: true },
+      );
+
+      if (result.reason) return { ...result, userMessage: result.reason };
+
+      const parts = [
+        `Read ${result.documentsRead} of ${result.documentsConsidered} document(s) and accepted ${result.documentsAccepted}.`,
+      ];
+      if (result.documentsUnreadable > 0) parts.push(`${result.documentsUnreadable} could not be opened.`);
+      if (result.scopesFailed > 0) {
+        parts.push(
+          `${result.scopesFailed} place(s) in Karbon could not be read, so a document missing here has not been shown to be missing from Karbon.`,
+        );
+      }
+      if (result.cappedAt !== null) parts.push(`Stopped at the ${result.cappedAt}-document limit.`);
+
+      return { ...result, userMessage: parts.join(' ') };
     },
 
     // ------------------------------------------------------------ Extraction
