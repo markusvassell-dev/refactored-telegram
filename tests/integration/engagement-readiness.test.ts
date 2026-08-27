@@ -500,3 +500,73 @@ describe('the report as a whole', () => {
     expect(dates?.outstanding.join(' ')).toMatch(/No year-end has been recorded/);
   });
 });
+
+describe('a token carrying more than one conflict row', () => {
+  /**
+   * `reconcile` clears only UNRESOLVED conflicts when it re-runs, and Prepare
+   * is documented as safe to re-run. So a token whose conflict a reviewer
+   * resolved keeps that row and gains a fresh UNRESOLVED one on the next
+   * Prepare — two rows, one token.
+   *
+   * `resolveFieldValue` applies a resolved conflict and ignores an unresolved
+   * one, so which row the comparison reads decides the value. Without an
+   * ordering it was whichever Postgres returned last, which meant the same
+   * engagement could pass the readiness gate on one run and fail on the next
+   * with nothing changed.
+   */
+  it('reads the resolved row, not whichever the database returned last', async () => {
+    const engagementId = await engagement();
+
+    await prisma.extractedField.createMany({
+      data: [
+        {
+          engagementId,
+          token: 'CLIENT_LEGAL_NAME',
+          value: 'Acme Holdings Ltd.',
+          source: 'PRIOR_YEAR_DOCUMENT',
+          extractionMethod: 'DETERMINISTIC_PATTERN',
+        },
+        {
+          engagementId,
+          token: 'CLIENT_LEGAL_NAME',
+          value: 'Acme Holdings Inc.',
+          source: 'KARBON_CLIENT',
+          extractionMethod: 'STRUCTURED_EXPORT',
+        },
+      ],
+    });
+
+    // The reviewer's decision, made first.
+    await prisma.fieldConflict.create({
+      data: {
+        engagementId,
+        token: 'CLIENT_LEGAL_NAME',
+        status: 'RESOLVED',
+        candidates: [],
+        resolvedValue: 'Acme Holdings Ltd.',
+        resolvedSource: 'PRIOR_YEAR_DOCUMENT',
+        resolvedAt: new Date(),
+      },
+    });
+
+    // A later Prepare raises the disagreement again without clearing the above.
+    await prisma.fieldConflict.create({
+      data: {
+        engagementId,
+        token: 'CLIENT_LEGAL_NAME',
+        status: 'UNRESOLVED',
+        candidates: [],
+      },
+    });
+
+    // Run it several times: the fault was a nondeterministic read, so a single
+    // pass could agree with the fix by luck.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const section = (await service.check(engagementId)).sections.find((row) => row.key === 'PREVIOUS_YEAR');
+
+      // The reviewer chose the prior-year value, so it is carried forward
+      // rather than reported as superseded by Karbon.
+      expect(section?.noted.join(' ')).toMatch(/carried forward as "Acme Holdings Ltd\."/);
+    }
+  });
+});

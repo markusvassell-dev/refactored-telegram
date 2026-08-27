@@ -1,13 +1,7 @@
 import { Prisma, type PrismaClient } from '@element/database';
 import type { AuditLogger } from '@element/audit';
 import { resolveUserActor } from './system-actor.js';
-import {
-  calculateFee,
-  resolveRule,
-  type CandidateRule,
-  type FeeCalculationResult,
-  type PriceRule,
-} from '@element/pricing';
+import { calculateFee, resolveRule, type CandidateRule, type FeeCalculationResult, type PriceRule } from '@element/pricing';
 import {
   PermissionError,
   ValidationError,
@@ -47,12 +41,15 @@ export class PricingService {
     private readonly audit: AuditLogger,
   ) {}
 
-  private async loadRules(engagementId: string): Promise<{ rules: CandidateRule[]; context: {
-    engagementType: string;
-    clientId: string;
-    clientGroup: string | null;
-    partnerUserId: string | null;
-  } }> {
+  private async loadRules(engagementId: string): Promise<{
+    rules: CandidateRule[];
+    context: {
+      engagementType: string;
+      clientId: string;
+      clientGroup: string | null;
+      partnerUserId: string | null;
+    };
+  }> {
     const engagement = await this.prisma.engagement.findUniqueOrThrow({
       where: { id: engagementId },
       select: {
@@ -183,9 +180,7 @@ export class PricingService {
       unroundedFee: result.unroundedFee ? new Prisma.Decimal(result.unroundedFee.toFixed(2)) : null,
       roundedFee: result.roundedFee ? new Prisma.Decimal(result.roundedFee.toFixed(2)) : null,
       increaseAmount: result.increaseAmount ? new Prisma.Decimal(result.increaseAmount.toFixed(2)) : null,
-      effectivePercentage: result.effectivePercentage
-        ? new Prisma.Decimal(result.effectivePercentage.toFixed(4))
-        : null,
+      effectivePercentage: result.effectivePercentage ? new Prisma.Decimal(result.effectivePercentage.toFixed(4)) : null,
       roundingApplied: result.roundingApplied,
       isPreTax: result.isPreTax,
       taxNote: 'Fees are quoted before GST. Applicable taxes are shown separately.',
@@ -282,32 +277,38 @@ export class PricingService {
   }
 
   /** Records elevated approval of a fee decrease or a high increase. */
-  async approveFee(input: {
-    engagementId: string;
-    feeKind: FeeKind;
-    approver: Principal;
-  }): Promise<void> {
+  async approveFee(input: { engagementId: string; feeKind: FeeKind; approver: Principal }): Promise<void> {
     const calculation = await this.prisma.feeCalculation.findUniqueOrThrow({
       where: { engagementId_feeKind: { engagementId: input.engagementId, feeKind: input.feeKind } },
     });
 
     if (!calculation.requiresApprovalType) return;
 
-    const permission =
-      calculation.requiresApprovalType === 'FEE_DECREASE' ? 'fee:approve_decrease' : 'fee:approve_high_increase';
+    const permission = calculation.requiresApprovalType === 'FEE_DECREASE' ? 'fee:approve_decrease' : 'fee:approve_high_increase';
 
     if (!can(input.approver, permission)) {
       throw new PermissionError('Only a partner or final approver can approve this fee change.');
     }
 
-    // A user may not approve a fee they themselves overrode.
-    if (calculation.isManualOverride) {
-      assertSeparationOfDuties({
-        approverId: input.approver.id,
-        authorId: calculation.calculatedByUserId,
-        subject: 'fee override',
-      });
-    }
+    // A user may not approve a fee they themselves produced.
+    //
+    // This was conditional on `isManualOverride`, which made the check weakest
+    // exactly where it matters most. `calculatedByUserId` is written on every
+    // calculation, not only on overrides, so a partner who ran preparation from
+    // the web screen and got back a high increase could approve it themselves —
+    // while the same partner typing the same figure by hand was refused. The
+    // rule-derived increase is the one the threshold exists to put in front of a
+    // second person, so it cannot be the one that skips them.
+    //
+    // Nothing legitimate changes. Preparation normally runs in the worker as
+    // the system actor, and `resolveUserActor` stores null for it, so
+    // `assertSeparationOfDuties` returns without doing anything — the guard only
+    // ever fires when a real person calculated the fee and is now approving it.
+    assertSeparationOfDuties({
+      approverId: input.approver.id,
+      authorId: calculation.calculatedByUserId,
+      subject: calculation.isManualOverride ? 'fee override' : 'fee calculation',
+    });
 
     await this.prisma.feeCalculation.update({
       where: { id: calculation.id },

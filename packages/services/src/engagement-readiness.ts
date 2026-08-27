@@ -257,6 +257,18 @@ export class EngagementReadinessService {
       // it to see the value that will actually reach the letter.
       this.deps.prisma.fieldConflict.findMany({
         where: { engagementId },
+        // Ordered because a token can carry more than one conflict row and the
+        // choice between them decides a value. `reconcile` clears only
+        // UNRESOLVED rows when it re-runs, so a token whose conflict a reviewer
+        // resolved keeps that row and gains a fresh UNRESOLVED one the next
+        // time Prepare runs — and Prepare is documented as safe to re-run.
+        //
+        // Without an order, which of the two reached the map below was whatever
+        // Postgres returned last. `resolveFieldValue` acts on a resolved
+        // conflict and ignores an unresolved one, so the same engagement could
+        // pass the readiness gate on one run and fail on the next with nothing
+        // changed.
+        orderBy: [{ resolvedAt: 'desc' }, { createdAt: 'desc' }],
         select: {
           token: true,
           status: true,
@@ -395,7 +407,17 @@ export class EngagementReadinessService {
     //     client over the firm's signature, and until now nothing said it was
     //     happening. Confirming the value on the Client Information tab clears
     //     it — as does Karbon simply having the value.
-    const conflictByToken = new Map(conflicts.map((conflict) => [conflict.token, conflict]));
+    // The row that actually decides a value wins: `resolveFieldValue` applies a
+    // RESOLVED or ACCEPTED_AS_IS conflict and ignores an UNRESOLVED one, so a
+    // token holding both must be read through the resolved one. Ties fall back
+    // to the query's ordering, which is deterministic.
+    const conflictByToken = new Map<string, (typeof conflicts)[number]>();
+    for (const conflict of conflicts) {
+      const held = conflictByToken.get(conflict.token);
+      if (!held || (held.status === 'UNRESOLVED' && conflict.status !== 'UNRESOLVED')) {
+        conflictByToken.set(conflict.token, conflict);
+      }
+    }
     const fieldsByToken = new Map<string, typeof fields>();
     for (const field of fields) {
       const bucket = fieldsByToken.get(field.token);
