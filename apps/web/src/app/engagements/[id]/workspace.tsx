@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
-import type { FieldForm, FormField } from '@element/services';
+import type { FieldForm, FormField, ReadinessReport, ReadinessSection } from '@element/services';
 import { ActionForm } from '@/components/action-form';
 import type { DocumentVersionLinks } from '@/lib/document-links';
 import {
@@ -83,6 +83,7 @@ export function ReviewWorkspace({
   dateFacts,
   fieldForm,
   generationGate,
+  readiness,
   canDelete,
 }: {
   csrfToken: string;
@@ -94,6 +95,8 @@ export function ReviewWorkspace({
   dateFacts: DateFactPrompt[];
   fieldForm: FieldForm;
   generationGate: { ok: boolean; blockers: string[]; warnings: string[] };
+  /** Null when the check could not be run; the panel says so rather than claiming readiness. */
+  readiness: ReadinessReport | null;
   /** Whether the viewer holds `engagement:delete`. The page decides; this only renders. */
   canDelete: boolean;
 }): ReactNode {
@@ -132,6 +135,8 @@ export function ReviewWorkspace({
             csrfToken={csrfToken}
             engagement={engagement}
             generationGate={generationGate}
+            readiness={readiness}
+            onOpenTab={setTab}
             canDelete={canDelete}
           />
         ) : null}
@@ -146,9 +151,16 @@ export function ReviewWorkspace({
         ) : null}
         {tab === 'Services' ? <Services csrfToken={csrfToken} engagement={engagement} /> : null}
         {tab === 'Pricing' ? <Pricing csrfToken={csrfToken} engagement={engagement} /> : null}
-        {tab === 'Previous-Year Comparison' ? <PreviousYear engagement={engagement} /> : null}
+        {tab === 'Previous-Year Comparison' ? (
+          <PreviousYear engagement={engagement} readiness={readiness} />
+        ) : null}
         {tab === 'Master-Template Comparison' ? (
-          <MasterTemplate csrfToken={csrfToken} engagement={engagement} templateVersion={templateVersion} />
+          <MasterTemplate
+            csrfToken={csrfToken}
+            engagement={engagement}
+            templateVersion={templateVersion}
+            readiness={readiness}
+          />
         ) : null}
         {tab === 'Document Preview' ? <Preview engagement={engagement} documentLinks={documentLinks} /> : null}
         {tab === 'Signers' ? <Signers csrfToken={csrfToken} engagement={engagement} /> : null}
@@ -178,6 +190,57 @@ function Card({ title, children, description }: { title: string; children: React
   );
 }
 
+/** The tab that fixes each readiness section, so a finding is one click from its remedy. */
+const TAB_FOR_SECTION: Record<ReadinessSection['key'], Tab> = {
+  SOURCE_DOCUMENTS: 'Source Documents',
+  CLIENT_INFORMATION: 'Client Information',
+  DATES: 'Dates and Deadlines',
+  SERVICES: 'Services',
+  PREVIOUS_YEAR: 'Previous-Year Comparison',
+  MASTER_TEMPLATE: 'Master-Template Comparison',
+};
+
+function ReadinessRow({
+  section,
+  onOpenTab,
+}: {
+  section: ReadinessSection;
+  onOpenTab: (tab: Tab) => void;
+}): ReactNode {
+  return (
+    <li>
+      <div className="flex items-center gap-2">
+        <span className={section.ok ? 'text-sm text-emerald-700' : 'text-sm text-red-700'}>
+          {section.ok ? 'Passed' : 'Outstanding'}
+        </span>
+        <button
+          type="button"
+          onClick={() => onOpenTab(TAB_FOR_SECTION[section.key])}
+          className="text-sm font-medium text-brand-700 underline"
+        >
+          {section.label}
+        </button>
+      </div>
+      {section.outstanding.length > 0 ? (
+        <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-red-700">
+          {section.outstanding.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : null}
+      {/* Shown even when the section passes: a comparison that only ever speaks
+          up to refuse looks exactly like one that never ran. */}
+      {section.noted.length > 0 ? (
+        <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-slate-500">
+          {section.noted.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
 function Empty({ message }: { message: string }): ReactNode {
   return <p className="text-sm text-slate-500">{message}</p>;
 }
@@ -186,11 +249,16 @@ function Overview({
   csrfToken,
   engagement,
   generationGate,
+  readiness,
+  onOpenTab,
   canDelete,
 }: {
   csrfToken: string;
   engagement: any;
   generationGate: { ok: boolean; blockers: string[]; warnings: string[] };
+  readiness: ReadinessReport | null;
+  /** Lets the readiness panel send a reviewer straight to the tab that fixes an item. */
+  onOpenTab: (tab: Tab) => void;
   canDelete: boolean;
 }): ReactNode {
   const latest = engagement.documentVersions?.[0];
@@ -219,7 +287,10 @@ function Overview({
         </Card>
       ) : null}
 
-      <Card title="Readiness">
+      <Card
+        title="Readiness"
+        description="What is still in the way, in one place. Everything here is also what the application checks by itself before a draft is put in front of a reviewer, so this screen and that decision cannot disagree."
+      >
         {generationGate.ok ? (
           <p className="text-sm text-emerald-700">Everything required to generate this document is in place.</p>
         ) : (
@@ -239,6 +310,33 @@ function Overview({
             ))}
           </ul>
         ) : null}
+
+        <div className="mt-5 border-t border-slate-200 pt-4">
+          {readiness === null ? (
+            <p className="text-sm text-amber-700">
+              The readiness checks could not be run, so nothing here should be read as a pass.
+            </p>
+          ) : (
+            <>
+              <p className="text-sm text-slate-700">
+                {readiness.ok
+                  ? 'Every check has passed. This draft is fit to go to a reviewer.'
+                  : 'These are outstanding, and a draft will not go to a reviewer until they are dealt with:'}
+              </p>
+              {readiness.settledAutomatically > 0 ? (
+                <p className="mt-1 text-xs text-slate-500">
+                  {readiness.settledAutomatically} value(s) were confirmed by the application rather than read by a
+                  person. They are marked as such on the Dates and Services tabs.
+                </p>
+              ) : null}
+              <ul className="mt-3 space-y-3">
+                {readiness.sections.map((section) => (
+                  <ReadinessRow key={section.key} section={section} onOpenTab={onOpenTab} />
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
       </Card>
 
       <Card title="Actions">
@@ -894,7 +992,7 @@ function DateTable({ csrfToken, engagement }: { csrfToken: string; engagement: a
   return (
     <Card
       title="Dates and deadlines"
-      description="Every date records the rule used, its input, its assumptions and who confirmed it. The application is not the final authority on a legal deadline — a reviewer confirms each one."
+      description="Every date records the rule used, its input, its assumptions and who confirmed it. A date whose rule computed cleanly is confirmed by the application and marked as such; one it could not compute, or that carries a blocking reason, is left for a reviewer."
     >
       {engagement.calculatedDates.length === 0 ? (
         <Empty message="No dates have been calculated yet." />
@@ -922,7 +1020,19 @@ function DateTable({ csrfToken, engagement }: { csrfToken: string; engagement: a
                 <td className="text-xs text-slate-600">
                   {(date.assumptions ?? []).length > 0 ? (date.assumptions as string[]).join(' ') : '—'}
                 </td>
-                <td>{date.confirmedAt ? (date.confirmedBy?.displayName ?? 'Yes') : 'No'}</td>
+                {/* A confirmation with no confirmer is the application's own,
+                    and must never read as though a person had checked it: the
+                    reviewer who approves the document inherits every one of
+                    these. */}
+                <td>
+                  {!date.confirmedAt ? (
+                    'No'
+                  ) : date.confirmedBy?.displayName ? (
+                    date.confirmedBy.displayName
+                  ) : (
+                    <span className="text-slate-600">Automatically — not yet read by anyone</span>
+                  )}
+                </td>
                 <td>
                   {!date.confirmedAt && !date.isBlocked ? (
                     <ActionForm action={confirmDate} csrfToken={csrfToken} submitLabel="Confirm" variant="secondary">
@@ -944,7 +1054,7 @@ function Services({ csrfToken, engagement }: { csrfToken: string; engagement: an
     <>
       <Card
         title="Selected services"
-        description="Last year's selection is carried forward as a suggestion only. Each service is confirmed for the new year before the letter can be generated."
+        description="A selection identical to last year's is confirmed by the application and marked as such. One that differs from last year, or that last year has no answer for, is a decision somebody made and is left for a reviewer to confirm."
       >
         {engagement.serviceSelections.length === 0 ? (
           <Empty message="No services have been recorded yet. Run Prepare on the Overview tab." />
@@ -971,7 +1081,18 @@ function Services({ csrfToken, engagement }: { csrfToken: string; engagement: an
                         ? 'Included (suggestion only)'
                         : 'Not included'}
                   </td>
-                  <td>{service.confirmed ? 'Yes' : <span className="text-amber-700">No</span>}</td>
+                  {/* As with the dates: no confirmer means the application
+                      settled it, and that has to be visibly different from a
+                      reviewer having agreed. */}
+                  <td>
+                    {!service.confirmed ? (
+                      <span className="text-amber-700">No</span>
+                    ) : service.confirmedByUserId ? (
+                      'Yes'
+                    ) : (
+                      <span className="text-slate-600">Automatically — unchanged from last year</span>
+                    )}
+                  </td>
                   <td>
                     <div className="flex gap-2">
                       <ActionForm
@@ -1142,14 +1263,55 @@ function Pricing({ csrfToken, engagement }: { csrfToken: string; engagement: any
   );
 }
 
-function PreviousYear({ engagement }: { engagement: any }): ReactNode {
+function ComparisonResult({ section }: { section: ReadinessSection | undefined }): ReactNode {
+  if (!section) {
+    return (
+      <Card title="Result">
+        <p className="text-sm text-amber-700">
+          This comparison could not be run, so nothing below should be read as a pass.
+        </p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card title="Result">
+      <p className={section.ok ? 'text-sm text-emerald-700' : 'text-sm text-red-700'}>
+        {section.ok
+          ? 'Passed. Nothing here stops this draft going to a reviewer.'
+          : 'Outstanding. A draft will not go to a reviewer until these are dealt with:'}
+      </p>
+      {section.outstanding.length > 0 ? (
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-red-700">
+          {section.outstanding.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : null}
+      {section.noted.length > 0 ? (
+        <>
+          <p className="mt-3 text-xs font-semibold text-slate-500">What the comparison found</p>
+          <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-slate-600">
+            {section.noted.map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </Card>
+  );
+}
+
+function PreviousYear({ engagement, readiness }: { engagement: any; readiness: ReadinessReport | null }): ReactNode {
   const priorYearValues = engagement.extractedFields.filter((field: any) => field.source === 'PRIOR_YEAR_DOCUMENT');
 
   return (
-    <Card
-      title="Previous-year comparison"
-      description="Values taken from the prior-year letter, alongside the value proposed for this year. Prior-year custom legal wording is never carried forward automatically."
-    >
+    <>
+      <ComparisonResult section={readiness?.sections.find((section) => section.key === 'PREVIOUS_YEAR')} />
+      <Card
+        title="Prior-year values"
+        description="What last year's letter said, and the evidence it was read from. Prior-year custom legal wording is never carried forward automatically."
+      >
       {priorYearValues.length === 0 ? (
         <Empty message="No prior-year values have been extracted." />
       ) : (
@@ -1174,7 +1336,8 @@ function PreviousYear({ engagement }: { engagement: any }): ReactNode {
           </tbody>
         </table>
       )}
-    </Card>
+      </Card>
+    </>
   );
 }
 
@@ -1182,15 +1345,18 @@ function MasterTemplate({
   csrfToken,
   engagement,
   templateVersion,
+  readiness,
 }: {
   csrfToken: string;
   engagement: any;
   templateVersion: any;
+  readiness: ReadinessReport | null;
 }): ReactNode {
   const latest = engagement.documentVersions?.[0];
 
   return (
     <>
+      <ComparisonResult section={readiness?.sections.find((section) => section.key === 'MASTER_TEMPLATE')} />
       <Card
         title="Approved master template"
         description="The current approved master template controls all standard legal wording. Every paragraph is locked by default."

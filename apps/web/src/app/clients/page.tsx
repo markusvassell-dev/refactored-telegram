@@ -121,6 +121,7 @@ export default async function ClientsPage({
   const clients = page.items;
   const canImport = can(user, 'engagement:create');
   const canCorrect = can(user, 'client:correct');
+  const canManage = can(user, 'client:manage');
   const karbonIsMock = providers.karbon.isMock;
 
   /*
@@ -137,6 +138,13 @@ export default async function ClientsPage({
       <PageHeader
         title="Clients"
         description="Every client this application knows about. Karbon remains the firm's client list; these are the ones an engagement can be started for."
+        actions={
+          canManage ? (
+            <Link className="btn-secondary" href="/clients/new">
+              Add a client
+            </Link>
+          ) : undefined
+        }
       />
 
       {canImport ? (

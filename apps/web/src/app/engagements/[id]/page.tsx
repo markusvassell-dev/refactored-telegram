@@ -86,7 +86,7 @@ export default async function EngagementDetailPage({ params }: { params: Promise
 
   if (!engagement) notFound();
 
-  const [auditEvents, auditEventCount, templateVersion, gate] = await Promise.all([
+  const [auditEvents, auditEventCount, templateVersion, gate, readiness] = await Promise.all([
     container.prisma.auditEvent.findMany({
       where: { engagementId: id },
       // Every audit event written by one transaction shares a `createdAt` to
@@ -102,6 +102,13 @@ export default async function EngagementDetailPage({ params }: { params: Promise
     container.generation
       .evaluateGate(id, documentTypeFor(engagement.engagementType))
       .catch(() => ({ ok: false, blockers: ['The generation gate could not be evaluated.'], warnings: [] })),
+    // The same report the worker consults at the review gate, so the screen
+    // that says "what is still in my way" and the check that decides whether a
+    // draft reaches a reviewer can never disagree.
+    //
+    // A failure here must not take the workspace down: the conflicts, approvals
+    // and audit trail are exactly what somebody needs when something is wrong.
+    container.engagementReadiness.check(id).catch(() => null),
   ]);
 
   // audit_event has no foreign keys, so history survives the deletion of the
@@ -190,6 +197,7 @@ export default async function EngagementDetailPage({ params }: { params: Promise
         dateFacts={dateFacts}
         fieldForm={fieldForm}
         generationGate={gate}
+        readiness={readiness}
         canDelete={can(viewer, 'engagement:delete')}
       />
     </>

@@ -85,10 +85,18 @@ Enable the scopes the application needs:
 | Scope | Used for |
 | --- | --- |
 | `agreement_write` | Creating agreements |
-| `agreement_read` | Status, signers, downloads |
+| `agreement_read` | Status, signers, downloads, **and the connection test** |
 | `agreement_send` | Sending for signature |
 | `webhook_write` | Managing the webhook subscription |
-| `user_read` | The health check (`/users/me`) |
+
+`user_read` is deliberately **not** on this list. The connection test used to
+read `/users/me`, which requires it — and that was a defect rather than a
+requirement. It meant a token holding `user_read` and neither agreement scope
+passed the connection test and was recorded as working, then failed on the
+first send; and, in the other direction, a firm that granted only the two
+agreement scopes this document calls least privilege saw a *failing* test on a
+perfectly good integration. The test now reads one page of agreements, so it is
+green exactly when the application will work.
 
 ## 2. OAuth
 
@@ -286,7 +294,7 @@ What it proves without sending anything:
 
 | Check | What a failure means |
 | --- | --- |
-| `OAUTH_AND_REACHABILITY` | The refresh token has expired or been revoked; the API base URL is for a different region than the account; or the integration lacks `agreement_read` |
+| `OAUTH_AND_AGREEMENT_READ` | The refresh token has expired or been revoked; the API base URL is for a different region than the account; or the integration lacks `agreement_read`. Adobe's own explanation is now included in the message — read it before changing anything |
 | `DUPLICATE_CHECK` | The agreement list cannot be read — which is worse than it sounds; see below |
 
 Signing itself is verified by running one engagement end to end with Test Mode

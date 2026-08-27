@@ -2,9 +2,365 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+  The two palettes.
+
+  `tailwind.config.ts` points every colour step at a variable defined here, so
+  these blocks are the whole of the theming — no component knows which theme it
+  is in.
+
+  Three blocks, because the choice has three states:
+
+    :root                              light, and the default
+    prefers-color-scheme + :not(light) "System", which is the absence of a
+                                       stamped attribute
+    [data-theme='dark']                an explicit choice, which must win over
+                                       the system even when they disagree
+
+  The root layout stamps `data-theme` from a cookie before the page is sent, so
+  the first painted frame is already correct. Nothing here runs after hydration.
+*/
+
 @layer base {
   :root {
     color-scheme: light;
+
+    --surface: 255 255 255;
+    /* The primary button's hover fill. A separate token because `brand-700`
+       is also ink (`text-brand-700`), and the two demands conflict: ink on a
+       dark surface must be light, while a fill under white text must be dark.
+       Darkening on hover reads correctly in both themes, so this value does
+       not flip. */
+    --brand-hover: 47 80 63;
+
+    --slate-50: 248 250 252;
+    --slate-100: 241 245 249;
+    --slate-200: 226 232 240;
+    --slate-300: 203 213 225;
+    --slate-400: 148 163 184;
+    --slate-500: 100 116 139;
+    --slate-600: 71 85 105;
+    --slate-700: 51 65 85;
+    --slate-800: 30 41 59;
+    --slate-900: 15 23 42;
+    --slate-950: 2 6 23;
+
+    --red-50: 254 242 242;
+    --red-100: 254 226 226;
+    --red-200: 254 202 202;
+    --red-300: 252 165 165;
+    --red-400: 248 113 113;
+    --red-500: 239 68 68;
+    --red-600: 220 38 38;
+    --red-700: 185 28 28;
+    --red-800: 153 27 27;
+    --red-900: 127 29 29;
+    --red-950: 69 10 10;
+
+    --orange-50: 255 247 237;
+    --orange-100: 255 237 213;
+    --orange-200: 254 215 170;
+    --orange-300: 253 186 116;
+    --orange-400: 251 146 60;
+    --orange-500: 249 115 22;
+    --orange-600: 234 88 12;
+    --orange-700: 194 65 12;
+    --orange-800: 154 52 18;
+    --orange-900: 124 45 18;
+    --orange-950: 67 20 7;
+
+    --amber-50: 255 251 235;
+    --amber-100: 254 243 199;
+    --amber-200: 253 230 138;
+    --amber-300: 252 211 77;
+    --amber-400: 251 191 36;
+    --amber-500: 245 158 11;
+    --amber-600: 217 119 6;
+    --amber-700: 180 83 9;
+    --amber-800: 146 64 14;
+    --amber-900: 120 53 15;
+    --amber-950: 69 26 3;
+
+    --emerald-50: 236 253 245;
+    --emerald-100: 209 250 229;
+    --emerald-200: 167 243 208;
+    --emerald-300: 110 231 183;
+    --emerald-400: 52 211 153;
+    --emerald-500: 16 185 129;
+    --emerald-600: 5 150 105;
+    --emerald-700: 4 120 87;
+    --emerald-800: 6 95 70;
+    --emerald-900: 6 78 59;
+    --emerald-950: 2 44 34;
+
+    --green-50: 240 253 244;
+    --green-100: 220 252 231;
+    --green-200: 187 247 208;
+    --green-300: 134 239 172;
+    --green-400: 74 222 128;
+    --green-500: 34 197 94;
+    --green-600: 22 163 74;
+    --green-700: 21 128 61;
+    --green-800: 22 101 52;
+    --green-900: 20 83 45;
+    --green-950: 5 46 22;
+
+    --blue-50: 239 246 255;
+    --blue-100: 219 234 254;
+    --blue-200: 191 219 254;
+    --blue-300: 147 197 253;
+    --blue-400: 96 165 250;
+    --blue-500: 59 130 246;
+    --blue-600: 37 99 235;
+    --blue-700: 29 78 216;
+    --blue-800: 30 64 175;
+    --blue-900: 30 58 138;
+    --blue-950: 23 37 84;
+
+    /* The firm's green. 50, 100, 500, 600 and 700 are the original values; the
+       rest fill a ramp that was always referenced and never defined. */
+    --brand-50: 242 247 244;
+    --brand-100: 226 237 230;
+    --brand-200: 198 220 207;
+    --brand-300: 161 197 176;
+    --brand-400: 116 164 137;
+    --brand-500: 74 124 98;
+    --brand-600: 60 102 80;
+    --brand-700: 47 80 63;
+    --brand-800: 38 63 51;
+    --brand-900: 31 51 41;
+    --brand-950: 16 32 26;
+  }
+
+  /*
+    Dark.
+
+    Deliberately not a mechanical inversion of the light scale. Inverting puts
+    the card surface *darker* than the page behind it, which reads as a hole
+    rather than a card, and collapses `hover:bg-slate-100` onto the surface it
+    sits on so nothing responds to a pointer.
+
+    The ordering that has to hold, lowest first:
+
+        slate-50 (page)  <  surface (cards)  <  slate-100 (hover)  <  borders
+
+    and the ink ramps the other way, slate-500 muted through slate-900 for
+    headings. Every pair the app actually uses clears WCAG AA.
+  */
+  :root:not([data-theme='light']) {
+    @media (prefers-color-scheme: dark) {
+      color-scheme: dark;
+
+      --surface: 21 28 42;
+      --brand-hover: 47 80 63;
+
+      --slate-50: 9 13 22;
+      --slate-100: 31 41 59;
+      --slate-200: 44 56 76;
+      --slate-300: 61 76 99;
+      --slate-400: 100 116 139;
+      --slate-500: 148 163 184;
+      --slate-600: 180 193 209;
+      --slate-700: 203 213 225;
+      --slate-800: 226 232 240;
+      --slate-900: 241 245 249;
+      --slate-950: 248 250 252;
+
+      --red-50: 40 12 16;
+      --red-100: 60 18 24;
+      --red-200: 88 26 34;
+      --red-300: 120 40 48;
+      --red-400: 190 70 80;
+      --red-500: 239 68 68;
+      --red-600: 248 113 113;
+      --red-700: 252 165 165;
+      --red-800: 254 202 202;
+      --red-900: 254 226 226;
+      --red-950: 254 242 242;
+
+      --orange-50: 43 22 6;
+      --orange-100: 61 31 7;
+      --orange-200: 92 46 11;
+      --orange-300: 130 66 15;
+      --orange-400: 194 100 25;
+      --orange-500: 249 115 22;
+      --orange-600: 251 146 60;
+      --orange-700: 253 186 116;
+      --orange-800: 254 215 170;
+      --orange-900: 255 237 213;
+      --orange-950: 255 247 237;
+
+      --amber-50: 43 27 5;
+      --amber-100: 61 38 7;
+      --amber-200: 92 57 11;
+      --amber-300: 133 84 15;
+      --amber-400: 180 115 20;
+      --amber-500: 245 158 11;
+      --amber-600: 251 191 36;
+      --amber-700: 252 211 141;
+      --amber-800: 253 230 138;
+      --amber-900: 254 243 199;
+      --amber-950: 255 251 235;
+
+      --emerald-50: 4 36 27;
+      --emerald-100: 6 50 37;
+      --emerald-200: 8 68 50;
+      --emerald-300: 12 95 70;
+      --emerald-400: 16 140 100;
+      --emerald-500: 16 185 129;
+      --emerald-600: 52 211 153;
+      --emerald-700: 110 231 183;
+      --emerald-800: 167 243 208;
+      --emerald-900: 209 250 229;
+      --emerald-950: 236 253 245;
+
+      --green-50: 5 40 21;
+      --green-100: 8 55 30;
+      --green-200: 14 78 43;
+      --green-300: 21 110 58;
+      --green-400: 28 150 76;
+      --green-500: 34 197 94;
+      --green-600: 74 222 128;
+      --green-700: 134 239 172;
+      --green-800: 187 247 208;
+      --green-900: 220 252 231;
+      --green-950: 240 253 244;
+
+      --blue-50: 10 25 46;
+      --blue-100: 14 35 64;
+      --blue-200: 21 52 96;
+      --blue-300: 29 78 140;
+      --blue-400: 45 110 200;
+      --blue-500: 59 130 246;
+      --blue-600: 96 165 250;
+      --blue-700: 147 197 253;
+      --blue-800: 191 219 254;
+      --blue-900: 219 234 254;
+      --blue-950: 239 246 255;
+
+      /* 500 and 600 hold their light values: `.btn-primary` is `bg-brand-600`
+         with white text, and it has to stay a green button in both themes. */
+      --brand-50: 15 26 20;
+      --brand-100: 20 38 29;
+      --brand-200: 28 51 39;
+      --brand-300: 45 78 60;
+      --brand-400: 90 140 110;
+      --brand-500: 74 124 98;
+      --brand-600: 60 102 80;
+      --brand-700: 140 186 160;
+      --brand-800: 178 210 190;
+      --brand-900: 214 232 221;
+      --brand-950: 242 247 244;
+    }
+  }
+
+  /*
+    An explicit choice. Identical values to the block above, and separate
+    because it must win over `prefers-color-scheme` in both directions — a
+    person on a light system who chose dark, and a person on a dark system who
+    chose light (handled by `:not([data-theme='light'])` above).
+  */
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+
+    --surface: 21 28 42;
+    --brand-hover: 47 80 63;
+
+    --slate-50: 9 13 22;
+    --slate-100: 31 41 59;
+    --slate-200: 44 56 76;
+    --slate-300: 61 76 99;
+    --slate-400: 100 116 139;
+    --slate-500: 148 163 184;
+    --slate-600: 180 193 209;
+    --slate-700: 203 213 225;
+    --slate-800: 226 232 240;
+    --slate-900: 241 245 249;
+    --slate-950: 248 250 252;
+
+    --red-50: 40 12 16;
+    --red-100: 60 18 24;
+    --red-200: 88 26 34;
+    --red-300: 120 40 48;
+    --red-400: 190 70 80;
+    --red-500: 239 68 68;
+    --red-600: 248 113 113;
+    --red-700: 252 165 165;
+    --red-800: 254 202 202;
+    --red-900: 254 226 226;
+    --red-950: 254 242 242;
+
+    --orange-50: 43 22 6;
+    --orange-100: 61 31 7;
+    --orange-200: 92 46 11;
+    --orange-300: 130 66 15;
+    --orange-400: 194 100 25;
+    --orange-500: 249 115 22;
+    --orange-600: 251 146 60;
+    --orange-700: 253 186 116;
+    --orange-800: 254 215 170;
+    --orange-900: 255 237 213;
+    --orange-950: 255 247 237;
+
+    --amber-50: 43 27 5;
+    --amber-100: 61 38 7;
+    --amber-200: 92 57 11;
+    --amber-300: 133 84 15;
+    --amber-400: 180 115 20;
+    --amber-500: 245 158 11;
+    --amber-600: 251 191 36;
+    --amber-700: 252 211 141;
+    --amber-800: 253 230 138;
+    --amber-900: 254 243 199;
+    --amber-950: 255 251 235;
+
+    --emerald-50: 4 36 27;
+    --emerald-100: 6 50 37;
+    --emerald-200: 8 68 50;
+    --emerald-300: 12 95 70;
+    --emerald-400: 16 140 100;
+    --emerald-500: 16 185 129;
+    --emerald-600: 52 211 153;
+    --emerald-700: 110 231 183;
+    --emerald-800: 167 243 208;
+    --emerald-900: 209 250 229;
+    --emerald-950: 236 253 245;
+
+    --green-50: 5 40 21;
+    --green-100: 8 55 30;
+    --green-200: 14 78 43;
+    --green-300: 21 110 58;
+    --green-400: 28 150 76;
+    --green-500: 34 197 94;
+    --green-600: 74 222 128;
+    --green-700: 134 239 172;
+    --green-800: 187 247 208;
+    --green-900: 220 252 231;
+    --green-950: 240 253 244;
+
+    --blue-50: 10 25 46;
+    --blue-100: 14 35 64;
+    --blue-200: 21 52 96;
+    --blue-300: 29 78 140;
+    --blue-400: 45 110 200;
+    --blue-500: 59 130 246;
+    --blue-600: 96 165 250;
+    --blue-700: 147 197 253;
+    --blue-800: 191 219 254;
+    --blue-900: 219 234 254;
+    --blue-950: 239 246 255;
+
+    --brand-50: 15 26 20;
+    --brand-100: 20 38 29;
+    --brand-200: 28 51 39;
+    --brand-300: 45 78 60;
+    --brand-400: 90 140 110;
+    --brand-500: 74 124 98;
+    --brand-600: 60 102 80;
+    --brand-700: 140 186 160;
+    --brand-800: 178 210 190;
+    --brand-900: 214 232 221;
+    --brand-950: 242 247 244;
   }
 
   body {
@@ -13,13 +369,13 @@
 
   /* A visible focus ring on every interactive element, in every browser. */
   :focus-visible {
-    @apply outline-none ring-2 ring-brand-600 ring-offset-2 ring-offset-white;
+    @apply outline-none ring-2 ring-brand-600 ring-offset-2 ring-offset-surface;
   }
 }
 
 @layer components {
   .card {
-    @apply rounded-lg border border-slate-200 bg-white shadow-sm;
+    @apply rounded-lg border border-slate-200 bg-surface shadow-sm;
   }
 
   .card-header {
@@ -35,16 +391,29 @@
            disabled:cursor-not-allowed disabled:opacity-50;
   }
 
+  /* `text-white` is literal, not themed. This is a green button in both themes
+     and its label has to stay readable on that green.
+   *
+   * The hover was `hover:bg-brand-700`, which broke in dark: `brand-700` is
+   * also used as ink (`text-brand-700`), so the dark ramp makes it a light
+   * green — and white on light green is 2.18:1. The label all but disappeared
+   * at the moment somebody was about to click it. One step cannot be both ink
+   * on a dark surface and a fill under white text, so the button gets its own
+   * token. */
   .btn-primary {
-    @apply btn bg-brand-600 text-white hover:bg-brand-700;
+    @apply btn bg-brand-600 text-white;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background-color: rgb(var(--brand-hover));
   }
 
   .btn-secondary {
-    @apply btn border border-slate-300 bg-white text-slate-700 hover:bg-slate-50;
+    @apply btn border border-slate-300 bg-surface text-slate-700 hover:bg-slate-50;
   }
 
   .btn-danger {
-    @apply btn border border-red-300 bg-white text-red-700 hover:bg-red-50;
+    @apply btn border border-red-300 bg-surface text-red-700 hover:bg-red-50;
   }
 
   .label {
@@ -52,7 +421,7 @@
   }
 
   .input {
-    @apply mt-1 block w-full rounded-md border border-slate-300 px-3 py-2 text-sm
+    @apply mt-1 block w-full rounded-md border border-slate-300 bg-surface px-3 py-2 text-sm text-slate-900
            focus:border-brand-600 focus:ring-brand-600;
   }
 

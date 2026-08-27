@@ -1,12 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { ADOBE_SIGN_DEFAULT_REQUESTS_PER_MINUTE, RateLimiter, retryAfterMs } from '../http/throttle.js';
-import {
-  IntegrationError,
-  ValidationError,
-  createLogger,
-  orderForAdobeParticipantSets,
-  type Logger,
-} from '@element/shared';
+import { IntegrationError, ValidationError, createLogger, orderForAdobeParticipantSets, type Logger } from '@element/shared';
 import { adobeReminderFrequency } from './types.js';
 import type {
   AdobeSignProvider,
@@ -40,6 +34,11 @@ export interface AdobeSignClientConfig {
   logger?: Logger;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  /**
+   * Total attempts per request, not retries beyond the first. A value below 1
+   * is treated as 1 — a client that makes no request at all would report
+   * vendor failures for requests that never happened.
+   */
   maxRetries?: number;
   /**
    * Acrobat Sign publishes no fixed number — the rate depends on the service
@@ -244,7 +243,18 @@ export class AdobeSignRestClient implements AdobeSignProvider {
     const method = (init.method ?? 'GET').toUpperCase();
     let lastError: unknown;
 
-    for (let attempt = 1; attempt <= this.maxRetries; attempt += 1) {
+    // At least one, whatever the configuration says.
+    //
+    // `maxRetries` is a total attempt count rather than a number of retries
+    // beyond the first, and this loop is bounded by it directly — so
+    // `maxRetries: 0`, which reads like "do not retry", made the loop body
+    // never run. The method then threw "failed after 0 attempts" without
+    // having called Adobe at all: an integration failure reported for a
+    // request that was never made, which is the quietest possible way to be
+    // wrong about a vendor.
+    const attempts = Math.max(1, this.maxRetries);
+
+    for (let attempt = 1; attempt <= attempts; attempt += 1) {
       // Every attempt spends a token, retries included: a retry is a request as
       // far as the plan's allowance is concerned.
       await this.limiter.acquire();
@@ -272,7 +282,7 @@ export class AdobeSignRestClient implements AdobeSignProvider {
         if (!response.ok) {
           const detail = await response.text().catch(() => '');
 
-          if (RETRYABLE_STATUS.has(response.status) && attempt < this.maxRetries) {
+          if (RETRYABLE_STATUS.has(response.status) && attempt < attempts) {
             // Adobe's guidance is explicit: on 429, retry only after the
             // interval `Retry-After` names. Backing off on a shorter schedule
             // of our own spends the allowance while the throttle is still in
@@ -282,7 +292,14 @@ export class AdobeSignRestClient implements AdobeSignProvider {
             continue;
           }
 
-          throw new IntegrationError('Adobe Sign', `HTTP ${response.status} for ${path}`, {
+          // Adobe's own words, in the message rather than only in the
+          // context. The body was already being read and stored here, and then
+          // dropped from the one string anybody sees: `healthCheck` returns
+          // `error.message`, and the Integrations screen stores that as the
+          // reason a connection failed. "HTTP 403 for /agreements" sends
+          // somebody to check a refresh token; "Access token does not have
+          // agreement_read scope" sends them to the one screen that fixes it.
+          throw new IntegrationError('Adobe Sign', `HTTP ${response.status} for ${path}${describeBody(detail)}`, {
             retryable: RETRYABLE_STATUS.has(response.status),
             context: { status: response.status, detail: detail.slice(0, 500) },
           });
@@ -296,14 +313,14 @@ export class AdobeSignRestClient implements AdobeSignProvider {
       } catch (error) {
         lastError = error;
         if (error instanceof IntegrationError && !error.retryable) throw error;
-        if (attempt >= this.maxRetries) break;
+        if (attempt >= attempts) break;
         await delay(backoffMs(attempt));
       } finally {
         clearTimeout(timer);
       }
     }
 
-    throw new IntegrationError('Adobe Sign', `Request to ${path} failed after ${this.maxRetries} attempts`, {
+    throw new IntegrationError('Adobe Sign', `Request to ${path} failed after ${attempts} attempt(s)`, {
       retryable: true,
       cause: lastError,
     });
@@ -322,7 +339,7 @@ export class AdobeSignRestClient implements AdobeSignProvider {
     // verified.
     if (request.authenticationMethod === 'PHONE') {
       throw new ValidationError(
-        'Phone verification cannot be used: Adobe needs each signer\'s telephone number, and engagement participants do not record one. Use email verification or knowledge-based authentication.',
+        "Phone verification cannot be used: Adobe needs each signer's telephone number, and engagement participants do not record one. Use email verification or knowledge-based authentication.",
       );
     }
 
@@ -570,11 +587,7 @@ export class AdobeSignRestClient implements AdobeSignProvider {
           role: 'AUTHORIZED_SIGNING_OFFICER' as SignerRole,
           // The events outrank the set status: a set still reads
           // WAITING_FOR_OTHERS after one of its members has refused.
-          status: acted?.declined
-            ? 'DECLINED'
-            : acted?.delegated && acted.signedAt === null
-              ? 'DELEGATED'
-              : status,
+          status: acted?.declined ? 'DECLINED' : acted?.delegated && acted.signedAt === null ? 'DELEGATED' : status,
           signedAt: acted?.signedAt ?? null,
           viewedAt: acted?.viewedAt ?? null,
         });
@@ -711,10 +724,9 @@ export class AdobeSignRestClient implements AdobeSignProvider {
     // from a read of the same resource, so the cancel is two calls: fetch the
     // current version, then change it.
     let etag: string | null = null;
-    const current = await this.request<Record<string, unknown> | null>(
-      `/agreements/${encodeURIComponent(agreementId)}`,
-      { onResponse: (response) => void (etag = response.headers.get('etag')) },
-    );
+    const current = await this.request<Record<string, unknown> | null>(`/agreements/${encodeURIComponent(agreementId)}`, {
+      onResponse: (response) => void (etag = response.headers.get('etag')),
+    });
 
     if (!current) {
       throw new IntegrationError('Adobe Sign', `Agreement ${agreementId} could not be read, so it was not cancelled.`, {
@@ -761,15 +773,18 @@ export class AdobeSignRestClient implements AdobeSignProvider {
 
     // Adobe sends the client id for verification handshakes and an HMAC of the
     // payload for delivered events. Both are checked in constant time.
-    const provided =
-      headers['x-adobesign-clientid'] ?? headers['X-AdobeSign-ClientId'] ?? headers['x-adobe-signature'] ?? '';
+    //
+    // The client-id branch was a plain `===`, under this same comment claiming
+    // otherwise. A comparison that returns on the first differing byte leaks
+    // the secret's prefix through timing, and a comment asserting a protection
+    // that is not there is worse than no comment: it stops the next reader
+    // looking.
+    const provided = headers['x-adobesign-clientid'] ?? headers['X-AdobeSign-ClientId'] ?? headers['x-adobe-signature'] ?? '';
 
-    if (provided === this.config.clientId) return true;
+    if (constantTimeEquals(provided, this.config.clientId)) return true;
 
     const expected = createHmac('sha256', secret).update(rawBody, 'utf8').digest('base64');
-    const a = Buffer.from(expected, 'utf8');
-    const b = Buffer.from(provided, 'utf8');
-    return a.length === b.length && timingSafeEqual(a, b);
+    return constantTimeEquals(provided, expected);
   }
 
   parseWebhook(rawBody: string): AdobeWebhookEvent | null {
@@ -791,17 +806,138 @@ export class AdobeSignRestClient implements AdobeSignProvider {
     }
   }
 
+  /**
+   * Whether this connection can do what the application needs.
+   *
+   * This used to read `/users/me`, which is a published operation and worked
+   * fine — and proved the wrong thing. `/users/me` requires the `user_read`
+   * scope; every operation this application actually performs requires
+   * `agreement_read` or `agreement_write`. So a token holding `user_read` and
+   * neither agreement scope passed the connection test, was recorded on the
+   * Integrations screen as working, and then failed on the first send.
+   *
+   * Green for the wrong reason is worse than red, because every signal says
+   * the integration is fine.
+   *
+   * The mirror-image failure was in the setup document, which told the firm
+   * that `agreement_read:self` and `agreement_write:self` were "the least
+   * privilege that works". A firm that followed it granted exactly those two,
+   * and the connection test then failed on a perfectly good integration —
+   * sending somebody to regenerate a refresh token that was never the problem.
+   *
+   * Reading one page of one agreement fixes both. It exercises the OAuth
+   * refresh, proves the base URL is the right region, and proves the token
+   * carries `agreement_read` — which is the narrowest thing that is true when
+   * the application will work and false when it will not. `pageSize=1` because
+   * this is a reachability check, not a listing: an account with ten thousand
+   * agreements should not transfer them to answer it.
+   *
+   * It deliberately does not check `agreement_write`. There is no way to prove
+   * a write scope without writing, and Adobe's write is an agreement — an
+   * e-mail to a real person asking them to sign something.
+   */
   async healthCheck(): Promise<{ ok: boolean; detail?: string }> {
     try {
-      await this.request('/users/me');
+      const page = await this.request<{ userAgreementList?: unknown[] } | null>('/agreements?pageSize=1');
+
+      // `request` maps a 404 on a GET to null, which is right for reading a
+      // record that may not exist and wrong here: it would make a path that
+      // does not exist indistinguishable from a healthy account, and report a
+      // green connection either way. A listing endpoint answering 404 is a
+      // fault, not an empty list.
+      //
+      // An *empty* list is fine and expected — a new account has sent nothing.
+      // What is checked is that Adobe returned a body at all.
+      if (page === null || page === undefined) {
+        return {
+          ok: false,
+          detail:
+            'The agreement list could not be read: Adobe answered 404. The base URL is probably for a different region than the account.',
+        };
+      }
+
       return { ok: true };
     } catch (error) {
-      return { ok: false, detail: error instanceof Error ? error.message : 'Unknown error' };
+      return { ok: false, detail: describeThrown(error) };
     }
   }
 }
 
 // ---------------------------------------------------------------------------
+
+/**
+ * Compares two secrets without leaking where they first differ.
+ *
+ * `timingSafeEqual` throws on a length mismatch, so the lengths are compared
+ * first — which does leak the length, and is unavoidable and harmless: an
+ * Adobe client id and a base64 HMAC are both fixed-width.
+ */
+function constantTimeEquals(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * An error with the part that actually names the problem.
+ *
+ * Node reports every transport failure as `fetch failed` and puts the reason in
+ * `cause` — `getaddrinfo ENOTFOUND api.na1.adobesign.invalid`, which is the
+ * second commonest setup mistake here (a base URL for the wrong region) stated
+ * outright. This client then wraps that again when its retries are exhausted,
+ * so the useful sentence sits two levels down and `error.message` alone reads
+ * "Request to /agreements failed after 3 attempts".
+ *
+ * The chain is walked rather than one level unwrapped, because the depth
+ * depends on where the failure happened. Bounded, and de-duplicated so a cause
+ * that merely restates its parent does not print twice.
+ */
+function describeThrown(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+
+  for (let depth = 0; depth < 4 && current instanceof Error; depth += 1) {
+    const message = current.message.trim();
+    if (message && !parts.includes(message)) parts.push(message);
+    current = (current as { cause?: unknown }).cause;
+  }
+
+  if (parts.length === 0) return 'Unknown error';
+  return parts.join(': ').slice(0, 400);
+}
+
+/**
+ * What the vendor said, if it said anything usable.
+ *
+ * Adobe returns a JSON body naming the problem — `{"code":"PERMISSION_DENIED",
+ * "message":"Access token does not have agreement_read scope"}`. That sentence
+ * is the difference between a diagnosis and a status code, so it is put in
+ * front of the person reading rather than left in a context object nothing
+ * renders.
+ *
+ * Bounded, because the message reaches a database column and a screen. Falls
+ * back to the raw text for a body that is not the documented shape, and to
+ * nothing at all for an empty one — an error ending in a dangling colon reads
+ * as truncated output rather than as an API that explained nothing.
+ */
+function describeBody(body: string): string {
+  const trimmed = body.trim();
+  if (trimmed.length === 0) return '';
+
+  try {
+    const parsed = JSON.parse(trimmed) as { code?: unknown; message?: unknown };
+    const message = typeof parsed.message === 'string' ? parsed.message.trim() : '';
+    const code = typeof parsed.code === 'string' ? parsed.code.trim() : '';
+
+    if (message) return `: ${message}${code ? ` (${code})` : ''}`.slice(0, 300);
+    if (code) return `: ${code}`.slice(0, 300);
+  } catch {
+    // Not JSON. An HTML error page or a proxy's plain text still says more
+    // than the status alone.
+  }
+
+  return `: ${trimmed.replace(/\s+/g, ' ')}`.slice(0, 300);
+}
 
 function backoffMs(attempt: number): number {
   const base = 2 ** attempt * 250;

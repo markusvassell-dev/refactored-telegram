@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MockAdobeSignProvider } from '@element/integrations';
+import { AdobeSignRestClient, MockAdobeSignProvider } from '@element/integrations';
 
 /**
  * The mock's payload shape must be the one the real client parses.
@@ -67,5 +67,51 @@ describe('finding an agreement Adobe already holds', () => {
     // duplicates, and was never on the interface and never called.
     expect(await adobe.findByExternalId('key-abc')).toBe(created.agreementId);
     expect(await adobe.findByExternalId('key-never-used')).toBeNull();
+  });
+});
+
+describe('verifying a webhook', () => {
+  function clientWithSecret() {
+    return new AdobeSignRestClient({
+      baseUrl: 'https://api.na1.adobesign.test',
+      clientId: 'the-configured-client-id',
+      clientSecret: 'client-secret',
+      refreshToken: 'refresh-token',
+      webhookSecret: 'webhook-secret',
+      fetchImpl: (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch,
+    });
+  }
+
+  it('accepts the configured client id and refuses another', () => {
+    const client = clientWithSecret();
+
+    expect(client.verifyWebhook('', { 'x-adobesign-clientid': 'the-configured-client-id' })).toBe(true);
+
+    // The handshake exists to confirm this endpoint belongs to the application
+    // registering it. Accepting somebody else's client id confirms nothing.
+    expect(client.verifyWebhook('', { 'x-adobesign-clientid': 'somebody-elses-id' })).toBe(false);
+  });
+
+  it('refuses a client id that shares a prefix with the configured one', () => {
+    // The comparison used to be `===`, which returns on the first differing
+    // byte. Prefix cases are what a timing attack walks, so they are the ones
+    // worth pinning.
+    const client = clientWithSecret();
+
+    expect(client.verifyWebhook('', { 'x-adobesign-clientid': 'the-configured-client-i' })).toBe(false);
+    expect(client.verifyWebhook('', { 'x-adobesign-clientid': 'the-configured-client-idX' })).toBe(false);
+    expect(client.verifyWebhook('', { 'x-adobesign-clientid': '' })).toBe(false);
+  });
+
+  it('refuses everything when no webhook secret is configured', () => {
+    const client = new AdobeSignRestClient({
+      baseUrl: 'https://api.na1.adobesign.test',
+      clientId: 'the-configured-client-id',
+      clientSecret: 'client-secret',
+      refreshToken: 'refresh-token',
+      fetchImpl: (async () => new Response('{}', { status: 200 })) as unknown as typeof fetch,
+    });
+
+    expect(client.verifyWebhook('', { 'x-adobesign-clientid': 'the-configured-client-id' })).toBe(false);
   });
 });

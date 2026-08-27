@@ -238,9 +238,7 @@ describe('activating a version', () => {
       /cannot approve your own template version/i,
     );
 
-    expect(
-      (await prisma.templateVersion.findUniqueOrThrow({ where: { id: templateVersionId } })).status,
-    ).toBe('DRAFT');
+    expect((await prisma.templateVersion.findUniqueOrThrow({ where: { id: templateVersionId } })).status).toBe('DRAFT');
   });
 
   it('refuses a version that is already active', async () => {
@@ -275,18 +273,50 @@ describe('activating a version', () => {
   });
 
   it('leaves documents generated from the old version pointing at it', async () => {
+    // This asserted `count >= 0` and `manifest` being truthy — neither of which
+    // can fail. The property in the name is real and worth pinning: a document
+    // records which wording a client actually signed, so retiring a version
+    // must not rewrite the documents it produced. Asserting it needs a document
+    // that points at the old version before the new one is activated.
+    const client = await prisma.client.create({
+      data: { legalName: `Template Client ${randomUUID().slice(0, 8)}`, isTestFixture: true },
+    });
+    const engagement = await prisma.engagement.create({
+      data: {
+        clientId: client.id,
+        engagementType: 'T2',
+        taxYear: 2399,
+        isTestMode: true,
+        templateVersionId: originalActiveId,
+      },
+    });
+    const rendered = await prisma.documentVersion.create({
+      data: {
+        engagementId: engagement.id,
+        documentType: 'T2_ENGAGEMENT_LETTER',
+        versionNumber: 1,
+        templateVersionId: originalActiveId,
+        sourceFileHash: 'hash-at-the-time-it-was-rendered',
+      },
+    });
+
     const { templateVersionId } = await uploadRevision();
     await publishing.activate({ templateVersionId, actor: publisher });
 
-    const stillReferencing = await prisma.documentVersion.count({
-      where: { templateVersionId: originalActiveId },
-    });
+    const after = await prisma.documentVersion.findUniqueOrThrow({ where: { id: rendered.id } });
 
-    // Whatever that count is, the rows are untouched: retiring a version does
-    // not rewrite the documents it produced.
+    // Still the old version, and still the hash it carried. Repointing either
+    // would make the record claim the client signed wording they never saw.
+    expect(after.templateVersionId).toBe(originalActiveId);
+    expect(after.sourceFileHash).toBe('hash-at-the-time-it-was-rendered');
+
+    // And the retired version itself survives, so the wording remains readable.
     const previous = await prisma.templateVersion.findUniqueOrThrow({ where: { id: originalActiveId } });
+    expect(previous.status).toBe('RETIRED');
     expect(previous.manifest).toBeTruthy();
-    expect(stillReferencing).toBeGreaterThanOrEqual(0);
+
+    await prisma.engagement.deleteMany({ where: { clientId: client.id } });
+    await prisma.client.delete({ where: { id: client.id } });
   });
 
   it('refuses somebody who cannot publish', async () => {
@@ -322,15 +352,11 @@ describe('discarding a draft', () => {
       }),
     ).rejects.toThrow(/Only a draft can be discarded/i);
 
-    expect(
-      (await prisma.templateVersion.findUniqueOrThrow({ where: { id: originalActiveId } })).status,
-    ).toBe('ACTIVE');
+    expect((await prisma.templateVersion.findUniqueOrThrow({ where: { id: originalActiveId } })).status).toBe('ACTIVE');
   });
 
   it('refuses a discard with no reason', async () => {
     const { templateVersionId } = await uploadRevision();
-    await expect(
-      publishing.discardDraft({ templateVersionId, reason: '', actor: uploader }),
-    ).rejects.toThrow(/Give a reason/i);
+    await expect(publishing.discardDraft({ templateVersionId, reason: '', actor: uploader })).rejects.toThrow(/Give a reason/i);
   });
 });

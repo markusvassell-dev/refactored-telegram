@@ -18,6 +18,7 @@ import {
   DateRuleService,
   DocumentStore,
   EngagementService,
+  EngagementReadinessService,
   ExternalSignatureService,
   FeeRuleService,
   FieldFormService,
@@ -50,6 +51,7 @@ const queue = new JobQueue(prisma, logger);
 const workflow = new WorkflowService(prisma, audit);
 const pricing = new PricingService(prisma, audit);
 const preparation = new PreparationService({ prisma, audit, pricing, logger });
+const engagementReadiness = new EngagementReadinessService({ prisma, audit });
 const fields = new FieldFormService({ prisma, audit });
 const dateRules = new DateRuleService({ prisma, audit });
 const feeRules = new FeeRuleService({ prisma, audit });
@@ -152,6 +154,7 @@ export const container = {
   workflow,
   pricing,
   preparation,
+  engagementReadiness,
   fields,
   engagements,
   dateRules,

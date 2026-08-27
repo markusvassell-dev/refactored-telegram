@@ -341,15 +341,14 @@ describe('what is sent when creating an agreement', () => {
     await client.createAgreement({ ...request, authenticationMethod: 'KBA' });
 
     const creation = sent.find((call) => call.url.endsWith('/agreements'));
-    const member = (
-      creation?.body as { participantSetsInfo?: { memberInfos?: Record<string, unknown>[] }[] }
-    )?.participantSetsInfo?.[0]?.memberInfos?.[0];
+    const member = (creation?.body as { participantSetsInfo?: { memberInfos?: Record<string, unknown>[] }[] })
+      ?.participantSetsInfo?.[0]?.memberInfos?.[0];
 
     expect(member?.securityOption).toEqual({ authenticationMethod: 'KBA' });
     expect(member).not.toHaveProperty('authenticationMethod');
   });
 
-  it('sends nothing at all for email verification, which is Adobe\'s own default', async () => {
+  it("sends nothing at all for email verification, which is Adobe's own default", async () => {
     // `NONE` would disable the check rather than leave it at the default, so
     // "email" has to mean an absent security option, not an explicit one.
     const { impl, sent } = recordingFetch();
@@ -365,9 +364,8 @@ describe('what is sent when creating an agreement', () => {
     await client.createAgreement(request);
 
     const creation = sent.find((call) => call.url.endsWith('/agreements'));
-    const member = (
-      creation?.body as { participantSetsInfo?: { memberInfos?: Record<string, unknown>[] }[] }
-    )?.participantSetsInfo?.[0]?.memberInfos?.[0];
+    const member = (creation?.body as { participantSetsInfo?: { memberInfos?: Record<string, unknown>[] }[] })
+      ?.participantSetsInfo?.[0]?.memberInfos?.[0];
 
     expect(member).not.toHaveProperty('securityOption');
   });
@@ -467,9 +465,7 @@ describe('what is sent when creating an agreement', () => {
       rateLimiter: new RateLimiter({ requestsPerMinute: 100_000 }),
     });
 
-    await expect(client.createAgreement({ ...request, authenticationMethod: 'PHONE' })).rejects.toThrow(
-      /telephone number/i,
-    );
+    await expect(client.createAgreement({ ...request, authenticationMethod: 'PHONE' })).rejects.toThrow(/telephone number/i);
     // Refused before anything was uploaded, so no orphaned transient document.
     expect(sent).toHaveLength(0);
   });
@@ -631,10 +627,7 @@ describe('reading an agreement', () => {
     const state = await client.getAgreement(AGR);
 
     expect(state?.status).toBe('SIGNED');
-    expect(state?.signers.map((signer) => signer.signedAt)).toEqual([
-      '2026-01-06T11:30:00Z',
-      '2026-01-07T14:15:00Z',
-    ]);
+    expect(state?.signers.map((signer) => signer.signedAt)).toEqual(['2026-01-06T11:30:00Z', '2026-01-07T14:15:00Z']);
     // The letter's completion note reads "signed by … on …" off these. Without
     // the event list every one of them said "on an unrecorded date".
     expect(state?.completedAt).toBe('2026-01-07T14:15:00Z');
@@ -829,5 +822,153 @@ describe('a signer who did not sign it themselves', () => {
     });
 
     expect((await client.getAgreement('AGR-1'))?.signers[0]?.status).toBe('DELEGATED');
+  });
+});
+
+describe('what the connection test actually proves', () => {
+  /**
+   * The Integrations screen calls `healthCheck` and stores its answer as
+   * whether the connection works. So the question is not whether it returns
+   * true — it is whether returning true means the application will work.
+   *
+   * It used to read `/users/me`. That is a real, published operation and it
+   * succeeded; it simply proved the wrong thing. `/users/me` requires the
+   * `user_read` scope, and every operation this application performs requires
+   * `agreement_read` or `agreement_write`. A token with the first and neither
+   * of the others passed the test, was recorded as working, and failed on the
+   * first send — with every screen saying the integration was fine.
+   */
+  it('reads an agreement page, which is the scope the application depends on', async () => {
+    const { client, calls } = clientWith([{ status: 200, body: { userAgreementList: [] } }]);
+
+    const result = await client.healthCheck();
+
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toContain('/agreements');
+
+    // The specific thing that was wrong. `/users/me` needs `user_read`, which
+    // the application never otherwise uses, so a green check said nothing about
+    // whether a letter could be sent.
+    expect(calls[0]?.url).not.toContain('/users/');
+  });
+
+  it('asks for one agreement rather than the account', async () => {
+    // A reachability check, not a listing. An account with ten thousand
+    // agreements should not transfer them to answer whether a token works.
+    const { client, calls } = clientWith([{ status: 200, body: { userAgreementList: [] } }]);
+
+    await client.healthCheck();
+
+    expect(calls[0]?.url).toContain('pageSize=1');
+  });
+
+  it('reports a refused scope as a failed check rather than throwing', async () => {
+    // 403 is what Adobe returns for a token missing `agreement_read`. The
+    // Integrations screen shows this string, so it has to survive.
+    const { client } = clientWith([
+      { status: 403, body: { code: 'PERMISSION_DENIED', message: 'Access token does not have agreement_read scope' } },
+    ]);
+
+    const result = await client.healthCheck();
+
+    expect(result.ok).toBe(false);
+    expect(result.detail ?? '').toMatch(/agreement_read/i);
+  });
+
+  it('is empty-list-safe: no agreements is a working connection, not a broken one', async () => {
+    // A new account has sent nothing. That has to read as healthy — the
+    // opposite mistake to the one being fixed, and just as quiet.
+    const { client } = clientWith([{ status: 200, body: { userAgreementList: [] } }]);
+
+    expect((await client.healthCheck()).ok).toBe(true);
+  });
+});
+
+describe('the connection test and a path that is not there', () => {
+  it('does not report a 404 as a healthy connection', async () => {
+    /**
+     * The client maps a 404 on a GET to null, which is correct for reading a
+     * record that may legitimately be absent. On a listing it is the oldest
+     * trap in this codebase: it makes "the path does not exist" and "the
+     * account has no agreements" the same answer.
+     *
+     * Without the guard, a base URL pointed at the wrong region — the second
+     * commonest setup mistake, and one the harness explicitly looks for —
+     * would show a green connection test.
+     */
+    const { client } = clientWith([{ status: 404, body: {} }]);
+
+    const result = await client.healthCheck();
+
+    expect(result.ok).toBe(false);
+    expect(result.detail ?? '').toMatch(/region/i);
+  });
+});
+
+describe('a connection that never reached Adobe at all', () => {
+  it('names the transport failure rather than reporting "fetch failed"', async () => {
+    /**
+     * Node reports every transport failure as `fetch failed` and puts the
+     * reason in `cause`. A base URL for the wrong region — the second
+     * commonest setup mistake, and one this client's own diagnostics tell
+     * people to check — surfaces as `getaddrinfo ENOTFOUND`. That sentence is
+     * the whole diagnosis, and it was being dropped: `healthCheck` returned
+     * `error.message`, which by then said only "Request to /agreements failed
+     * after 3 attempts".
+     */
+    const impl = (async () => {
+      const failure = new TypeError('fetch failed');
+      (failure as { cause?: unknown }).cause = new Error('getaddrinfo ENOTFOUND api.na9.adobesign.test');
+      throw failure;
+    }) as unknown as typeof fetch;
+
+    const client = new AdobeSignRestClient({
+      baseUrl: 'https://api.na9.adobesign.test',
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      refreshToken: 'refresh-token',
+      fetchImpl: impl,
+      rateLimiter: new RateLimiter({ requestsPerMinute: 100_000 }),
+      maxRetries: 0,
+    });
+
+    const result = await client.healthCheck();
+
+    expect(result.ok).toBe(false);
+    expect(result.detail ?? '').toMatch(/ENOTFOUND/);
+    expect(result.detail ?? '').toMatch(/api\.na9\.adobesign\.test/);
+  });
+});
+
+describe('how many times a request is actually made', () => {
+  it('makes one request when configured not to retry', async () => {
+    /**
+     * `maxRetries` bounds the attempt loop directly, so it is a total attempt
+     * count rather than a number of retries beyond the first. That made
+     * `maxRetries: 0` — which reads like "do not retry" — skip the loop body
+     * entirely: no request was sent, and the client threw an integration
+     * failure for a call it never made.
+     *
+     * A vendor blamed for a request that never happened is the quietest way to
+     * be wrong about an integration, so the floor is enforced rather than
+     * documented.
+     */
+    const { impl, calls } = scriptedFetch([{ status: 200, body: { userAgreementList: [] } }]);
+
+    const client = new AdobeSignRestClient({
+      baseUrl: 'https://api.na1.adobesign.test',
+      clientId: 'client-id',
+      clientSecret: 'client-secret',
+      refreshToken: 'refresh-token',
+      fetchImpl: impl,
+      rateLimiter: new RateLimiter({ requestsPerMinute: 100_000 }),
+      maxRetries: 0,
+    });
+
+    const result = await client.healthCheck();
+
+    expect(calls).toHaveLength(1);
+    expect(result.ok).toBe(true);
   });
 });

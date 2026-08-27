@@ -1,6 +1,6 @@
 import { PrismaClient } from '@element/database';
 import { AdobeSignRestClient } from '@element/integrations';
-import { createLogger, decryptSecret, loadEnv } from '@element/shared';
+import { createLogger, decryptSecret, describeBuild, loadEnv } from '@element/shared';
 
 /**
  * Exercising Acrobat Sign against a real account.
@@ -40,11 +40,26 @@ function record(capability: string, outcome: Outcome, detail: string): void {
   process.stdout.write(`[${mark}] ${capability.padEnd(26)} ${detail}\n`);
 }
 
-async function attempt<T>(capability: string, run: () => Promise<T>, describe: (value: T) => string): Promise<T | null> {
+/**
+ * Runs one capability and decides whether the result is evidence.
+ *
+ * `proves` is separate from `describe` on purpose. Without it, "did it throw?"
+ * becomes the whole test, and a call that returns something unexpected is
+ * reported as a pass — which is how this project once promoted a capability to
+ * "supported" on the strength of a line reading `ok  not found`. A check that
+ * cannot fail is not a check.
+ */
+async function attempt<T>(
+  capability: string,
+  run: () => Promise<T>,
+  describe: (value: T) => string,
+  proves: (value: T) => boolean = () => true,
+): Promise<T | null> {
   try {
     const value = await run();
-    record(capability, 'PASS', describe(value));
-    return value;
+    const outcome: Outcome = proves(value) ? 'PASS' : 'FAIL';
+    record(capability, outcome, describe(value));
+    return outcome === 'PASS' ? value : null;
   } catch (error) {
     record(capability, 'FAIL', error instanceof Error ? error.message : String(error));
     return null;
@@ -57,7 +72,18 @@ async function main(): Promise<void> {
   const logger = createLogger({ level: 'warn', base: { service: 'verify-adobe-sign' } });
 
   try {
-    const connection = await prisma.integrationConnection.findUnique({ where: { provider: 'ADOBE_SIGN' } });
+    let connection;
+    try {
+      connection = await prisma.integrationConnection.findUnique({ where: { provider: 'ADOBE_SIGN' } });
+    } catch (error) {
+      // Every other precondition here explains itself. This one used to exit
+      // with a raw Prisma stack trace, in a script whose whole purpose is to
+      // say what is wrong and what to do about it.
+      fail(
+        `The database could not be reached, so the stored connection could not be read: ${firstLine(error)}`,
+        'Check DATABASE_URL and that the database is running. Nothing was sent to Adobe.',
+      );
+    }
 
     if (!connection || !connection.encryptedCredentials) {
       fail(
@@ -90,6 +116,9 @@ async function main(): Promise<void> {
     }
 
     process.stdout.write('\nAdobe Acrobat Sign verification\n');
+    // First, because a run that reports failures already fixed and pushed is
+    // indistinguishable from a vendor refusing them.
+    process.stdout.write(`  build        ${describeBuild()}\n`);
     process.stdout.write(`  base URL     ${baseUrl}\n`);
     process.stdout.write(`  environment  ${connection.isSandbox ? 'SANDBOX' : 'PRODUCTION'}\n`);
     process.stdout.write(`  used by app  ${connection.isEnabled ? 'yes' : 'NO — the application is using the mock adapter'}\n`);
@@ -108,12 +137,20 @@ async function main(): Promise<void> {
       logger,
     });
 
-    // The health check performs the OAuth refresh and one read, so a failure
-    // here is almost always the refresh token or the region.
+    // The health check performs the OAuth refresh and reads one page of
+    // agreements, so it proves three things at once: the credentials are
+    // accepted, the base URL is the right region, and the token carries
+    // `agreement_read` — the scope every operation this application performs
+    // depends on. It used to read `/users/me`, which needs `user_read` and
+    // therefore said nothing about whether a letter could be sent.
     const health = await attempt(
-      'OAUTH_AND_REACHABILITY',
+      'OAUTH_AND_AGREEMENT_READ',
       () => client.healthCheck(),
-      (value) => (value.ok ? 'credentials accepted and the region endpoint answered' : `refused: ${value.detail ?? 'no detail'}`),
+      (value) =>
+        value.ok
+          ? 'credentials accepted, region correct, and the token can read agreements'
+          : `refused: ${value.detail ?? 'no detail'}`,
+      (value) => value.ok,
     );
 
     if (!health?.ok) {
@@ -133,7 +170,16 @@ async function main(): Promise<void> {
     await attempt(
       'DUPLICATE_CHECK',
       () => client.findByExternalId(`verification-probe-${Date.now()}`),
-      (found) => (found === null ? 'completed, and correctly found no match for an impossible key' : `unexpectedly matched ${found}`),
+      (found) =>
+        found === null
+          ? 'completed, and correctly found no match for an impossible key'
+          : `unexpectedly matched ${found} — the externalId filter is not being applied`,
+      // A match against a key containing the current millisecond cannot be
+      // real. If one comes back, Adobe ignored the filter and returned some
+      // other agreement — which would make the duplicate check suppress a
+      // genuine send rather than prevent a repeat one. That is a failure, and
+      // reporting it as a pass is how it would go unnoticed.
+      (found) => found === null,
     );
 
     record('CREATE_AGREEMENT', 'SKIP', 'never attempted: creating one emails a real person asking them to sign');
@@ -157,6 +203,30 @@ function summarise(): void {
   process.stdout.write('without sending one to a client by accident.\n\n');
 
   process.exitCode = failed > 0 ? 1 : 0;
+}
+
+/**
+ * The line of a database error that actually says what went wrong.
+ *
+ * Prisma spreads one fault over a dozen lines: a blank first line, then
+ * `Invalid \`prisma.x.findUnique()\` invocation in`, then a file and line
+ * number, and only then the sentence a person needs — "Can't reach database
+ * server at localhost:5432". Neither `split('\n')[0]` nor "the first non-empty
+ * line" reaches it; both were tried here and both printed the preamble.
+ *
+ * So the diagnosis is looked for by what it says, with the first non-empty
+ * line as a fallback for a shape not seen before.
+ */
+const DIAGNOSTIC = /can't reach|cannot reach|authentication failed|does not exist|timed out|ECONNREFUSED|ENOTFOUND/i;
+
+function firstLine(error: unknown): string {
+  const text = error instanceof Error ? error.message : String(error);
+  const lines = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  return lines.find((line) => DIAGNOSTIC.test(line)) ?? lines[0] ?? 'no detail';
 }
 
 function fail(message: string, remedy: string): never {

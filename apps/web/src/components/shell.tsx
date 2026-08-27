@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 import type { Principal } from '@element/shared';
 import { UNREAD_BADGE_CEILING } from '@element/services';
 import { navigationFor } from '@/lib/navigation';
+import { ThemeToggle } from '@/components/theme-toggle';
+import type { Theme } from '@/lib/theme';
 
 /**
  * Application shell.
@@ -37,12 +39,15 @@ export function Shell({
   banner,
   children,
   unreadNotifications = 0,
+  theme,
 }: {
   user: Principal | null;
   productName: string;
   banner: string | null;
   children: ReactNode;
   unreadNotifications?: number;
+  /** From the cookie the root layout read. The toggle owns it from there. */
+  theme: Theme;
 }): ReactNode {
   return (
     <div className="min-h-screen">
@@ -50,13 +55,13 @@ export function Shell({
 
       <a
         href="#main"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-white focus:px-3 focus:py-2"
+        className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-surface focus:px-3 focus:py-2"
       >
         Skip to main content
       </a>
 
       <div className="flex min-h-screen flex-col lg:flex-row">
-        <nav aria-label="Main" className="border-b border-slate-200 bg-white lg:w-64 lg:border-b-0 lg:border-r">
+        <nav aria-label="Main" className="border-b border-slate-200 bg-surface lg:w-64 lg:border-b-0 lg:border-r">
           <div className="px-5 py-4">
             <Link href="/" className="text-lg font-semibold text-brand-700">
               {productName}
@@ -79,9 +84,13 @@ export function Shell({
         </nav>
 
         <div className="flex-1">
-          <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
+          <header className="flex items-center justify-between border-b border-slate-200 bg-surface px-6 py-3">
             <div />
-            <div className="text-sm">
+            <div className="flex items-center gap-4 text-sm">
+              {/* Outside the signed-in branch: the sign-in page is a page too,
+                  and somebody who set dark mode should not be shown a white one
+                  on their way back in. */}
+              <ThemeToggle current={theme} />
               {user ? (
                 <div className="flex items-center gap-3">
                   {/* A count nobody has to go looking for. Past the ceiling the
