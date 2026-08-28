@@ -55,6 +55,31 @@ interface Rule {
 }
 
 /**
+ * The titles a letter gives itself.
+ *
+ * A document that announces its own type in its heading has settled the
+ * question, and that is worth more than any phrase found later in it — because
+ * of what an engagement letter *is*. It is a list of everything the firm
+ * undertakes to produce: the T2 return, the T183CORP authorisation, the
+ * compiled statements, the compilation engagement report, the trial balance.
+ * Every one of those is another kind in this table, named in the letter's own
+ * prose.
+ *
+ * So the letter matched every rule keyed on the documents it promised, and lost
+ * to whichever scored highest — the firm's real T2 letter came out as a
+ * compilation report, and with that rule fixed, as a T183CORP authorisation.
+ * Patching the rules it collided with treats one collision at a time; a letter
+ * that names itself outranking the documents it merely describes is the rule
+ * that ends the class.
+ */
+const ENGAGEMENT_LETTER_TITLES = [
+  'corporate income tax (t2) engagement letter',
+  't2 engagement letter',
+  't1 personal income tax engagement letter',
+  't3 trust income tax engagement letter',
+];
+
+/**
  * Ordered by how specific the evidence is, not by how common the document is.
  * A signed letter is an engagement letter *plus* evidence of signature, so it
  * has to outweigh the plain letter or every signed copy would read as unsigned.
@@ -70,17 +95,20 @@ const RULES: Rule[] = [
       'digitally signed by',
       'signed by:',
     ],
-    weight: 10,
+    weight: 12,
   },
   {
+    // A letter that states its own type, above every kind it goes on to list.
     kind: 'PRIOR_YEAR_ENGAGEMENT_LETTER',
-    any: [
-      'corporate income tax (t2) engagement letter',
-      't2 engagement letter',
-      't1 personal income tax engagement letter',
-      't3 trust income tax engagement letter',
-      'engagement letter',
-    ],
+    any: ENGAGEMENT_LETTER_TITLES,
+    weight: 11,
+  },
+  {
+    // Untitled, so it carries no more weight than the documents it mentions —
+    // a page saying only "engagement letter" is a weak claim, and a real return
+    // or authorisation naming one still wins.
+    kind: 'PRIOR_YEAR_ENGAGEMENT_LETTER',
+    any: ['engagement letter'],
     weight: 8,
   },
   {
@@ -115,9 +143,21 @@ const RULES: Rule[] = [
   },
   {
     kind: 'COMPILATION_ENGAGEMENT_REPORT',
-    any: ['compilation engagement report', 'csrs 4200'],
+    /*
+     * A report reports; naming the standard is a citation.
+     *
+     * `csrs 4200` on its own used to be enough, and every T2 engagement letter
+     * that offers optional compilation cites it — in the paragraph explaining
+     * what the firm *would* do if the client selected the service. That read a
+     * letter as a report, and since the kind picks the pattern set, the letter
+     * was then scanned for corporation names instead of for the prior-year fee.
+     * The scan reported success and the fee stayed empty.
+     */
+    any: ['compilation engagement report', 'we have compiled'],
     // Statements *with* a compilation report are the statements; the report on
-    // its own is the report.
+    // its own is the report. No engagement-letter guard is needed here — a
+    // titled letter already outranks this rule, and a guard that cannot change
+    // an outcome reads as protection while providing none.
     none: ['balance sheet', 'statement of financial position'],
     weight: 9,
   },
@@ -130,6 +170,10 @@ const RULES: Rule[] = [
       'notice to reader',
       'compilation engagement report',
     ],
+    // No letter guard here, deliberately. This rule sits below the letter on
+    // weight, so a letter describing the statements it may produce already loses
+    // to it — a guard would read as protection while being unable to change any
+    // outcome. What keeps that true is the weights, so the test says so.
     weight: 7,
   },
   {
