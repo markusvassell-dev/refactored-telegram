@@ -716,6 +716,26 @@ export async function setTestMode(formData: FormData): Promise<ActionResult> {
     const enabled = formData.get('enabled')?.toString() === 'true';
     const context = await requestContext();
 
+    /*
+     * The environment is a floor, not a default.
+     *
+     * Test Mode resolves as `env.TEST_MODE || stored`, so writing `false`
+     * underneath a deployment that pins it on changed nothing a person could
+     * see — while reporting "Test Mode is off" and leaving the banner saying
+     * the opposite. Somebody reasonably concluded the toggle was broken.
+     *
+     * Refused rather than saved, for the same reason arming production sending
+     * already is. Storing the preference would leave the setting armed
+     * underneath, so that later changing the variable on Railway would take
+     * Test Mode off by itself, with nobody present and nobody remembering they
+     * had asked for it.
+     */
+    if (!enabled && container.env.TEST_MODE) {
+      throw new PreconditionError(
+        'This deployment sets TEST_MODE, which cannot be overridden from the application. Test Mode stays on until TEST_MODE is set to false on both the web and worker services, and they redeploy.',
+      );
+    }
+
     await container.settings.set('test_mode', enabled, actor);
     if (enabled) await container.settings.set('production_sending_enabled', false, actor);
 
